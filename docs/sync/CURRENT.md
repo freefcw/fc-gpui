@@ -25,6 +25,8 @@
 | 按本仓库 `Zed-Origin` 最新吸收 | `ce48461eaadd16c65c31f835511ab96bd3b6e746` | #19 util shell panic |
 | 对照的 Zed `main` | `5a9b9558db01a6b906cec2fb70a797affdc58cdd` | 2026-09-04；`Use proper editions (#63733)`；JSON `compared_against` |
 
+`newest_ported_by_date` 必须是已追踪 backport 中 Zed committer 日期最晚的 SHA（同秒则取更大的 SHA）。`newest_ported_by_trailer` 必须是对应本地 `Zed-Origin` 提交 committer 日期最晚的 SHA（同秒则本地 SHA、再 origin SHA 更大者）。`scripts/verify-upstream-sync.sh` 会强制这两条。
+
 下一轮增量扫描从 `4bd19937` 开始，**不要**从 `3ce72bab` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
 
 #15–#19 共 cherry-pick 16 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：

@@ -14,7 +14,11 @@ Validates that every mapped upstream commit in the audited range has a
 classification and that every backport (including supplemental and
 post-audit cherry-picks) has an exact Zed-Origin trailer in the local Git
 history. Optional compared_against / newest_ported_* fields are checked when
-present. This command is read-only and never fetches the network.
+present: newest_ported_by_date must be the traced backport with the latest
+upstream committer date (tie-break: larger SHA); newest_ported_by_trailer
+must be the traced backport whose matching local commit is latest by
+committer date (tie-break: larger local SHA, then larger origin SHA).
+This command is read-only and never fetches the network.
 EOF
 }
 
@@ -177,17 +181,21 @@ if actual != classified:
         details.append("entries are not in upstream chronological order")
     fail("audit entries do not match mapped upstream history: " + "; ".join(details))
 
-history = git(repo, "log", "--all", "--format=%H%x1f%B%x1e")
+history = git(repo, "log", "--all", "--format=%H%x1f%ct%x1f%B%x1e")
 origin_to_local = {}
 for record in history.split("\x1e"):
     record = record.strip()
-    if not record or "\x1f" not in record:
+    if not record or record.count("\x1f") < 2:
         continue
-    local_commit, body = record.split("\x1f", 1)
+    local_commit, ct_raw, body = record.split("\x1f", 2)
+    try:
+        local_ct = int(ct_raw)
+    except ValueError:
+        fail(f"invalid committer timestamp on {local_commit}")
     for line in body.splitlines():
         if line.startswith("Zed-Origin: "):
             origin = line.removeprefix("Zed-Origin: ").strip()
-            origin_to_local.setdefault(origin, []).append(local_commit)
+            origin_to_local.setdefault(origin, []).append((local_ct, local_commit))
 
 for label, extra in (
     ("supplemental_backports", supplemental),
@@ -208,16 +216,61 @@ for label, extra in (
         backports.append(commit)
 
 traced = set(backports)
-for label, commit in (
-    ("newest_ported_by_date", newest_by_date),
-    ("newest_ported_by_trailer", newest_by_trailer),
-):
-    if commit and commit not in traced:
-        fail(f"{label} {commit} is not listed as a backport / supplemental / post-audit SHA")
+
+
+def committer_unix(cwd: Path, commit: str) -> int:
+    raw = git(cwd, "log", "-1", "--format=%ct", commit).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        fail(f"could not read committer timestamp for {commit}")
+
+
+if newest_by_date:
+    if newest_by_date not in traced:
+        fail(
+            f"newest_ported_by_date {newest_by_date} is not listed as a "
+            "backport / supplemental / post-audit SHA"
+        )
+    expected_by_date = max(
+        traced, key=lambda origin: (committer_unix(upstream, origin), origin)
+    )
+    if newest_by_date != expected_by_date:
+        fail(
+            f"newest_ported_by_date {newest_by_date} is not the newest traced "
+            "backport by upstream committer date; "
+            f"expected {expected_by_date} (tie-break: later date, then larger SHA)"
+        )
+
+if newest_by_trailer:
+    if newest_by_trailer not in traced:
+        fail(
+            f"newest_ported_by_trailer {newest_by_trailer} is not listed as a "
+            "backport / supplemental / post-audit SHA"
+        )
+    expected_by_trailer = None
+    expected_key = None
+    for origin in traced:
+        matches = origin_to_local.get(origin, [])
+        if not matches:
+            continue
+        local_ct, local_sha = max(matches)
+        key = (local_ct, local_sha, origin)
+        if expected_key is None or key > expected_key:
+            expected_key = key
+            expected_by_trailer = origin
+    if expected_by_trailer is None:
+        fail("newest_ported_by_trailer is set but no traced backport has a local Zed-Origin")
+    if newest_by_trailer != expected_by_trailer:
+        fail(
+            f"newest_ported_by_trailer {newest_by_trailer} is not the traced "
+            "backport with the newest local Zed-Origin commit; "
+            f"expected {expected_by_trailer} "
+            "(tie-break: later local date, then larger local SHA, then larger origin SHA)"
+        )
 
 for origin in backports:
-    local_commits = origin_to_local.get(origin, [])
-    if not local_commits:
+    if not origin_to_local.get(origin, []):
         fail(f"backport {origin} has no exact Zed-Origin trailer in local history")
 
 print(
