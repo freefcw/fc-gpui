@@ -29,10 +29,15 @@ jobs:
         shell: bash
         run: |
           audited_commit="$(jq -r '.audited_upstream' docs/sync/upstream-audit.json)"
+          compared_against="$(jq -r '.compared_against // empty' docs/sync/upstream-audit.json)"
           git init "$RUNNER_TEMP/zed-upstream"
           git -C "$RUNNER_TEMP/zed-upstream" remote add origin https://github.com/zed-industries/zed.git
-          git -C "$RUNNER_TEMP/zed-upstream" fetch --filter=blob:none origin "$audited_commit"
-          git -C "$RUNNER_TEMP/zed-upstream" checkout --detach FETCH_HEAD
+          fetch_refs=("$audited_commit")
+          if [[ -n "$compared_against" ]]; then
+            fetch_refs+=("$compared_against")
+          fi
+          git -C "$RUNNER_TEMP/zed-upstream" fetch --filter=blob:none origin "${fetch_refs[@]}"
+          git -C "$RUNNER_TEMP/zed-upstream" checkout --detach "$audited_commit"
 
       - name: Verify classifications and Zed-Origin trailers
         env:

@@ -11,8 +11,10 @@ usage() {
 Usage: scripts/verify-upstream-sync.sh [--upstream PATH] [--audit PATH]
 
 Validates that every mapped upstream commit in the audited range has a
-classification and that every backport has an exact Zed-Origin trailer in the
-local Git history. This command is read-only and never fetches the network.
+classification and that every backport (including supplemental and
+post-audit cherry-picks) has an exact Zed-Origin trailer in the local Git
+history. Optional compared_against / newest_ported_* fields are checked when
+present. This command is read-only and never fetches the network.
 EOF
 }
 
@@ -83,10 +85,24 @@ audited = audit.get("audited_upstream", "")
 paths = audit.get("paths")
 entries = audit.get("entries")
 supplemental = audit.get("supplemental_backports", [])
+post_audit = audit.get("post_audit_backports", [])
+
+
+def require_sha(label: str, value: object) -> str:
+    if not isinstance(value, str) or not sha_re.fullmatch(value):
+        fail(f"{label} must be a full 40-character commit hash")
+    return value
+
+
+def optional_sha(label: str) -> str | None:
+    value = audit.get(label)
+    if value is None:
+        return None
+    return require_sha(label, value)
+
 
 for label, value in (("baseline", baseline), ("audited_upstream", audited)):
-    if not sha_re.fullmatch(value):
-        fail(f"{label} must be a full 40-character commit hash")
+    require_sha(label, value)
 if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
     fail("paths must be a non-empty string array")
 if not isinstance(entries, list):
@@ -114,13 +130,30 @@ for index, entry in enumerate(entries):
     if status == "backport":
         backports.append(commit)
 
+compared = optional_sha("compared_against")
+newest_by_date = optional_sha("newest_ported_by_date")
+newest_by_trailer = optional_sha("newest_ported_by_trailer")
+
 for commit in (baseline, audited):
     git(upstream, "cat-file", "-e", f"{commit}^{{commit}}")
+for label, commit in (
+    ("compared_against", compared),
+    ("newest_ported_by_date", newest_by_date),
+    ("newest_ported_by_trailer", newest_by_trailer),
+):
+    if commit:
+        git(upstream, "cat-file", "-e", f"{commit}^{{commit}}")
 ancestor = subprocess.run(
     ["git", "-C", str(upstream), "merge-base", "--is-ancestor", baseline, audited]
 )
 if ancestor.returncode != 0:
     fail(f"baseline {baseline} is not an ancestor of {audited}")
+if compared:
+    compared_ancestor = subprocess.run(
+        ["git", "-C", str(upstream), "merge-base", "--is-ancestor", audited, compared]
+    )
+    if compared_ancestor.returncode != 0:
+        fail(f"audited_upstream {audited} is not an ancestor of compared_against {compared}")
 
 actual = git(
     upstream,
@@ -156,12 +189,31 @@ for record in history.split("\x1e"):
             origin = line.removeprefix("Zed-Origin: ").strip()
             origin_to_local.setdefault(origin, []).append(local_commit)
 
-for entry in supplemental:
-    if not isinstance(entry, dict) or not sha_re.fullmatch(entry.get("commit", "")):
-        fail("supplemental_backports entries must use full commit hashes")
-    commit = entry["commit"]
-    git(upstream, "cat-file", "-e", f"{commit}^{{commit}}")
-    backports.append(commit)
+for label, extra in (
+    ("supplemental_backports", supplemental),
+    ("post_audit_backports", post_audit),
+):
+    if extra is None:
+        extra = []
+    if not isinstance(extra, list):
+        fail(f"{label} must be an array")
+    for entry in extra:
+        if not isinstance(entry, dict) or not sha_re.fullmatch(entry.get("commit", "")):
+            fail(f"{label} entries must use full commit hashes")
+        note = entry.get("note", "")
+        if not isinstance(note, str) or not note.strip():
+            fail(f"{label} {entry.get('commit')} must explain the backport")
+        commit = entry["commit"]
+        git(upstream, "cat-file", "-e", f"{commit}^{{commit}}")
+        backports.append(commit)
+
+traced = set(backports)
+for label, commit in (
+    ("newest_ported_by_date", newest_by_date),
+    ("newest_ported_by_trailer", newest_by_trailer),
+):
+    if commit and commit not in traced:
+        fail(f"{label} {commit} is not listed as a backport / supplemental / post-audit SHA")
 
 for origin in backports:
     local_commits = origin_to_local.get(origin, [])
@@ -171,6 +223,7 @@ for origin in backports:
 print(
     "upstream sync verification passed: "
     f"{len(entries)} classified commits, {len(backports)} traced backports, "
+    f"{len(post_audit) if isinstance(post_audit, list) else 0} post-audit cherry-picks, "
     f"range {baseline[:10]}..{audited[:10]}"
 )
 PY

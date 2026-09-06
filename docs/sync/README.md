@@ -5,8 +5,8 @@
 ## 当前入口
 
 - [`CURRENT.md`](./CURRENT.md)：当前上游基线、crate/path 映射、明确分歧、同步流程和有效命令。
-- [`upstream-audit.json`](./upstream-audit.json)：当前增量区间的机器可读逐提交分类。
-- [`ZED_UPSTREAM_MIGRATION_REVIEW_2026-08-10.md`](./ZED_UPSTREAM_MIGRATION_REVIEW_2026-08-10.md)：本轮迁移价值审计与分阶段路线。
+- [`upstream-audit.json`](./upstream-audit.json)：上一完整分类区间的逐提交分类，外加区间之后的 cherry-pick 清单。`audited_upstream` 不是“已全部吸收的祖先”。
+- [`ZED_UPSTREAM_MIGRATION_REVIEW_2026-08-10.md`](./ZED_UPSTREAM_MIGRATION_REVIEW_2026-08-10.md)：上一轮完整分类（到 `4bd19937`）的价值审计与分阶段路线。
 - [`ZED_GPUI_INCREMENTAL_AUDIT_2026-07-01.md`](./ZED_GPUI_INCREMENTAL_AUDIT_2026-07-01.md)：自指定基线开始的历史增量审计。
 - [`ZED_GPUI_P1_BACKPORT_2026-07-20.md`](./ZED_GPUI_P1_BACKPORT_2026-07-20.md)：P1 backport 和当时的平台验证记录。
 
@@ -23,7 +23,7 @@
 
 ## 维护规则
 
-1. 只在完成一轮增量审计后更新 `CURRENT.md` 的上游基线。
+1. 只在完成一轮**完整**增量分类后更新 `audited_upstream` 和 `CURRENT.md` 的分类终点。主题 cherry-pick 追加 `post_audit_backports`，不要把未分类 HEAD 写成已吸收祖先。
 2. 每个 backport 提交记录完整 `Zed-Origin`。
 3. 对未迁移提交明确标记 `equivalent`、`deferred` 或 `not-applicable`。
 4. 核心测试使用 `fc-gpui-core`，兼容测试使用 `fc-gpui`。

@@ -1,7 +1,12 @@
 {
   "schema_version": 1,
+  "absorb_model": "cherry-pick",
   "baseline": "ec3d887507f272119d9fe146c685f0a941d0e798",
   "audited_upstream": "4bd1993783703e92affb781503916d1f152f599f",
+  "compared_against": "5a9b9558db01a6b906cec2fb70a797affdc58cdd",
+  "newest_ported_by_date": "3ce72bab201ad82418fc9716aad11332624951bc",
+  "newest_ported_by_trailer": "ce48461eaadd16c65c31f835511ab96bd3b6e746",
+  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#19 cherry-picked 16 later SHAs listed in post_audit_backports. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports.",
   "paths": [
     "crates/gpui",
     "crates/gpui_platform",
@@ -75,5 +80,23 @@
   "supplemental_backports": [
     {"commit":"008d54299be7a5219bac4e4dd51f11ab8bfd6197","note":"Only the still-missing repeated-frame error counter hunk was backported; software adapter rejection was already equivalent"},
     {"commit":"f358b9531a3311b449c3fde41a04f7bfc0c574f2","note":"Discovered missing grid column min-content builder while adapting row APIs"}
+  ],
+  "post_audit_backports": [
+    {"commit":"a49de953a850f7ee1f5d847e7908733c07e516ee","pr":15,"note":"Linux: enable wayland-backend log feature so connection errors cannot panic without stderr"},
+    {"commit":"5dd0666dfb627bb7c04b210b730005628f5a229a","pr":15,"note":"Linux: trailing NUL on X11 WM_CLASS"},
+    {"commit":"4d1935b8d00320841da476ec38c7b7747abf6f09","pr":15,"note":"Linux: clear X11 urgency hint when the window becomes active"},
+    {"commit":"c43e2d9734800bef0dd216ea9184fdb99bc60625","pr":15,"note":"Linux: handle XKB context initialization failure"},
+    {"commit":"d9ad6aff67e47de43abb270d22de75dd950f1b48","pr":15,"note":"Linux: release X11 client state before close callback"},
+    {"commit":"f4178619acd0d47ea1f76a2025c42962c6d6638c","pr":15,"note":"Linux: drain buffered X11 events after foreground work; keep _NET_ACTIVE_WINDOW"},
+    {"commit":"1d7e5f1d014acf0d288c6d11be93c31fe647e725","pr":16,"note":"Windows: place new windows using target monitor DPI"},
+    {"commit":"7040aa56693ba7e85241180d031080ca79b725f8","pr":16,"note":"Windows: clear COLR emoji D3D render target before compositing"},
+    {"commit":"b1a7ef0cf66dfbf9d7661170c96d97c7df916c68","pr":17,"note":"Snap recomputed padding to the device-pixel grid before clamp_scroll"},
+    {"commit":"ff9f114cd39692450ef7646db1198f54417531b8","pr":17,"note":"svg().data(bytes) in addition to path()"},
+    {"commit":"03c9c4e7070a117bc93aa807b60ce8bd354f6a82","pr":17,"note":"SvgSize::ExactSize and render_parsed"},
+    {"commit":"7bddd16a09cf0084cefb3d98468b178343b9f1e2","pr":17,"note":"TestWindow returns HandleError::NotSupported instead of unimplemented"},
+    {"commit":"3ce72bab201ad82418fc9716aad11332624951bc","pr":17,"note":"Hitbox::is_hovered_at position hit-test"},
+    {"commit":"eb5483528be607b497afdaad0a237bebeb191249","pr":17,"note":"Window::painted_quads test-support helper; markdown hunks not applicable"},
+    {"commit":"f0d8b0b0cde9a5b5000017c1e60db3ebea274b88","pr":18,"note":"HoverListenerMode::InputModalityIndependent"},
+    {"commit":"ce48461eaadd16c65c31f835511ab96bd3b6e746","pr":19,"note":"util: prevent panic when parsing a malformed shell variable"}
   ]
 }
