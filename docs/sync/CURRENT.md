@@ -18,18 +18,18 @@
 
 | 字段 | SHA | 说明 |
 |---|---|---|
-| 当前仓库（含 absorb #15–#19） | `4dd9685ba14d706f135ad45c55e0163b22f8403c` | 2026-09-07；本地 HEAD 在本次文档更新之前 |
+| 当前仓库（含 absorb #15–#24） | `422333c9a591129512a63434677cb59285495db4` | 2026-09-12；本地 HEAD 在本次文档更新之前 |
 | 上一完整分类区间起点（不含） | `ec3d887507f272119d9fe146c685f0a941d0e798` | 2026-07-22；JSON `baseline` |
 | 上一完整分类区间终点 | `4bd1993783703e92affb781503916d1f152f599f` | 2026-08-10；JSON `audited_upstream`；区间内 49 条已分类 |
-| 按 Zed 提交日期最新已吸收 | `3ce72bab201ad82418fc9716aad11332624951bc` | 2026-09-03；#17 `Hitbox::is_hovered_at` |
-| 按本仓库 `Zed-Origin` 最新吸收 | `ce48461eaadd16c65c31f835511ab96bd3b6e746` | #19 util shell panic |
-| 对照的 Zed `main` | `5a9b9558db01a6b906cec2fb70a797affdc58cdd` | 2026-09-04；`Use proper editions (#63733)`；JSON `compared_against` |
+| 按 Zed 提交日期最新已吸收 | `5b4a2153a087055a7f9cb3464f188f1cab9fd678` | 2026-09-11；#24 `all_font_names` |
+| 按本仓库 `Zed-Origin` 最新吸收 | `5b4a2153a087055a7f9cb3464f188f1cab9fd678` | #24 `all_font_names`（本地 `422333c`） |
+| 对照的 Zed `main` | `9d272b036335401f339d024ea94968fd51016c40` | 2026-09-12；`Print macOS SDK version when bundling (#64119)`；JSON `compared_against` |
 
 `newest_ported_by_date` 必须是已追踪 backport 中 Zed committer 日期最晚的 SHA（同秒则取更大的 SHA）。`newest_ported_by_trailer` 必须是对应本地 `Zed-Origin` 提交 committer 日期最晚的 SHA（同秒则本地 SHA、再 origin SHA 更大者）。`scripts/verify-upstream-sync.sh` 会强制这两条。
 
-下一轮增量扫描从 `4bd19937` 开始，**不要**从 `3ce72bab` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
+下一轮增量扫描从 `4bd19937` 开始，**不要**从 `5b4a2153` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
 
-#15–#19 共 cherry-pick 16 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
+#15–#24 共 cherry-pick 20 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
 
 | PR | 主题 | Zed SHA（短） |
 |---|---|---|
@@ -38,8 +38,12 @@
 | #17 | layout / SVG / test | `b1a7ef0c` `ff9f114c` `03c9c4e7` `7bddd16a` `3ce72bab` `eb548352` |
 | #18 | HoverListenerMode | `f0d8b0b0` |
 | #19 | util shell | `ce48461e` |
+| #21 | Wayland IME | `4a217d53` |
+| #22 | Cosmic glyph reuse | `1ff7cb66` |
+| #23 | TestWindow scale | `b95b188b` |
+| #24 | all_font_names | `5b4a2153` |
 
-自 `4bd19937` 到对照 HEAD，映射路径上约有 79 个提交尚未做逐条分类；其中只有上表 16 个已吸收。2026-08-10 分类里仍成立的延期：外部文件拖放（`f52fd9ac` / `a8491e63` / `c7aea6cb`）、native flags（`e99616cd`）、Windows `path` crate（`26103320`）、同步动画（`4ed3738c`）。`79cc17c2` sticky-axis 滚动当时标为 deferred，已在独立 PR #5 吸收，不改写那次分类记录。
+自 `4bd19937` 到对照 HEAD，映射路径上约有 100 个提交尚未做逐条分类；其中只有上表 20 个已吸收。2026-08-10 分类里仍成立的延期：外部文件拖放（`f52fd9ac` / `a8491e63` / `c7aea6cb`）、native flags（`e99616cd`）、Windows `path` crate（`26103320`）、同步动画（`4ed3738c`）。`79cc17c2` sticky-axis 滚动当时标为 deferred，已在独立 PR #5 吸收，不改写那次分类记录。
 
 ## 当前结构
 

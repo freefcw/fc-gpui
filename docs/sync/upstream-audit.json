@@ -3,10 +3,10 @@
   "absorb_model": "cherry-pick",
   "baseline": "ec3d887507f272119d9fe146c685f0a941d0e798",
   "audited_upstream": "4bd1993783703e92affb781503916d1f152f599f",
-  "compared_against": "5a9b9558db01a6b906cec2fb70a797affdc58cdd",
-  "newest_ported_by_date": "3ce72bab201ad82418fc9716aad11332624951bc",
-  "newest_ported_by_trailer": "ce48461eaadd16c65c31f835511ab96bd3b6e746",
-  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#19 cherry-picked 16 later SHAs listed in post_audit_backports. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports.",
+  "compared_against": "9d272b036335401f339d024ea94968fd51016c40",
+  "newest_ported_by_date": "5b4a2153a087055a7f9cb3464f188f1cab9fd678",
+  "newest_ported_by_trailer": "5b4a2153a087055a7f9cb3464f188f1cab9fd678",
+  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#24 cherry-picked 20 later SHAs listed in post_audit_backports. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports.",
   "paths": [
     "crates/gpui",
     "crates/gpui_platform",
@@ -97,6 +97,10 @@
     {"commit":"3ce72bab201ad82418fc9716aad11332624951bc","pr":17,"note":"Hitbox::is_hovered_at position hit-test"},
     {"commit":"eb5483528be607b497afdaad0a237bebeb191249","pr":17,"note":"Window::painted_quads test-support helper; markdown hunks not applicable"},
     {"commit":"f0d8b0b0cde9a5b5000017c1e60db3ebea274b88","pr":18,"note":"HoverListenerMode::InputModalityIndependent"},
-    {"commit":"ce48461eaadd16c65c31f835511ab96bd3b6e746","pr":19,"note":"util: prevent panic when parsing a malformed shell variable"}
+    {"commit":"ce48461eaadd16c65c31f835511ab96bd3b6e746","pr":19,"note":"util: prevent panic when parsing a malformed shell variable"},
+    {"commit":"4a217d5316887826a21c554650c1ece6d51fff2a","pr":21,"note":"Linux: keep Wayland IME off without an input handler"},
+    {"commit":"1ff7cb669b6351eaf2a5b79ccb40f5cd1676b8f8","pr":22,"note":"Linux: reuse Cosmic glyph image after measuring bounds"},
+    {"commit":"b95b188b59454bc2b01f08a54ab0182c4a55f141","pr":23,"note":"TestWindow scale-factor simulation"},
+    {"commit":"5b4a2153a087055a7f9cb3464f188f1cab9fd678","pr":24,"note":"all_font_names lists only real font families"}
   ]
 }
