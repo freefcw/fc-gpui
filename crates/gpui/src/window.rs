@@ -1075,6 +1075,7 @@ pub struct Window {
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
+    focus_lost_path: SmallVec<[FocusId; 8]>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
@@ -1683,6 +1684,7 @@ impl Window {
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
+            focus_lost_path: SmallVec::new(),
             default_prevented: true,
             mouse_position,
             mouse_hit_test: HitTest::default(),
@@ -1836,6 +1838,17 @@ impl Window {
     pub fn focused(&self, cx: &App) -> Option<FocusHandle> {
         self.focus
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
+    }
+
+    /// While focus-lost listeners are being dispatched, returns the closest ancestor of the
+    /// previously focused element that can still receive focus, making it a suitable target
+    /// for focus restoration. Returns `None` at all other times, or when no such ancestor exists.
+    pub fn focus_lost_restore_target(&self, cx: &App) -> Option<FocusHandle> {
+        let (_leaf, ancestors) = self.focus_lost_path.split_last()?;
+        ancestors.iter().rev().find_map(|id| {
+            self.rendered_frame.dispatch_tree.focusable_node_id(*id)?;
+            FocusHandle::for_id(*id, &cx.focus_handles)
+        })
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
@@ -2527,9 +2540,11 @@ impl Window {
             || previous_window_active != current_window_active
         {
             if !previous_focus_path.is_empty() && current_focus_path.is_empty() {
+                self.focus_lost_path = previous_focus_path.clone();
                 self.focus_lost_listeners
                     .clone()
                     .retain(&(), |listener| listener(self, cx));
+                self.focus_lost_path = SmallVec::new();
             }
 
             let event = WindowFocusEvent {
@@ -6343,6 +6358,88 @@ mod tests {
         assert_eq!(cx.windows().len(), 2);
 
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+    }
+
+    struct FocusLostRestoreView {
+        parent: FocusHandle,
+        child: FocusHandle,
+        show_child: bool,
+        observed_restore: Option<FocusHandle>,
+        _subscription: Subscription,
+    }
+
+    impl FocusLostRestoreView {
+        fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self {
+                parent: cx.focus_handle(),
+                child: cx.focus_handle(),
+                show_child: true,
+                observed_restore: None,
+                _subscription: cx.on_focus_lost(window, |this, window, cx| {
+                    this.observed_restore = window.focus_lost_restore_target(cx);
+                }),
+            }
+        }
+    }
+
+    impl Render for FocusLostRestoreView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("parent")
+                .track_focus(&self.parent)
+                .when(self.show_child, |parent| {
+                    parent.child(div().id("child").track_focus(&self.child))
+                })
+        }
+    }
+
+    /// Removing a focused descendant fires `on_focus_lost`. During that callback,
+    /// `focus_lost_restore_target` is the closest ancestor still in the tree.
+    #[test]
+    fn focus_lost_restore_target_is_nearest_surviving_ancestor() {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(FocusLostRestoreView::new);
+
+        window
+            .update(&mut cx, |view, window, _| {
+                window.focus(&view.child);
+            })
+            .unwrap();
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear();
+            assert!(
+                window.focus_lost_restore_target(cx).is_none(),
+                "restore target is only set while focus-lost listeners run"
+            );
+        })
+        .unwrap();
+
+        window
+            .update(&mut cx, |view, window, _| {
+                assert!(view.child.is_focused(window));
+                view.show_child = false;
+            })
+            .unwrap();
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear();
+            assert!(
+                window.focus_lost_restore_target(cx).is_none(),
+                "restore target must be cleared after focus-lost listeners return"
+            );
+        })
+        .unwrap();
+
+        window
+            .update(&mut cx, |view, _, _| {
+                assert_eq!(
+                    view.observed_restore.as_ref(),
+                    Some(&view.parent),
+                    "restore target should be the parent that remained in the tree"
+                );
+            })
             .unwrap();
     }
 
