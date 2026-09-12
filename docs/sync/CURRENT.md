@@ -18,18 +18,18 @@
 
 | 字段 | SHA | 说明 |
 |---|---|---|
-| 当前仓库（含 absorb #15–#24） | `422333c9a591129512a63434677cb59285495db4` | 2026-09-12；本地 HEAD 在本次文档更新之前 |
+| 当前仓库（含 absorb #15–#31） | `44a1203307beabdf623fda913b75c5f400090090` | 2026-09-12；本地 HEAD 在本次文档更新之前 |
 | 上一完整分类区间起点（不含） | `ec3d887507f272119d9fe146c685f0a941d0e798` | 2026-07-22；JSON `baseline` |
 | 上一完整分类区间终点 | `4bd1993783703e92affb781503916d1f152f599f` | 2026-08-10；JSON `audited_upstream`；区间内 49 条已分类 |
 | 按 Zed 提交日期最新已吸收 | `5b4a2153a087055a7f9cb3464f188f1cab9fd678` | 2026-09-11；#24 `all_font_names` |
-| 按本仓库 `Zed-Origin` 最新吸收 | `5b4a2153a087055a7f9cb3464f188f1cab9fd678` | #24 `all_font_names`（本地 `422333c`） |
+| 按本仓库 `Zed-Origin` 最新吸收 | `6b5e15ed463cdcf28b0d1d49c1a681ad044e308b` | #31 bindgen 0.72（本地 `44a1203`） |
 | 对照的 Zed `main` | `9d272b036335401f339d024ea94968fd51016c40` | 2026-09-12；`Print macOS SDK version when bundling (#64119)`；JSON `compared_against` |
 
 `newest_ported_by_date` 必须是已追踪 backport 中 Zed committer 日期最晚的 SHA（同秒则取更大的 SHA）。`newest_ported_by_trailer` 必须是对应本地 `Zed-Origin` 提交 committer 日期最晚的 SHA（同秒则本地 SHA、再 origin SHA 更大者）。`scripts/verify-upstream-sync.sh` 会强制这两条。
 
 下一轮增量扫描从 `4bd19937` 开始，**不要**从 `5b4a2153` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
 
-#15–#24 共 cherry-pick 20 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
+#15–#31 共 cherry-pick 26 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
 
 | PR | 主题 | Zed SHA（短） |
 |---|---|---|
@@ -42,8 +42,14 @@
 | #22 | Cosmic glyph reuse | `1ff7cb66` |
 | #23 | TestWindow scale | `b95b188b` |
 | #24 | all_font_names | `5b4a2153` |
+| #26 | on_file_drop_exit | `1a84d5d9` |
+| #27 | focus_lost_restore_target | `b2d9c2e1` |
+| #28 | increase_open_file_limit | `d12e456b` |
+| #29 | Windows shell discovery | `4c6c4750` |
+| #30 | http_client GitHub bounds | `992c7d46` |
+| #31 | bindgen 0.72 | `6b5e15ed` |
 
-自 `4bd19937` 到对照 HEAD，映射路径上约有 100 个提交尚未做逐条分类；其中只有上表 20 个已吸收。2026-08-10 分类里仍成立的延期：外部文件拖放（`f52fd9ac` / `a8491e63` / `c7aea6cb`）、native flags（`e99616cd`）、Windows `path` crate（`26103320`）、同步动画（`4ed3738c`）。`79cc17c2` sticky-axis 滚动当时标为 deferred，已在独立 PR #5 吸收，不改写那次分类记录。
+自 `4bd19937` 到对照 HEAD，映射路径上约有 100 个提交尚未做逐条分类；其中只有上表 26 个已吸收。2026-08-10 分类里仍成立的延期：外部文件拖放（`f52fd9ac` / `a8491e63` / `c7aea6cb`）、native flags（`e99616cd`）、Windows `path` crate（`26103320`）、同步动画（`4ed3738c`）。`79cc17c2` sticky-axis 滚动当时标为 deferred，已在独立 PR #5 吸收，不改写那次分类记录。
 
 ## 当前结构
 

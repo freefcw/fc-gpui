@@ -5,8 +5,8 @@
   "audited_upstream": "4bd1993783703e92affb781503916d1f152f599f",
   "compared_against": "9d272b036335401f339d024ea94968fd51016c40",
   "newest_ported_by_date": "5b4a2153a087055a7f9cb3464f188f1cab9fd678",
-  "newest_ported_by_trailer": "5b4a2153a087055a7f9cb3464f188f1cab9fd678",
-  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#24 cherry-picked 20 later SHAs listed in post_audit_backports. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports.",
+  "newest_ported_by_trailer": "6b5e15ed463cdcf28b0d1d49c1a681ad044e308b",
+  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#31 cherry-picked 26 later SHAs listed in post_audit_backports. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports.",
   "paths": [
     "crates/gpui",
     "crates/gpui_platform",
@@ -101,6 +101,12 @@
     {"commit":"4a217d5316887826a21c554650c1ece6d51fff2a","pr":21,"note":"Linux: keep Wayland IME off without an input handler"},
     {"commit":"1ff7cb669b6351eaf2a5b79ccb40f5cd1676b8f8","pr":22,"note":"Linux: reuse Cosmic glyph image after measuring bounds"},
     {"commit":"b95b188b59454bc2b01f08a54ab0182c4a55f141","pr":23,"note":"TestWindow scale-factor simulation"},
-    {"commit":"5b4a2153a087055a7f9cb3464f188f1cab9fd678","pr":24,"note":"all_font_names lists only real font families"}
+    {"commit":"5b4a2153a087055a7f9cb3464f188f1cab9fd678","pr":24,"note":"all_font_names lists only real font families"},
+    {"commit":"1a84d5d92bd7d6c1cabb116062650af545783fe9","pr":26,"note":"on_file_drop_exit for inbound file-drag leave"},
+    {"commit":"b2d9c2e122fbc408d42276b4456243ba4f90f181","pr":27,"note":"Window::focus_lost_restore_target"},
+    {"commit":"d12e456be7c08a1dfaf21bd49ed0df1f3e2a26c6","pr":28,"note":"util: opt-in increase_open_file_limit on Unix"},
+    {"commit":"4c6c4750d3f87f0b93c937c9bda7b50639c0d07d","pr":29,"note":"Windows: Git Bash and PowerShell discovery"},
+    {"commit":"992c7d469c392c97b48710eab7776ff1850b1f7b","pr":30,"note":"http_client: bound GitHub release requests with a body timeout"},
+    {"commit":"6b5e15ed463cdcf28b0d1d49c1a681ad044e308b","pr":31,"note":"macos/media: bump bindgen 0.71 to 0.72"}
   ]
 }
