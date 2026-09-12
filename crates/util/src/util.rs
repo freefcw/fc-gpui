@@ -1031,6 +1031,8 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
+#[cfg(windows)]
+pub use self::shell::get_powershell;
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
 };

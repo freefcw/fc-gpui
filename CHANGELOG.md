@@ -36,6 +36,8 @@
 
 ### Improvements
 
+- **Windows Git Bash / PowerShell discovery** — Git Bash lookup uses `GIT_INSTALL_ROOT` and walks up from `git` so a `mingw64\bin` PATH prefix (launching from Git Bash) still finds `bin\bash.exe`. PowerShell discovery also checks .NET global tools, MSIX package family names, and Windows PowerShell; `get_powershell()` returns `None` if none are found, and `get_windows_system_shell` then falls back to `SystemRoot\System32\cmd.exe`. Windows app restart uses a discovered PowerShell instead of a hard-coded `powershell.exe`.
+
 - **Opt-in `increase_open_file_limit` on Unix** — `adabraka_util::increase_open_file_limit()` raises the process soft `RLIMIT_NOFILE` toward 65,536 (10,240 on macOS) without changing the hard limit. GPUI does not call this from `Application::new` or any other startup path; apps that need it must call it themselves.
 
 - **`Window::focus_lost_restore_target`** — while focus-lost listeners run, returns the closest ancestor of the previously focused element that can still receive focus. Returns `None` at other times, or when no such ancestor exists.

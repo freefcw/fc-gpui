@@ -1,4 +1,8 @@
-use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
+#[cfg(any(windows, test))]
+use std::path::PathBuf;
+#[cfg(windows)]
+use std::sync::LazyLock;
+use std::{borrow::Cow, fmt, path::Path};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShellKind {
@@ -32,31 +36,73 @@ pub fn get_default_system_shell() -> String {
 
 /// Get the default system shell, preferring git-bash on Windows.
 pub fn get_default_system_shell_preferring_bash() -> String {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         get_windows_git_bash().unwrap_or_else(|| get_windows_system_shell())
-    } else {
+    }
+
+    #[cfg(not(windows))]
+    {
         "/bin/sh".to_string()
     }
 }
 
+/// True Git for Windows install root: `git-bash.exe` plus `bin\bash.exe`.
+#[cfg(any(windows, test))]
+fn find_bash_in_installation(install_root: &Path) -> Option<PathBuf> {
+    if !install_root.join("git-bash.exe").is_file() {
+        return None;
+    }
+    let bash = install_root.join("bin").join("bash.exe");
+    bash.is_file().then_some(bash)
+}
+
+/// Resolve Git Bash from a `git` executable path.
+///
+/// Git for Windows ships `git` under `cmd\` or, when already inside Git Bash,
+/// `mingw64\bin\` (prepended to `PATH`). Walk one extra parent so the latter
+/// still finds the install root.
+#[cfg(any(windows, test))]
+fn find_bash_from_git_binary(git: &Path) -> Option<PathBuf> {
+    let binary_directory = git.parent()?;
+    let parent = binary_directory.parent()?;
+    find_bash_in_installation(parent).or_else(|| find_bash_in_installation(parent.parent()?))
+}
+
+#[cfg(any(windows, test))]
+fn find_bash_using_git_install(
+    git_install_root: Option<PathBuf>,
+    git_binary: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(bash) = git_install_root.and_then(|path| find_bash_in_installation(&path)) {
+        return Some(bash);
+    }
+    find_bash_from_git_binary(git_binary?)
+}
+
+#[cfg(windows)]
 pub fn get_windows_git_bash() -> Option<String> {
+    fn find_bash_in_git() -> Option<PathBuf> {
+        let git = which::which("git").ok();
+        find_bash_using_git_install(
+            std::env::var_os("GIT_INSTALL_ROOT").map(PathBuf::from),
+            git.as_deref(),
+        )
+    }
+
     static GIT_BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        // /path/to/git/cmd/git.exe/../../bin/bash.exe
-        let git = which::which("git").ok()?;
-        let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
-        if git_bash.is_file() {
-            Some(git_bash.to_string_lossy().to_string())
-        } else {
-            None
+        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
+        if let Some(ref path) = bash {
+            log::info!("Found bash at {}", path);
         }
+        bash
     });
 
     (*GIT_BASH).clone()
 }
 
-pub fn get_windows_system_shell() -> String {
-    use std::path::PathBuf;
-
+#[cfg(windows)]
+pub fn get_powershell() -> Option<String> {
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
         #[cfg(target_pointer_width = "64")]
         let env_var = if find_alternate {
@@ -93,7 +139,7 @@ pub fn get_windows_system_shell() -> String {
                 };
 
                 let exe_path = entry.path().join("pwsh.exe");
-                if exe_path.exists() {
+                if exe_path.is_file() {
                     Some((version, exe_path))
                 } else {
                     None
@@ -106,53 +152,74 @@ pub fn get_windows_system_shell() -> String {
     fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
         let msix_app_dir =
             PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
-        if !msix_app_dir.exists() {
-            return None;
-        }
-
-        let prefix = if find_preview {
-            "Microsoft.PowerShellPreview_"
+        let package_family_name = if find_preview {
+            "Microsoft.PowerShellPreview_8wekyb3d8bbwe"
         } else {
-            "Microsoft.PowerShell_"
+            "Microsoft.PowerShell_8wekyb3d8bbwe"
         };
-        msix_app_dir
-            .read_dir()
-            .ok()?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
-                    return None;
-                }
-
-                if !entry.file_name().to_string_lossy().starts_with(prefix) {
-                    return None;
-                }
-
-                let exe_path = entry.path().join("pwsh.exe");
-                exe_path.exists().then_some(exe_path)
-            })
-            .next()
+        let pwsh_exe = msix_app_dir.join(package_family_name).join("pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
         let pwsh_exe =
             PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
-        pwsh_exe.exists().then_some(pwsh_exe)
+        pwsh_exe.is_file().then_some(pwsh_exe)
     }
 
-    static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
-        find_pwsh_in_programfiles(false, false)
-            .or_else(|| find_pwsh_in_programfiles(true, false))
-            .or_else(|| find_pwsh_in_msix(false))
-            .or_else(|| find_pwsh_in_programfiles(false, true))
-            .or_else(|| find_pwsh_in_msix(true))
-            .or_else(|| find_pwsh_in_programfiles(true, true))
-            .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or("powershell.exe".to_string())
+    fn find_pwsh_in_dotnet_tools() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join(".dotnet\\tools\\pwsh.exe");
+        pwsh_exe.is_file().then_some(pwsh_exe)
+    }
+
+    fn find_windows_powershell() -> Option<PathBuf> {
+        let system_root = PathBuf::from(std::env::var_os("SystemRoot")?);
+        let powershell = system_root.join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        powershell.is_file().then_some(powershell)
+    }
+
+    static POWERSHELL: LazyLock<Option<String>> = LazyLock::new(|| {
+        let locations = [
+            || find_pwsh_in_programfiles(false, false),
+            || find_pwsh_in_programfiles(true, false),
+            || find_pwsh_in_msix(false),
+            || find_pwsh_in_programfiles(false, true),
+            || find_pwsh_in_msix(true),
+            || find_pwsh_in_programfiles(true, true),
+            || find_pwsh_in_scoop(),
+            || find_pwsh_in_dotnet_tools(),
+            || which::which_global("pwsh.exe").ok(),
+            || which::which_global("powershell.exe").ok(),
+            || find_windows_powershell(),
+        ];
+
+        locations
+            .into_iter()
+            .find_map(|f| f())
+            .map(|p| p.to_string_lossy().trim().to_owned())
+            .inspect(|shell| log::info!("Found powershell in: {}", shell))
     });
 
-    (*SYSTEM_SHELL).clone()
+    (*POWERSHELL).clone()
+}
+
+#[cfg(windows)]
+pub fn get_windows_system_shell() -> String {
+    static CMD: LazyLock<String> = LazyLock::new(|| {
+        log::warn!("Powershell not found, falling back to `cmd`");
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        PathBuf::from(system_root)
+            .join("System32\\cmd.exe")
+            .to_string_lossy()
+            .into_owned()
+    });
+    get_powershell().unwrap_or_else(|| (*CMD).clone())
+}
+
+#[cfg(not(windows))]
+pub fn get_windows_system_shell() -> String {
+    "cmd.exe".to_string()
 }
 
 impl fmt::Display for ShellKind {
@@ -407,6 +474,15 @@ impl ShellKind {
 mod tests {
     use super::*;
 
+    fn git_for_windows_layout() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(dir.path().join("git-bash.exe"), []).unwrap();
+        std::fs::write(bin.join("bash.exe"), []).unwrap();
+        dir
+    }
+
     #[test]
     fn test_to_shell_variable() {
         assert_eq!(
@@ -435,5 +511,67 @@ mod tests {
                 assert_eq!(shell_kind.to_shell_variable(input), input);
             }
         }
+    }
+
+    #[test]
+    fn git_bash_requires_git_bash_exe_and_bin_bash() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("bash.exe"), []).unwrap();
+        assert!(find_bash_in_installation(dir.path()).is_none());
+
+        std::fs::write(dir.path().join("git-bash.exe"), []).unwrap();
+        assert_eq!(
+            find_bash_in_installation(dir.path()).as_deref(),
+            Some(bin.join("bash.exe").as_path())
+        );
+    }
+
+    #[test]
+    fn git_bash_from_cmd_git_uses_install_root() {
+        let install = git_for_windows_layout();
+        let cmd = install.path().join("cmd");
+        std::fs::create_dir_all(&cmd).unwrap();
+        let git = cmd.join("git.exe");
+        std::fs::write(&git, []).unwrap();
+        assert_eq!(
+            find_bash_from_git_binary(&git).unwrap(),
+            install.path().join("bin").join("bash.exe")
+        );
+    }
+
+    #[test]
+    fn git_bash_from_mingw64_bin_walks_up_to_install_root() {
+        let install = git_for_windows_layout();
+        let mingw_bin = install.path().join("mingw64").join("bin");
+        std::fs::create_dir_all(&mingw_bin).unwrap();
+        let git = mingw_bin.join("git.exe");
+        std::fs::write(&git, []).unwrap();
+        assert_eq!(
+            find_bash_from_git_binary(&git).unwrap(),
+            install.path().join("bin").join("bash.exe")
+        );
+    }
+
+    #[test]
+    fn git_install_root_takes_precedence_over_git_binary() {
+        let preferred = git_for_windows_layout();
+        let other = git_for_windows_layout();
+        let git = other.path().join("cmd").join("git.exe");
+        std::fs::create_dir_all(git.parent().unwrap()).unwrap();
+        std::fs::write(&git, []).unwrap();
+        assert_eq!(
+            find_bash_using_git_install(Some(preferred.path().to_path_buf()), Some(&git)).unwrap(),
+            preferred.path().join("bin").join("bash.exe")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_stubs_for_windows_shell_discovery() {
+        assert_eq!(get_windows_system_shell(), "cmd.exe");
+        assert_eq!(get_default_system_shell_preferring_bash(), "/bin/sh");
+        assert_eq!(get_default_system_shell(), "/bin/sh");
     }
 }
