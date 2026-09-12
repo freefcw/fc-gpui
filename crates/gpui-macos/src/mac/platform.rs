@@ -830,6 +830,9 @@ impl Platform for MacPlatform {
     }
 
     fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
+        use objc2_app_kit::NSWorkspace;
+        use objc2_foundation::{NSError, NSString};
+
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
@@ -839,51 +842,42 @@ impl Platform for MacPlatform {
             )));
         }
 
-        #[allow(unused_unsafe)]
-        let bundle_id = unsafe {
-            let bundle = Objc2NSBundle::mainBundle();
-            let Some(bundle_id) = bundle.bundleIdentifier() else {
-                return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
-            };
-            bundle_id
+        let Some(bundle_id) = Objc2NSBundle::mainBundle().bundleIdentifier() else {
+            return Task::ready(Err(anyhow!("Can only register URL scheme in bundled apps")));
         };
 
-        unsafe {
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let scheme = Objc2NSString::from_str(scheme);
-            let app: id = msg_send![
-                workspace,
-                URLForApplicationWithBundleIdentifier: Retained::as_ptr(&bundle_id) as ObjcId
-            ];
-            if app == nil {
-                return Task::ready(Err(anyhow!(
-                    "Cannot register URL scheme until app is installed"
-                )));
+        let workspace = NSWorkspace::sharedWorkspace();
+        let Some(app) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id) else {
+            return Task::ready(Err(anyhow!(
+                "Cannot register URL scheme until app is installed"
+            )));
+        };
+
+        let scheme = NSString::from_str(scheme);
+
+        let done_tx = Cell::new(Some(done_tx));
+        let handler = RcBlock::new(move |error: *mut NSError| {
+            let result = if let Some(error) = unsafe { error.as_ref() } {
+                Err(anyhow!(
+                    "Failed to register: {}",
+                    error.localizedDescription()
+                ))
+            } else {
+                Ok(())
+            };
+
+            if let Some(done_tx) = done_tx.take() {
+                _ = done_tx.send(result);
             }
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |error: id| {
-                let result = if error == nil {
-                    Ok(())
-                } else {
-                    let msg: id = msg_send![error, localizedDescription];
-                    Err(anyhow!("Failed to register: {msg:?}"))
-                };
+        });
 
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(result);
-                }
-            });
-            let block = block.copy();
-            let _: () = msg_send![
-                workspace,
-                setDefaultApplicationAtURL: app
-                toOpenURLsWithScheme: Retained::as_ptr(&scheme) as ObjcId
-                completionHandler: block
-            ];
-        }
+        workspace.setDefaultApplicationAtURL_toOpenURLsWithScheme_completionHandler(
+            &app,
+            &scheme,
+            Some(&handler),
+        );
 
-        self.background_executor()
-            .spawn(async { crate::Flatten::flatten(done_rx.await.map_err(|e| anyhow!(e))) })
+        self.background_executor().spawn(async { done_rx.await? })
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
