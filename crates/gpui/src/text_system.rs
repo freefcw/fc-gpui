@@ -142,16 +142,12 @@ impl TextSystem {
         }
     }
 
-    /// Get a list of all available font names from the operating system.
+    /// Get sorted, unique font family names available to the platform text system.
+    ///
+    /// Includes fonts registered with [`Self::add_fonts`].
     pub fn all_font_names(&self) -> Vec<String> {
         let mut names = self.platform_text_system.all_font_names();
-        names.extend(
-            self.fallback_font_stack
-                .iter()
-                .map(|font| font.family.to_string()),
-        );
-        names.push(".SystemUIFont".to_string());
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         names
     }
@@ -1035,5 +1031,20 @@ pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AppResourceProfile, NoopTextSystem};
+
+    #[test]
+    fn all_font_names_lists_only_platform_families() {
+        let text_system = TextSystem::new(
+            Arc::new(NoopTextSystem::new()),
+            &AppResourceProfile::desktop().text,
+        );
+        assert!(text_system.all_font_names().is_empty());
     }
 }
