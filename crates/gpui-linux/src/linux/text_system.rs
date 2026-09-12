@@ -95,6 +95,23 @@ impl CosmicTextSystem {
             font_ids_by_family_cache: HashMap::default(),
         }))
     }
+
+    #[cfg(test)]
+    fn new_without_system_fonts() -> Self {
+        let font_system = FontSystem::new_with_locale_and_db(
+            "en-US".to_string(),
+            cosmic_text::fontdb::Database::new(),
+        );
+
+        Self(RwLock::new(CosmicTextSystemState {
+            font_system,
+            swash_cache: SwashCache::new(),
+            scratch: ShapeBuffer::default(),
+            pending_glyph_images: HashMap::default(),
+            loaded_fonts: Vec::new(),
+            font_ids_by_family_cache: HashMap::default(),
+        }))
+    }
 }
 
 impl Default for CosmicTextSystem {
@@ -862,6 +879,21 @@ mod tests {
     const IBM_PLEX_SANS: &[u8] =
         include_bytes!("../../test_data/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
     const LILEX: &[u8] = include_bytes!("../../test_data/fonts/lilex/Lilex-Regular.ttf");
+
+    #[test]
+    fn all_font_names_tracks_available_families() -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts();
+        assert!(text_system.all_font_names().is_empty());
+
+        text_system.add_fonts(vec![Cow::Borrowed(LILEX)])?;
+        assert_eq!(text_system.all_font_names(), ["Lilex"]);
+
+        // Local test data has Lilex Regular only (Zed also loaded Lilex Bold).
+        // Re-adding Regular still exercises family dedup after a second face load.
+        text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX_SANS), Cow::Borrowed(LILEX)])?;
+        assert_eq!(text_system.all_font_names(), ["IBM Plex Sans", "Lilex"]);
+        Ok(())
+    }
 
     #[test]
     fn prewarm_fonts_is_safe_for_loaded_and_fallback_fonts() {
