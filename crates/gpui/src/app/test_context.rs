@@ -372,6 +372,16 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Simulates the window moving to a display with a different scale factor.
+    pub fn simulate_window_scale_factor_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        scale_factor: f32,
+    ) {
+        self.test_window(window_handle)
+            .simulate_scale_factor_change(scale_factor);
+    }
+
     /// Causes the given sources to be returned if the application queries for screen
     /// capture sources.
     pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
@@ -741,6 +751,14 @@ impl<V: 'static + Render> TestAppWindow<V> {
         let result = self.handle.update(&mut self.cx, f).unwrap();
         self.flush();
         result
+    }
+
+    /// Simulate the window moving to a display with a different scale factor.
+    pub fn simulate_scale_factor_change(&mut self, scale_factor: f32) {
+        let window: AnyWindowHandle = self.handle.into();
+        self.cx
+            .simulate_window_scale_factor_change(window, scale_factor);
+        self.cx.background_executor.run_until_parked();
     }
 
     /// Draws the window once.
@@ -1330,6 +1348,11 @@ impl VisualTestContext {
         self.simulate_window_resize(self.window, size)
     }
 
+    /// Simulates the window moving to a display with a different scale factor.
+    pub fn simulate_scale_factor_change(&self, scale_factor: f32) {
+        self.simulate_window_scale_factor_change(self.window, scale_factor)
+    }
+
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
@@ -1697,6 +1720,23 @@ mod test_app_tests {
         let mut window = app.open_window(|_, _| TestView { value: 1 });
 
         window.draw();
+    }
+
+    #[test]
+    fn test_simulate_scale_factor_change() {
+        let mut app = TestApp::new();
+        let mut window = app.open_window(|_, _| crate::EmptyView);
+        let viewport_size = window.update(|_, window, _| {
+            assert_eq!(window.scale_factor(), 2.0);
+            window.viewport_size()
+        });
+
+        window.simulate_scale_factor_change(1.0);
+
+        window.update(|_, window, _| {
+            assert_eq!(window.scale_factor(), 1.0);
+            assert_eq!(window.viewport_size(), viewport_size);
+        });
     }
 
     #[test]
