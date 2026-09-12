@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use ::util::{ResultExt, paths::SanitizedPath};
+use ::util::{ResultExt, get_powershell, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
@@ -392,11 +392,16 @@ impl Platform for WindowsPlatform {
             app_path.display(),
         );
 
+        let Some(powershell) = get_powershell() else {
+            log::error!("failed to restart: PowerShell is unavailable");
+            return;
+        };
+
         #[allow(
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = util::command::new_std_command("powershell.exe")
+        let restart_process = util::command::new_std_command(powershell)
             .arg("-command")
             .arg(script)
             .spawn();
