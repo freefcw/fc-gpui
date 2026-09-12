@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
+use block2::RcBlock;
 use collections::HashMap;
 use core_foundation::base::TCFType;
 use core_graphics::display::{
@@ -19,9 +20,13 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Class, Object, Sel, YES},
+    runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use objc2::{MainThreadMarker, rc::Retained};
+use objc2_app_kit::NSScreen;
+use objc2_foundation::{NSError, NSNumber, NSString};
+use objc2_screen_capture_kit::{SCDisplay, SCShareableContent};
 use std::{
     cell::RefCell,
     ffi::c_void,
@@ -30,7 +35,7 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use super::{NSStringExt, ns_string};
+use super::NSStringExt;
 
 type ObjcId = *mut Object;
 type FrameCallback = Box<dyn Fn(ScreenCaptureFrame) + Send>;
@@ -41,17 +46,9 @@ type id = ObjcId;
 #[allow(non_upper_case_globals)]
 const nil: ObjcId = ptr::null_mut();
 
-unsafe fn array_count(array: id) -> usize {
-    unsafe { msg_send![array, count] }
-}
-
-unsafe fn array_object_at_index(array: id, index: usize) -> id {
-    unsafe { msg_send![array, objectAtIndex: index] }
-}
-
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
-    sc_display: id,
+    sc_display: Retained<SCDisplay>,
     meta: Option<ScreenMeta>,
 }
 
@@ -112,7 +109,12 @@ fn stream_termination_from_error(
 impl ScreenCaptureSource for MacScreenCaptureSource {
     fn metadata(&self) -> Result<SourceMetadata> {
         let (display_id, size) = unsafe {
-            let display_id: CGDirectDisplayID = msg_send![self.sc_display, displayID];
+            // SAFETY: `SCDisplay` is an Objective-C object, so objc2's object pointer has the
+            // same ABI as objc 0.2's `id`. This only casts a borrowed pointer; it does not
+            // transfer ownership or change the retain count. `self.sc_display` remains alive
+            // for the entire message send, and `displayID` does not retain the receiver.
+            let sc_display: id = Retained::as_ptr(&self.sc_display).cast_mut().cast();
+            let display_id: CGDirectDisplayID = msg_send![sc_display, displayID];
             let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
             let width = CGDisplayModeGetPixelWidth(display_mode_ref);
             let height = CGDisplayModeGetPixelHeight(display_mode_ref);
@@ -162,6 +164,14 @@ impl MacScreenCaptureSource {
         termination_callback: ScreenCaptureTerminationCallback,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         unsafe {
+            // SAFETY: `SCDisplay` is an Objective-C object, so objc2's object pointer has the
+            // same ABI as objc 0.2's `id`. The cast removes pointer constness only because the
+            // legacy `id` alias is mutable; it does not mutate the display, transfer ownership,
+            // or change the retain count. The generated objc2 binding takes `display` as
+            // `&SCDisplay`, confirming that this initializer borrows rather than consumes it.
+            // `self.sc_display` remains alive through the call, and `SCContentFilter` must retain
+            // the display or copy any state that it needs after initialization.
+            let sc_display: id = Retained::as_ptr(&self.sc_display).cast_mut().cast();
             let stream: id = msg_send![class!(SCStream), alloc];
             let filter: id = msg_send![class!(SCContentFilter), alloc];
             let configuration: id = msg_send![class!(SCStreamConfiguration), alloc];
@@ -169,7 +179,8 @@ impl MacScreenCaptureSource {
             let output: id = msg_send![OUTPUT_CLASS, alloc];
 
             let excluded_windows: id = msg_send![class!(NSArray), array];
-            let filter: id = msg_send![filter, initWithDisplay:self.sc_display excludingWindows:excluded_windows];
+            let filter: id =
+                msg_send![filter, initWithDisplay:sc_display excludingWindows:excluded_windows];
             let configuration: id = msg_send![configuration, init];
             let _: id = msg_send![configuration, setScalesToFit: true];
             let _: id = msg_send![configuration, setPixelFormat: 0x42475241];
@@ -237,14 +248,6 @@ impl MacScreenCaptureSource {
     }
 }
 
-impl Drop for MacScreenCaptureSource {
-    fn drop(&mut self) {
-        unsafe {
-            let _: () = msg_send![self.sc_display, release];
-        }
-    }
-}
-
 impl ScreenCaptureStream for MacScreenCaptureStream {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(self.meta.clone())
@@ -284,87 +287,83 @@ struct ScreenMeta {
     is_main: bool,
 }
 
-unsafe fn screen_id_to_human_label() -> HashMap<CGDirectDisplayID, ScreenMeta> {
-    let screens: id = msg_send![class!(NSScreen), screens];
-    let count = unsafe { array_count(screens) };
+fn screen_id_to_human_label(marker: MainThreadMarker) -> HashMap<CGDirectDisplayID, ScreenMeta> {
+    let screens = NSScreen::screens(marker);
     let mut map = HashMap::default();
-    let screen_number_key = unsafe { ns_string("NSScreenNumber") };
-    for i in 0..count {
-        let screen = unsafe { array_object_at_index(screens, i) };
-        let device_desc: id = msg_send![screen, deviceDescription];
-        if device_desc == nil {
+
+    let screen_number_key = NSString::from_str("NSScreenNumber");
+
+    for (i, screen) in screens.iter().enumerate() {
+        let description = screen.deviceDescription();
+        let Some(obj) = description.objectForKey(&screen_number_key) else {
             continue;
-        }
-
-        let nsnumber: id = msg_send![device_desc, objectForKey: screen_number_key];
-        if nsnumber == nil {
+        };
+        let Some(screen_id) = obj.downcast_ref::<NSNumber>() else {
             continue;
-        }
+        };
+        let name = screen.localizedName().to_string();
 
-        let screen_id: u32 = msg_send![nsnumber, unsignedIntValue];
-
-        let name: id = msg_send![screen, localizedName];
-        if name != nil {
-            let cstr: *const std::os::raw::c_char = msg_send![name, UTF8String];
-            let rust_str = unsafe {
-                std::ffi::CStr::from_ptr(cstr)
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            map.insert(
-                screen_id,
-                ScreenMeta {
-                    label: rust_str.into(),
-                    is_main: i == 0,
-                },
-            );
-        }
+        map.insert(
+            screen_id.as_u32(),
+            ScreenMeta {
+                label: name.into(),
+                is_main: i == 0,
+            },
+        );
     }
+
     map
 }
 
-pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-    unsafe {
-        let (mut tx, rx) = oneshot::channel();
-        let tx = Rc::new(RefCell::new(Some(tx)));
-        let screen_id_to_label = screen_id_to_human_label();
-        let block = ConcreteBlock::new(move |shareable_content: id, error: id| {
-            let Some(mut tx) = tx.borrow_mut().take() else {
+pub(crate) fn get_sources(
+    marker: MainThreadMarker,
+) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+    let (tx, rx) = oneshot::channel();
+    let tx = Rc::new(RefCell::new(Some(tx)));
+    let screen_id_to_label = screen_id_to_human_label(marker);
+
+    let handler = RcBlock::new(
+        move |content: *mut SCShareableContent, error: *mut NSError| {
+            let Some(tx) = tx.borrow_mut().take() else {
                 return;
             };
 
-            let result = if error == nil {
-                let displays: id = msg_send![shareable_content, displays];
-                let mut result = Vec::new();
-                for i in 0..array_count(displays) {
-                    let display = array_object_at_index(displays, i);
-                    let id: CGDirectDisplayID = msg_send![display, displayID];
-                    let meta = screen_id_to_label.get(&id).cloned();
-                    let source = MacScreenCaptureSource {
-                        sc_display: msg_send![display, retain],
-                        meta,
-                    };
-                    result.push(Rc::new(source) as Rc<dyn ScreenCaptureSource>);
-                }
+            let result = if let Some(error) = unsafe { error.as_ref() } {
+                Err(anyhow!(
+                    "Screen share failed: {}",
+                    error.localizedDescription()
+                ))
+            } else if let Some(content) = unsafe { content.as_ref() } {
+                // SAFETY: Marked unsafe conservatively by objc2
+                let result = unsafe { content.displays() }
+                    .into_iter()
+                    .map(|display| {
+                        // SAFETY: Marked unsafe conservatively by objc2
+                        let id = unsafe { display.displayID() };
+                        let metadata = screen_id_to_label.get(&id).cloned();
+                        let source = MacScreenCaptureSource {
+                            sc_display: display,
+                            meta: metadata,
+                        };
+                        Rc::new(source) as Rc<dyn ScreenCaptureSource>
+                    })
+                    .collect::<Vec<_>>();
+
                 Ok(result)
             } else {
-                let msg: id = msg_send![error, localizedDescription];
-                Err(anyhow!(
-                    "Screen share failed: {:?}",
-                    NSStringExt::to_str(&msg)
-                ))
+                // The two pointers are mutually exclusive, this should never happen
+                Err(anyhow!("Screen share failed"))
             };
-            tx.send(result).ok();
-        });
-        let block = block.copy();
 
-        let _: () = msg_send![
-            class!(SCShareableContent),
-            getShareableContentExcludingDesktopWindows:YES
-                                   onScreenWindowsOnly:YES
-                                     completionHandler:block];
-        rx
+            _ = tx.send(result);
+        },
+    );
+
+    unsafe {
+        SCShareableContent::getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler(true, true, &handler);
     }
+
+    rx
 }
 
 #[ctor]
