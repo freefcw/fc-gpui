@@ -217,7 +217,7 @@ unsafe fn build_classes() {
     }
 }
 
-pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
+pub(crate) struct MacPlatform(Mutex<MacPlatformState>, MainThreadMarker);
 
 pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
@@ -273,6 +273,7 @@ impl Default for MacPlatform {
 
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
+        let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
         let dispatcher = Arc::new(MacDispatcher::new());
 
         #[cfg(feature = "font-kit")]
@@ -287,7 +288,7 @@ impl MacPlatform {
         #[allow(unused_unsafe)]
         let pasteboard = unsafe { Objc2NSPasteboard::generalPasteboard() };
 
-        Self(Mutex::new(MacPlatformState {
+        let state = Mutex::new(MacPlatformState {
             headless,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -326,7 +327,8 @@ impl MacPlatform {
             network_monitor: None,
             attention_request_id: 0,
             context_menu_callback: None,
-        }))
+        });
+        Self(state, marker)
     }
 
     fn ensure_tray(state: &mut MacPlatformState) -> &MacTray {
@@ -773,6 +775,7 @@ impl Platform for MacPlatform {
             self.foreground_executor(),
             renderer_context,
             atlas_initial_size,
+            self.1,
         )))
     }
 

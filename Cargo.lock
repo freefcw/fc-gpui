@@ -2058,6 +2058,7 @@ dependencies = [
  "async-task",
  "bindgen",
  "block",
+ "block2 0.6.2",
  "cbindgen",
  "core-foundation 0.10.1",
  "core-foundation-sys",
