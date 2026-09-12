@@ -1,9 +1,12 @@
-use crate::HttpClient;
+use crate::{AsyncBody, HttpClient, HttpRequestExt};
 use anyhow::{Context as _, Result, anyhow, bail};
 use futures::AsyncReadExt;
+use http::Request;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use url::Url;
+
+const GITHUB_RELEASE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct GitHubLspBinaryVersion {
     pub name: String,
@@ -34,12 +37,12 @@ pub async fn latest_github_release(
     pre_release: bool,
     http: Arc<dyn HttpClient>,
 ) -> anyhow::Result<GithubRelease> {
+    let url = format!("https://api.github.com/repos/{repo_name_with_owner}/releases");
+
+    let request = github_api_request(&url)?;
+
     let mut response = http
-        .get(
-            format!("https://api.github.com/repos/{repo_name_with_owner}/releases").as_str(),
-            Default::default(),
-            true,
-        )
+        .send(request)
         .await
         .context("error fetching latest release")?;
 
@@ -91,12 +94,12 @@ pub async fn get_release_by_tag_name(
     tag: &str,
     http: Arc<dyn HttpClient>,
 ) -> anyhow::Result<GithubRelease> {
+    let url = format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}");
+
+    let request = github_api_request(&url)?;
+
     let mut response = http
-        .get(
-            &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
-            Default::default(),
-            true,
-        )
+        .send(request)
         .await
         .context("error fetching latest release")?;
 
@@ -128,6 +131,14 @@ pub async fn get_release_by_tag_name(
     Ok(release)
 }
 
+fn github_api_request(url: &str) -> Result<Request<AsyncBody>> {
+    Request::get(url)
+        .follow_redirects(crate::RedirectPolicy::FollowAll)
+        .timeout(GITHUB_RELEASE_REQUEST_TIMEOUT)
+        .body(Default::default())
+        .map_err(Into::into)
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AssetKind {
     TarGz,
@@ -157,7 +168,21 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
 
 #[cfg(test)]
 mod tests {
-    use crate::github::{AssetKind, build_asset_url};
+    use crate::{
+        RequestTimeout,
+        github::{AssetKind, GITHUB_RELEASE_REQUEST_TIMEOUT, build_asset_url, github_api_request},
+    };
+
+    #[test]
+    fn github_api_requests_have_a_total_deadline() {
+        let request =
+            github_api_request("https://api.github.com/repos/zed-industries/zed/releases").unwrap();
+
+        assert_eq!(
+            request.extensions().get::<RequestTimeout>(),
+            Some(&RequestTimeout(GITHUB_RELEASE_REQUEST_TIMEOUT))
+        );
+    }
 
     #[test]
     fn test_build_asset_url() {

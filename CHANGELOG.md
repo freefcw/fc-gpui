@@ -36,6 +36,8 @@
 
 ### Improvements
 
+- **GitHub release request timeout** — GitHub release list and tag lookups attach a 10-second `RequestTimeout` covering the full response body, so a stalled GitHub connection cannot hang callers indefinitely. Client implementations that honor the extension apply it; this workspace has no `reqwest_client` crate.
+
 - **Windows Git Bash / PowerShell discovery** — Git Bash lookup uses `GIT_INSTALL_ROOT` and walks up from `git` so a `mingw64\bin` PATH prefix (launching from Git Bash) still finds `bin\bash.exe`. PowerShell discovery also checks .NET global tools, MSIX package family names, and Windows PowerShell; `get_powershell()` returns `None` if none are found, and `get_windows_system_shell` then falls back to `SystemRoot\System32\cmd.exe`. Windows app restart uses a discovered PowerShell instead of a hard-coded `powershell.exe`.
 
 - **Opt-in `increase_open_file_limit` on Unix** — `adabraka_util::increase_open_file_limit()` raises the process soft `RLIMIT_NOFILE` toward 65,536 (10,240 on macOS) without changing the hard limit. GPUI does not call this from `Application::new` or any other startup path; apps that need it must call it themselves.
