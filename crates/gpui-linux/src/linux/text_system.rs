@@ -2,11 +2,11 @@ use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,
-    FontSystem, ShapeBuffer, ShapeLine, Stretch, Style, SwashCache, Weight,
+    FontSystem, ShapeBuffer, ShapeLine, Stretch, Style, SwashCache, SwashImage, Weight,
 };
 use gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    FontStyle, FontWeight, GlyphId, IsZero as _, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun,
     SharedString, Size, point, size,
 };
@@ -44,6 +44,7 @@ struct CosmicTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
     scratch: ShapeBuffer,
+    pending_glyph_images: HashMap<RenderGlyphParams, SwashImage>,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
@@ -89,6 +90,7 @@ impl CosmicTextSystem {
             font_system,
             swash_cache: SwashCache::new(),
             scratch: ShapeBuffer::default(),
+            pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
         }))
@@ -388,7 +390,7 @@ impl CosmicTextSystemState {
         }
     }
 
-    fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+    fn glyph_image(&mut self, params: &RenderGlyphParams) -> Result<SwashImage> {
         let loaded_font = &self.loaded_fonts[params.font_id.0];
         let font = &loaded_font.font;
         let font_weight = loaded_font.weight;
@@ -396,8 +398,7 @@ impl CosmicTextSystemState {
             params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
         );
-        let image = self
-            .swash_cache
+        self.swash_cache
             .get_image(
                 &mut self.font_system,
                 CacheKey::new(
@@ -411,11 +412,19 @@ impl CosmicTextSystemState {
                 .0,
             )
             .clone()
-            .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
-        Ok(Bounds {
+            .with_context(|| format!("no image for {params:?} in font {font:?}"))
+    }
+
+    fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        let image = self.glyph_image(params)?;
+        let bounds = Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
-        })
+        };
+        if !bounds.is_zero() {
+            self.pending_glyph_images.insert(params.clone(), image);
+        }
+        Ok(bounds)
     }
 
     #[profiling::function]
@@ -428,29 +437,10 @@ impl CosmicTextSystemState {
             anyhow::bail!("glyph bounds are empty");
         } else {
             let bitmap_size = glyph_bounds.size;
-            let loaded_font = &self.loaded_fonts[params.font_id.0];
-            let font = &loaded_font.font;
-            let font_weight = loaded_font.weight;
-            let subpixel_shift = point(
-                params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
-                params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
-            );
-            let mut image = self
-                .swash_cache
-                .get_image(
-                    &mut self.font_system,
-                    CacheKey::new(
-                        font.id(),
-                        params.glyph_id.0 as u16,
-                        (params.font_size * params.scale_factor).into(),
-                        (subpixel_shift.x, subpixel_shift.y.trunc()),
-                        font_weight,
-                        cosmic_text::CacheKeyFlags::empty(),
-                    )
-                    .0,
-                )
-                .clone()
-                .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
+            let mut image = match self.pending_glyph_images.remove(params) {
+                Some(image) => image,
+                None => self.glyph_image(params)?,
+            };
 
             if params.is_emoji {
                 // Convert from RGBA to BGRA.
@@ -897,6 +887,44 @@ mod tests {
             }],
         );
         assert!(!layout.runs.is_empty());
+    }
+
+    #[test]
+    fn rasterize_glyph_reuses_image_measured_for_bounds() {
+        let text_system = CosmicTextSystem::new();
+        text_system
+            .add_fonts(vec![Cow::Borrowed(IBM_PLEX_SANS)])
+            .unwrap();
+        let font_id = text_system
+            .font_id(&font(family_name(IBM_PLEX_SANS)))
+            .unwrap();
+        let glyph_id = text_system
+            .glyph_for_char(font_id, 'A')
+            .expect("IBM Plex Sans contains A");
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: px(16.),
+            subpixel_variant: point(0, 0),
+            scale_factor: 1.0,
+            is_emoji: false,
+            dilation: 0,
+        };
+
+        let bounds = text_system.glyph_raster_bounds(&params).unwrap();
+        assert!(!bounds.is_zero());
+        assert!(
+            text_system
+                .0
+                .read()
+                .pending_glyph_images
+                .contains_key(&params)
+        );
+
+        let (size, data) = text_system.rasterize_glyph(&params, bounds).unwrap();
+        assert_eq!(size, bounds.size);
+        assert!(!data.is_empty());
+        assert!(text_system.0.read().pending_glyph_images.is_empty());
     }
 
     #[test]
