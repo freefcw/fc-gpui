@@ -17,6 +17,7 @@ use crate::{
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
+use block2::RcBlock;
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
@@ -893,50 +894,45 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        use objc2_foundation::NSString;
+
+        let marker = self.1;
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let panel = Objc2NSOpenPanel::openPanel(MainThreadMarker::new_unchecked());
-                    panel.setCanChooseDirectories(options.directories);
-                    panel.setCanChooseFiles(options.files);
-                    panel.setAllowsMultipleSelection(options.multiple);
-                    panel.setCanCreateDirectories(true);
-                    panel.setResolvesAliases(false);
-                    let panel_for_completion = panel.clone();
-                    let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: Objc2NSModalResponse| {
-                        let result = if response == Objc2NSModalResponseOK {
-                            let mut result = Vec::new();
-                            let urls = panel_for_completion.URLs();
-                            for i in 0..urls.count() {
-                                let url = urls.objectAtIndex(i);
-                                if url.isFileURL()
-                                    && let Ok(path) =
-                                        ns_url_to_path(Retained::as_ptr(&url) as *mut Object)
-                                {
-                                    result.push(path)
-                                }
-                            }
-                            Some(result)
-                        } else {
-                            None
+                let panel = Objc2NSOpenPanel::openPanel(marker);
+                panel.setCanChooseDirectories(options.directories);
+                panel.setCanChooseFiles(options.files);
+                panel.setAllowsMultipleSelection(options.multiple);
+
+                panel.setCanCreateDirectories(true);
+                panel.setResolvesAliases(false);
+
+                let done_tx = Cell::new(Some(done_tx));
+                let handler = RcBlock::new({
+                    let panel = panel.clone();
+                    move |response: Objc2NSModalResponse| {
+                        let Some(done_tx) = done_tx.take() else {
+                            return;
                         };
 
-                        if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(Ok(result));
-                        }
-                    });
-                    let block = block.copy();
-                    let panel_ptr = Retained::as_ptr(&panel) as *mut Object;
-
-                    if let Some(prompt) = options.prompt {
-                        let prompt = Objc2NSString::from_str(&prompt);
-                        panel.setPrompt(Some(&prompt));
+                        let result = (response == Objc2NSModalResponseOK).then(|| {
+                            panel
+                                .URLs()
+                                .iter()
+                                .filter(|url| url.isFileURL())
+                                .filter_map(|url| url.to_file_path())
+                                .collect::<Vec<_>>()
+                        });
+                        _ = done_tx.send(Ok(result));
                     }
+                });
 
-                    let _: () = msg_send![panel_ptr, beginWithCompletionHandler: block];
+                if let Some(prompt) = options.prompt {
+                    panel.setPrompt(Some(&NSString::from_str(prompt.as_str())));
                 }
+
+                panel.beginWithCompletionHandler(&handler);
             })
             .detach();
         done_rx
@@ -947,72 +943,68 @@ impl Platform for MacPlatform {
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
-        let directory = directory.to_owned();
-        let suggested_name = suggested_name.map(|s| s.to_owned());
+        use objc2_foundation::{NSString, NSURL};
+
+        let url = NSURL::from_directory_path(directory);
+        let suggested_name = suggested_name.map(NSString::from_str);
         let (done_tx, done_rx) = oneshot::channel();
+        let marker = self.1;
         self.foreground_executor()
             .spawn(async move {
-                unsafe {
-                    let panel = Objc2NSSavePanel::savePanel(MainThreadMarker::new_unchecked());
-                    let path = Objc2NSString::from_str(directory.to_string_lossy().as_ref());
-                    let url = Objc2NSURL::fileURLWithPath_isDirectory(&path, true);
-                    panel.setDirectoryURL(Some(&url));
-                    let panel_ptr = Retained::as_ptr(&panel) as *mut Object;
-                    let panel_for_completion = panel.clone();
+                let panel = Objc2NSSavePanel::savePanel(marker);
+                panel.setDirectoryURL(url.as_deref());
 
-                    if let Some(suggested_name) = suggested_name {
-                        let name_string = Objc2NSString::from_str(&suggested_name);
-                        panel.setNameFieldStringValue(&name_string);
-                    }
-
-                    let done_tx = Cell::new(Some(done_tx));
-                    let block = ConcreteBlock::new(move |response: Objc2NSModalResponse| {
-                        let mut result = None;
-                        if response == Objc2NSModalResponseOK {
-                            if let Some(url) = panel_for_completion.URL()
-                                && url.isFileURL()
-                            {
-                                result = ns_url_to_path(Retained::as_ptr(&url) as *mut Object)
-                                    .ok()
-                                    .map(|mut result| {
-                                        let Some(filename) = result.file_name() else {
-                                            return result;
-                                        };
-                                        let chunks = filename
-                                            .as_bytes()
-                                            .split(|&b| b == b'.')
-                                            .collect::<Vec<_>>();
-
-                                        // https://github.com/zed-industries/zed/issues/16969
-                                        // Workaround a bug in macOS Sequoia that adds an extra file-extension
-                                        // sometimes. e.g. `a.sql` becomes `a.sql.s` or `a.txtx` becomes `a.txtx.txt`
-                                        //
-                                        // This is conditional on OS version because I'd like to get rid of it, so that
-                                        // you can manually create a file called `a.sql.s`. That said it seems better
-                                        // to break that use-case than breaking `a.sql`.
-                                        if chunks.len() == 3
-                                            && chunks[1].starts_with(chunks[2])
-                                            && Self::os_version() >= SemanticVersion::new(15, 0, 0)
-                                        {
-                                            let new_filename = OsStr::from_bytes(
-                                                &filename.as_bytes()
-                                                    [..chunks[0].len() + 1 + chunks[1].len()],
-                                            )
-                                            .to_owned();
-                                            result.set_file_name(&new_filename);
-                                        }
-                                        result
-                                    })
-                            }
-                        }
-
-                        if let Some(done_tx) = done_tx.take() {
-                            let _ = done_tx.send(Ok(result));
-                        }
-                    });
-                    let block = block.copy();
-                    let _: () = msg_send![panel_ptr, beginWithCompletionHandler: block];
+                if let Some(suggested_name) = suggested_name {
+                    panel.setNameFieldStringValue(&suggested_name);
                 }
+
+                let done_tx = Cell::new(Some(done_tx));
+                let handler = RcBlock::new({
+                    let panel = panel.clone();
+                    move |response: Objc2NSModalResponse| {
+                        let Some(done_tx) = done_tx.take() else {
+                            return;
+                        };
+
+                        let result = if response == Objc2NSModalResponseOK {
+                            panel
+                                .URL()
+                                .filter(|url| url.isFileURL())
+                                .and_then(|url| url.to_file_path())
+                                .map(|mut path| {
+                                    let Some(filename) = path.file_name() else {
+                                        return path;
+                                    };
+                                    let chunks = filename
+                                        .as_bytes()
+                                        .split(|&b| b == b'.')
+                                        .collect::<Vec<_>>();
+
+                                    // https://github.com/zed-industries/zed/issues/16969
+                                    // Workaround a bug in macOS Sequoia that adds an extra file-extension
+                                    // sometimes. e.g. `a.sql` becomes `a.sql.s` or `a.txtx` becomes `a.txtx.txt`
+                                    //
+                                    // This is conditional on OS version because I'd like to get rid of it, so that
+                                    // you can manually create a file called `a.sql.s`. That said it seems better
+                                    // to break that use-case than breaking `a.sql`.
+                                    if let &[_, second, third] = chunks.as_slice()
+                                        && second.starts_with(third)
+                                        && Self::os_version() >= SemanticVersion::new(15, 0, 0)
+                                    {
+                                        path.set_extension("");
+                                    }
+
+                                    path
+                                })
+                        } else {
+                            None
+                        };
+
+                        _ = done_tx.send(Ok(result));
+                    }
+                });
+
+                panel.beginWithCompletionHandler(&handler);
             })
             .detach();
 
