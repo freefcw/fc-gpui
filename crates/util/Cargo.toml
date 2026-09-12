@@ -160,7 +160,10 @@ version = "0.2"
 
 [target."cfg(unix)".dependencies.nix]
 version = "0.31"
-features = ["user"]
+features = [
+    "resource",
+    "user",
+]
 
 [target."cfg(windows)".dependencies.tendril]
 version = "0.4.3"

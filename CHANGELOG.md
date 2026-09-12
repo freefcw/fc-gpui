@@ -36,6 +36,8 @@
 
 ### Improvements
 
+- **Opt-in `increase_open_file_limit` on Unix** — `adabraka_util::increase_open_file_limit()` raises the process soft `RLIMIT_NOFILE` toward 65,536 (10,240 on macOS) without changing the hard limit. GPUI does not call this from `Application::new` or any other startup path; apps that need it must call it themselves.
+
 - **`Window::focus_lost_restore_target`** — while focus-lost listeners run, returns the closest ancestor of the previously focused element that can still receive focus. Returns `None` at other times, or when no such ancestor exists.
 
 - **`on_file_drop_exit` for inbound file-drag leave** — `div().on_file_drop_exit(...)` runs when a platform file drag leaves the window while the element is hovered. This is a window-local `FileDropEvent::Exited`, not notification that an outbound drag session ended.
