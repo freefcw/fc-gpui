@@ -30,6 +30,7 @@ accesskit_macos = { version = "0.26.0", optional = true }
 anyhow = "1.0.86"
 async-task = "4.7"
 block = "0.1"
+block2 = "0.6"
 collections = { package = "fc-gpui-collections", path = "../collections", version = "0.5.1" }
 core-foundation = "0.10.1"
 core-foundation-sys = "0.8.7"
@@ -52,7 +53,7 @@ media = { package = "fc-gpui-media", path = "../media", version = "0.5.1" }
 metal = "0.33"
 objc = "0.2"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSAlert", "NSApplication", "NSAppearance", "NSButton", "NSCell", "NSControl", "NSDockTile", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "objc2-core-graphics"] }
+objc2-app-kit = { version = "0.3", features = ["NSAlert", "NSApplication", "NSAppearance", "NSButton", "NSCell", "NSControl", "NSDockTile", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "block2", "objc2-core-graphics"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSAutoreleasePool", "NSBundle", "NSData", "NSDictionary", "NSObjCRuntime", "NSProcessInfo", "NSString", "NSURL", "objc2-core-foundation"] }
 parking = "2.0.0"
 parking_lot = "0.12.1"

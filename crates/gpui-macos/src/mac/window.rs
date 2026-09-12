@@ -10,7 +10,7 @@ use crate::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowFrameSource, WindowKind,
     WindowParams, dispatch_get_main_queue, dispatch_sys::dispatch_async_f, point, px, size,
 };
-use block::ConcreteBlock;
+use block2::RcBlock;
 use core_graphics::display::{CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
@@ -21,10 +21,12 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
+use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSBeep, NSEventModifierFlags,
-    NSVisualEffectMaterial, NSVisualEffectState, NSWindowButton, NSWindowCollectionBehavior,
-    NSWindowOcclusionState, NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSAlert, NSAlertStyle, NSAutoresizingMaskOptions, NSBackingStoreType, NSBeep,
+    NSButton as Objc2NSButton, NSEventModifierFlags, NSVisualEffectMaterial, NSVisualEffectState,
+    NSWindow as Objc2NSWindow, NSWindowButton, NSWindowCollectionBehavior, NSWindowOcclusionState,
+    NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
@@ -796,7 +798,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>, MainThreadMarker);
 
 impl MacWindow {
     pub fn open(
@@ -821,6 +823,7 @@ impl MacWindow {
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
         atlas_initial_size: Size<DevicePixels>,
+        marker: MainThreadMarker,
     ) -> Self {
         unsafe {
             let pool: id = msg_send![class!(NSAutoreleasePool), new];
@@ -920,60 +923,63 @@ impl MacWindow {
             let native_view = view_init_with_frame(native_view, view_bounds(content_view));
             assert!(!native_view.is_null());
 
-            let mut window = Self(Arc::new_cyclic(|self_ref| {
-                Mutex::new(MacWindowState {
-                    self_ref: self_ref.clone(),
-                    handle,
-                    executor,
-                    native_window,
-                    native_view: NonNull::new_unchecked(native_view),
-                    blurred_view: None,
-                    cursor_style: CursorStyle::Arrow,
-                    cursor_hidden: false,
-                    frame_source: None,
-                    renderer: renderer::new_renderer(
-                        renderer_context,
-                        native_window as *mut _,
-                        native_view as *mut _,
-                        bounds.size.map(f32::from),
-                        false,
-                        atlas_initial_size,
-                    ),
-                    request_frame_callback: None,
-                    event_callback: None,
-                    activate_callback: None,
-                    resize_callback: None,
-                    moved_callback: None,
-                    should_close_callback: None,
-                    close_callback: None,
-                    appearance_changed_callback: None,
-                    input_handler: None,
-                    last_key_equivalent: None,
-                    synthetic_drag_counter: 0,
-                    traffic_light_position: titlebar
-                        .as_ref()
-                        .and_then(|titlebar| titlebar.traffic_light_position),
-                    transparent_titlebar: titlebar
-                        .as_ref()
-                        .is_none_or(|titlebar| titlebar.appears_transparent),
-                    previous_modifiers_changed_event: None,
-                    keystroke_for_do_command: None,
-                    do_command_handled: None,
-                    external_files_dragged: false,
-                    first_mouse: false,
-                    app_owns_titlebar_drag,
-                    fullscreen_restore_bounds: Bounds::default(),
-                    move_tab_to_new_window_callback: None,
-                    merge_all_windows_callback: None,
-                    select_next_tab_callback: None,
-                    select_previous_tab_callback: None,
-                    toggle_tab_bar_callback: None,
-                    activated_least_once: false,
-                    is_closing: false,
-                    #[cfg(feature = "accessibility")]
-                    accesskit_adapter: None,
-                })
-            }));
+            let mut window = Self(
+                Arc::new_cyclic(|self_ref| {
+                    Mutex::new(MacWindowState {
+                        self_ref: self_ref.clone(),
+                        handle,
+                        executor,
+                        native_window,
+                        native_view: NonNull::new_unchecked(native_view),
+                        blurred_view: None,
+                        cursor_style: CursorStyle::Arrow,
+                        cursor_hidden: false,
+                        frame_source: None,
+                        renderer: renderer::new_renderer(
+                            renderer_context,
+                            native_window as *mut _,
+                            native_view as *mut _,
+                            bounds.size.map(f32::from),
+                            false,
+                            atlas_initial_size,
+                        ),
+                        request_frame_callback: None,
+                        event_callback: None,
+                        activate_callback: None,
+                        resize_callback: None,
+                        moved_callback: None,
+                        should_close_callback: None,
+                        close_callback: None,
+                        appearance_changed_callback: None,
+                        input_handler: None,
+                        last_key_equivalent: None,
+                        synthetic_drag_counter: 0,
+                        traffic_light_position: titlebar
+                            .as_ref()
+                            .and_then(|titlebar| titlebar.traffic_light_position),
+                        transparent_titlebar: titlebar
+                            .as_ref()
+                            .is_none_or(|titlebar| titlebar.appears_transparent),
+                        previous_modifiers_changed_event: None,
+                        keystroke_for_do_command: None,
+                        do_command_handled: None,
+                        external_files_dragged: false,
+                        first_mouse: false,
+                        app_owns_titlebar_drag,
+                        fullscreen_restore_bounds: Bounds::default(),
+                        move_tab_to_new_window_callback: None,
+                        merge_all_windows_callback: None,
+                        select_next_tab_callback: None,
+                        select_previous_tab_callback: None,
+                        toggle_tab_bar_callback: None,
+                        activated_least_once: false,
+                        is_closing: false,
+                        #[cfg(feature = "accessibility")]
+                        accesskit_adapter: None,
+                    })
+                }),
+                marker,
+            );
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -1410,6 +1416,8 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
+        use objc2_foundation::{NSInteger, NSString};
+
         // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
         // focus (and therefore Space) defaults to Cancel, leaving the middle button of
         // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard.
@@ -1421,62 +1429,64 @@ impl PlatformWindow for MacWindow {
             .map(|(ix, _)| ix)
             .filter(|&ix| ix > 0);
 
-        unsafe {
-            let alert: id = msg_send![class!(NSAlert), alloc];
-            let alert: id = msg_send![alert, init];
-            let alert_style = match level {
-                PromptLevel::Info => 1,
-                PromptLevel::Warning => 0,
-                PromptLevel::Critical => 2,
-            };
-            let _: () = msg_send![alert, setAlertStyle: alert_style];
-            let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            if let Some(detail) = detail {
-                let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
-            }
+        let alert = NSAlert::new(self.1);
+        alert.setAlertStyle(match level {
+            PromptLevel::Critical => NSAlertStyle::Critical,
+            PromptLevel::Warning => NSAlertStyle::Warning,
+            PromptLevel::Info => NSAlertStyle::Informational,
+        });
+        let message = NSString::from_str(msg);
+        alert.setMessageText(message.as_ref());
 
-            let mut initial_focus_button: Option<id> = None;
-            for (ix, answer) in answers.iter().enumerate() {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
-                let _: () = msg_send![button, setTag: ix as NSInteger];
-
-                if answer.is_cancel() {
-                    if let Some(key) = std::char::from_u32(super::events::ESCAPE_KEY) {
-                        let _: () =
-                            msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
-                    }
-                } else if Some(ix) == initial_focus_ix {
-                    initial_focus_button = Some(button);
-                }
-            }
-
-            if let Some(button) = initial_focus_button {
-                let alert_window: id = msg_send![alert, window];
-                let _: () = msg_send![alert_window, setInitialFirstResponder: button];
-            }
-
-            let (done_tx, done_rx) = oneshot::channel();
-            let done_tx = Cell::new(Some(done_tx));
-            let block = ConcreteBlock::new(move |answer: NSInteger| {
-                if let Some(done_tx) = done_tx.take() {
-                    let _ = done_tx.send(answer.try_into().unwrap());
-                }
-            });
-            let block = block.copy();
-            let native_window = self.0.lock().native_window;
-            let executor = self.0.lock().executor.clone();
-            executor
-                .spawn(async move {
-                    let _: () = msg_send![
-                        alert,
-                        beginSheetModalForWindow: native_window
-                        completionHandler: block
-                    ];
-                })
-                .detach();
-
-            Some(done_rx)
+        if let Some(detail) = detail {
+            let detail_text = NSString::from_str(detail);
+            alert.setInformativeText(detail_text.as_ref());
         }
+
+        let mut initial_focus_button: Option<Retained<Objc2NSButton>> = None;
+        for (ix, answer) in answers.iter().enumerate() {
+            let title = NSString::from_str(answer.label());
+            let button = alert.addButtonWithTitle(&title);
+            button.setTag(ix as NSInteger);
+
+            if answer.is_cancel() {
+                if let Some(key) = core::char::from_u32(super::events::ESCAPE_KEY) {
+                    let key = NSString::from_str(&key.to_string());
+                    button.setKeyEquivalent(&key);
+                }
+            } else if Some(ix) == initial_focus_ix {
+                initial_focus_button = Some(button);
+            }
+        }
+
+        if let Some(button) = initial_focus_button {
+            alert.window().setInitialFirstResponder(Some(&button));
+        }
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let done_tx = Cell::new(Some(done_tx));
+
+        let block = RcBlock::new(move |answer: NSInteger| {
+            if let Some(done_tx) = done_tx.take() {
+                let _ = done_tx.send(answer.try_into().unwrap());
+            }
+        });
+
+        let lock = self.0.lock();
+        let native_window = lock.native_window;
+        let executor = lock.executor.clone();
+        executor
+            .spawn(async move {
+                // SAFETY: `native_window` is an Objective-C `NSWindow` pointer
+                // owned by the platform window; bridge it into objc2.
+                let sheet_window: &Objc2NSWindow =
+                    unsafe { &*(native_window as *const Objc2NSWindow) };
+
+                alert.beginSheetModalForWindow_completionHandler(sheet_window, Some(&block));
+            })
+            .detach();
+
+        Some(done_rx)
     }
 
     fn activate(&self) {
