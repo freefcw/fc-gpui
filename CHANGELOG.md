@@ -36,6 +36,8 @@
 
 ### Improvements
 
+- **`on_file_drop_exit` for inbound file-drag leave** — `div().on_file_drop_exit(...)` runs when a platform file drag leaves the window while the element is hovered. This is a window-local `FileDropEvent::Exited`, not notification that an outbound drag session ended.
+
 - **`all_font_names` lists only real families** — `TextSystem::all_font_names` no longer appends the hardcoded fallback stack or `.SystemUIFont`. Suggestions include platform fonts and fonts registered with `add_fonts`. Virtual aliases such as `.SystemUIFont` still resolve; they are just omitted from the list.
 
 - **Malformed `${...}` shell variables no longer panic** — `ShellKind::to_cmd_variable` and `to_powershell_variable` use `strip_suffix('}')` and pass through malformed references such as `${` instead of slicing off the last byte.
