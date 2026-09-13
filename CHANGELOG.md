@@ -36,6 +36,8 @@
 
 ### Improvements
 
+- **macOS titlebar Fill honors tiled-window margins** — when System Settings maps double-click to Fill, GPUI prefers AppKit's private `_zoomFill:` so "Tiled windows have margins" applies, and falls back to `zoom:` if that selector is missing.
+
 - **GitHub release request timeout** — GitHub release list and tag lookups attach a 10-second `RequestTimeout` covering the full response body, so a stalled GitHub connection cannot hang callers indefinitely. Client implementations that honor the extension apply it; this workspace has no `reqwest_client` crate.
 
 - **Windows Git Bash / PowerShell discovery** — Git Bash lookup uses `GIT_INSTALL_ROOT` and walks up from `git` so a `mingw64\bin` PATH prefix (launching from Git Bash) still finds `bin\bash.exe`. PowerShell discovery also checks .NET global tools, MSIX package family names, and Windows PowerShell; `get_powershell()` returns `None` if none are found, and `get_windows_system_shell` then falls back to `SystemRoot\System32\cmd.exe`. Windows app restart uses a discovered PowerShell instead of a hard-coded `powershell.exe`.
