@@ -799,6 +799,14 @@ impl MacWindowState {
         self.is_closing = true;
         self.request_frame_callback.take();
         self.stop_display_link();
+        // Drop clears the AppKit delegate before asynchronously sending `close`, so
+        // `close_window` may never run. Release here so both explicit close and Rust
+        // Drop restore presentation options. `take()` makes a second pop a no-op.
+        if self.simple_fullscreen_state.take().is_some() {
+            unsafe {
+                pop_simple_fullscreen_presentation_options();
+            }
+        }
     }
 
     fn move_traffic_light(&self) {
@@ -1416,6 +1424,8 @@ impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
         let window = this.native_window;
+        // Must run before `setDelegate: nil` so simple-fullscreen presentation
+        // options are popped even when the later async `close` skips `close_window`.
         this.begin_close();
         this.frame_source.take();
         this.renderer.destroy();
@@ -2950,19 +2960,12 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let (close_callback, simple_fullscreen_state) = {
+        let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             lock.begin_close();
-            (
-                lock.close_callback.take(),
-                lock.simple_fullscreen_state.take(),
-            )
+            lock.close_callback.take()
         };
-
-        if simple_fullscreen_state.is_some() {
-            pop_simple_fullscreen_presentation_options();
-        }
 
         if let Some(callback) = close_callback {
             callback();
