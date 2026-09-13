@@ -275,6 +275,10 @@ impl Default for MacPlatform {
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
         let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
+        Self::new_with_marker(headless, marker)
+    }
+
+    fn new_with_marker(headless: bool, marker: MainThreadMarker) -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
 
         #[cfg(feature = "font-kit")]
@@ -2604,6 +2608,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mac_platform_new_requires_main_thread() {
+        if MainThreadMarker::new().is_some() {
+            return;
+        }
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            MacPlatform::new(false);
+        }));
+        assert!(
+            panicked.is_err(),
+            "MacPlatform::new must panic off the AppKit main thread"
+        );
+    }
+
+    #[test]
     fn test_clipboard() {
         let platform = build_platform();
         assert_eq!(platform.read_from_clipboard(), None);
@@ -2634,7 +2652,18 @@ mod tests {
     }
 
     fn build_platform() -> MacPlatform {
-        let platform = MacPlatform::new(false);
+        // libtest runs this on a worker thread, not the AppKit main thread.
+        // `MacPlatform::new` must keep panicking off-main so production AppKit
+        // calls stay honest. `--test-threads=1` still uses a worker, and
+        // `dispatch_sync` to main would deadlock the harness. Clipboard I/O uses
+        // a unique NSPasteboard, matching Zed's later pasteboard tests that do
+        // not construct `MacPlatform` at all.
+        let marker = MainThreadMarker::new().unwrap_or_else(|| {
+            // SAFETY: this marker is stored on `MacPlatform` but unused by
+            // clipboard I/O. Do not call AppKit UI APIs from this test path.
+            unsafe { MainThreadMarker::new_unchecked() }
+        });
+        let platform = MacPlatform::new_with_marker(false, marker);
         platform.0.lock().pasteboard = Objc2NSPasteboard::pasteboardWithUniqueName();
         platform
     }
