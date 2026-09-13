@@ -652,6 +652,93 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     }
 }
 
+// `NSApplicationPresentationOptions` bits (see `NSApplication.PresentationOptions`).
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK: NSUInteger = 1 << 0;
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
+
+// State captured when entering simple (borderless) fullscreen, used to restore
+// the window on exit.
+struct SimpleFullscreenState {
+    frame: NSRect,
+    style_mask: NSWindowStyleMask,
+}
+
+enum SimpleFullscreenPlan {
+    Enter { screen_frame: NSRect },
+    Exit(SimpleFullscreenState),
+}
+
+struct SimpleFullscreenAppState {
+    window_count: usize,
+    saved_presentation_options: NSUInteger,
+}
+
+static SIMPLE_FULLSCREEN_APP_STATE: Mutex<Option<SimpleFullscreenAppState>> = Mutex::new(None);
+
+unsafe fn push_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    match app_state.as_mut() {
+        Some(app_state) => app_state.window_count += 1,
+        None => unsafe {
+            let app = shared_application();
+            let saved_presentation_options: NSUInteger = msg_send![app, presentationOptions];
+            let _: () = msg_send![
+                app,
+                setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+                    | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+            ];
+            *app_state = Some(SimpleFullscreenAppState {
+                window_count: 1,
+                saved_presentation_options,
+            });
+        },
+    }
+}
+
+unsafe fn pop_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    if let Some(state) = app_state.as_mut() {
+        state.window_count = state.window_count.saturating_sub(1);
+        if state.window_count == 0 {
+            unsafe {
+                let app = shared_application();
+                let _: () = msg_send![
+                    app,
+                    setPresentationOptions: state.saved_presentation_options
+                ];
+            }
+            *app_state = None;
+        }
+    }
+}
+
+unsafe fn apply_simple_fullscreen_plan(
+    native_window: id,
+    native_view: id,
+    plan: SimpleFullscreenPlan,
+) {
+    unsafe {
+        match plan {
+            SimpleFullscreenPlan::Exit(saved) => {
+                pop_simple_fullscreen_presentation_options();
+                let _: () = msg_send![native_window, setStyleMask: saved.style_mask];
+                let _: () = msg_send![native_window, setFrame: saved.frame display: YES];
+            }
+            SimpleFullscreenPlan::Enter { screen_frame } => {
+                push_simple_fullscreen_presentation_options();
+                let _: () = msg_send![native_window, setStyleMask: NSWindowStyleMask::Borderless];
+                let _: () = msg_send![native_window, setFrame: screen_frame display: YES];
+            }
+        }
+
+        // Changing the style mask makes AppKit resign the window's key status and
+        // first responder, so keyboard input stops reaching the editor. Re-make the
+        // window key and restore the GPUI view as first responder.
+        let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+        let _: () = msg_send![native_window, makeFirstResponder: native_view];
+    }
+}
+
 struct MacWindowState {
     self_ref: Weak<Mutex<MacWindowState>>,
     handle: AnyWindowHandle,
@@ -684,6 +771,7 @@ struct MacWindowState {
     first_mouse: bool,
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
@@ -814,6 +902,31 @@ impl MacWindowState {
         unsafe {
             let style_mask = window_style_mask(self.native_window);
             style_mask.contains(NSWindowStyleMask::FullScreen)
+        }
+    }
+
+    fn toggle_simple_fullscreen(&mut self) -> Option<SimpleFullscreenPlan> {
+        // If the window is in native fullscreen, simple fullscreen would conflict
+        // with AppKit's own fullscreen handling, so ignore the request.
+        if self.is_fullscreen() {
+            return None;
+        }
+
+        if let Some(saved) = self.simple_fullscreen_state.take() {
+            Some(SimpleFullscreenPlan::Exit(saved))
+        } else {
+            let screen = unsafe { window_screen(self.native_window) };
+            if screen == nil {
+                return None;
+            }
+            let screen_frame = unsafe { screen_frame(screen) };
+
+            self.simple_fullscreen_state = Some(SimpleFullscreenState {
+                frame: unsafe { window_frame(self.native_window) },
+                style_mask: unsafe { window_style_mask(self.native_window) },
+            });
+
+            Some(SimpleFullscreenPlan::Enter { screen_frame })
         }
     }
 
@@ -1039,6 +1152,7 @@ impl MacWindow {
                         first_mouse: false,
                         app_owns_titlebar_drag,
                         fullscreen_restore_bounds: Bounds::default(),
+                        simple_fullscreen_state: None,
                         move_tab_to_new_window_callback: None,
                         merge_all_windows_callback: None,
                         select_next_tab_callback: None,
@@ -1409,7 +1523,7 @@ impl PlatformWindow for MacWindow {
     fn native_window_state(&self) -> Option<Vec<u8>> {
         let native_window = {
             let state = self.0.lock();
-            if state.is_fullscreen() {
+            if state.is_fullscreen() || state.simple_fullscreen_state.is_some() {
                 return None;
             }
             state.native_window
@@ -1833,6 +1947,33 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn toggle_simple_fullscreen(&self) {
+        let state = self.0.clone();
+        let executor = {
+            let this = self.0.lock();
+            this.executor.clone()
+        };
+        executor
+            .spawn(async move {
+                let (native_window, native_view, plan) = {
+                    let mut lock = state.lock();
+                    (
+                        lock.native_window,
+                        lock.native_view.as_ptr() as id,
+                        lock.toggle_simple_fullscreen(),
+                    )
+                };
+                if let Some(plan) = plan {
+                    unsafe { apply_simple_fullscreen_plan(native_window, native_view, plan) };
+                }
+            })
+            .detach();
+    }
+
+    fn is_simple_fullscreen(&self) -> bool {
+        self.0.lock().simple_fullscreen_state.is_some()
+    }
+
     fn is_fullscreen(&self) -> bool {
         let this = self.0.lock();
         let window = this.native_window;
@@ -2035,6 +2176,9 @@ impl PlatformWindow for MacWindow {
 
     fn titlebar_double_click(&self) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
         this.executor
             .spawn(async move {
@@ -2801,12 +2945,19 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let close_callback = {
+        let (close_callback, simple_fullscreen_state) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             lock.begin_close();
-            lock.close_callback.take()
+            (
+                lock.close_callback.take(),
+                lock.simple_fullscreen_state.take(),
+            )
         };
+
+        if simple_fullscreen_state.is_some() {
+            pop_simple_fullscreen_presentation_options();
+        }
 
         if let Some(callback) = close_callback {
             callback();
