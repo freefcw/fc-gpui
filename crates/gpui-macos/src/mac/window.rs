@@ -1883,8 +1883,15 @@ impl PlatformWindow for MacWindow {
                             let _: () = msg_send![window, zoom: nil];
                         }
                         "Fill" => {
-                            // There is no documented API for "Fill" action, so we'll just zoom the window
-                            let _: () = msg_send![window, zoom: nil];
+                            // Unlike `zoom:`, AppKit's private Fill action honors the system's
+                            // "Tiled windows have margins" setting.
+                            let responds_to_zoom_fill: BOOL =
+                                msg_send![window, respondsToSelector: sel!(_zoomFill:)];
+                            if responds_to_zoom_fill == YES {
+                                let _: () = msg_send![window, _zoomFill: nil];
+                            } else {
+                                let _: () = msg_send![window, zoom: nil];
+                            }
                         }
                         _ => {
                             let _: () = msg_send![window, zoom: nil];
