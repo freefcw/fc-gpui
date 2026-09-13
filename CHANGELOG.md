@@ -36,6 +36,8 @@
 
 ### Improvements
 
+- **macOS simple fullscreen restore bounds** — `window_bounds()` reports the pre-simple-fullscreen frame so a restart does not reopen the window maximized.
+
 - **`Window::toggle_simple_fullscreen` / `is_simple_fullscreen`** — macOS-only borderless fullscreen that covers the menu bar and notch without a Mission Control space. No-op / `false` on other platforms. This crate has no `fullscreen_mode` setting; apps choose when to call the API.
 
 - **`Window::native_window_state` / `restore_native_window_state`** — encode and replay an opaque native restorable-state blob. On macOS this is AppKit window restoration (frame and Space); other platforms return `None` / no-op.
