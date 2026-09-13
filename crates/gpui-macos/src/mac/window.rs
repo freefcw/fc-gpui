@@ -39,7 +39,7 @@ use std::{
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
-    sync::{Arc, Weak},
+    sync::{Arc, Once, Weak},
     time::Duration,
 };
 use util::ResultExt;
@@ -181,10 +181,14 @@ impl From<NSRect> for Size<Pixels> {
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
+static RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT: Once = Once::new();
+
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_ARCHIVER_DELEGATE_CLASS: *const Class = ptr::null();
+static mut WINDOW_STATE_UNARCHIVER_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
@@ -461,6 +465,74 @@ unsafe fn build_classes() {
                 decl.register()
             }
         };
+        WINDOW_STATE_ARCHIVER_DELEGATE_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUIWindowStateArchiverDelegate", class!(NSObject)).unwrap();
+            decl.add_method(
+                sel!(archiver:willEncodeObject:),
+                window_state_archiver_will_encode_object
+                    as extern "C" fn(&Object, Sel, id, id) -> id,
+            );
+            decl.register()
+        };
+        WINDOW_STATE_UNARCHIVER_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUIWindowStateKeyedUnarchiver", class!(NSKeyedUnarchiver))
+                    .unwrap();
+            decl.add_method(
+                sel!(_windowRestorationOptions),
+                window_state_unarchiver_restoration_options as extern "C" fn(&Object, Sel) -> id,
+            );
+            decl.register()
+        };
+    }
+}
+
+// NSKeyedArchiverDelegate callback that skips objects which don't adopt `NSSecureCoding`
+// (the window itself and its NSView hierarchy), so encoding the window's restorable state
+// succeeds. AppKit still encodes the window frame and its persistent window-management
+// identifier, which is what the Space restoration on relaunch keys off.
+extern "C" fn window_state_archiver_will_encode_object(
+    _this: &Object,
+    _sel: Sel,
+    _archiver: id,
+    object: id,
+) -> id {
+    // SAFETY: `object` is whatever AppKit hands the delegate during archiving; we only send it
+    // `isKindOfClass:` with valid class arguments, which is safe for any Objective-C object.
+    unsafe {
+        if object.is_null() {
+            return object;
+        }
+        let is_view: BOOL = msg_send![object, isKindOfClass: class!(NSView)];
+        let is_window: BOOL = msg_send![object, isKindOfClass: class!(NSWindow)];
+        if is_view == YES || is_window == YES {
+            nil
+        } else {
+            object
+        }
+    }
+}
+
+// Override of the private `_windowRestorationOptions` on our NSKeyedUnarchiver subclass.
+// Returning a default-initialized `NSWindowRestorationOptions` tells AppKit to restore the
+// window to its original Space. This is the macOS 15+ path (FB15644170: the
+// `NSWindowRestoresWorkspaceAtLaunch` user default no longer works there).
+extern "C" fn window_state_unarchiver_restoration_options(_this: &Object, _sel: Sel) -> id {
+    if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+        return nil;
+    }
+    // SAFETY: we look the class up by name and only send it `alloc`/`init`/`autorelease`, all of
+    // which have the standard `-> id` signature. Returning `nil` when the class is absent is valid.
+    unsafe {
+        match Class::get("NSWindowRestorationOptions") {
+            Some(class) => {
+                let options: id = msg_send![class, alloc];
+                let options: id = msg_send![options, init];
+                msg_send![options, autorelease]
+            }
+            None => nil,
+        }
     }
 }
 
@@ -580,6 +652,94 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     }
 }
 
+// `NSApplicationPresentationOptions` bits (see `NSApplication.PresentationOptions`).
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK: NSUInteger = 1 << 0;
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
+
+// State captured when entering simple (borderless) fullscreen, used to restore
+// the window on exit.
+struct SimpleFullscreenState {
+    frame: NSRect,
+    bounds: Bounds<Pixels>,
+    style_mask: NSWindowStyleMask,
+}
+
+enum SimpleFullscreenPlan {
+    Enter { screen_frame: NSRect },
+    Exit(SimpleFullscreenState),
+}
+
+struct SimpleFullscreenAppState {
+    window_count: usize,
+    saved_presentation_options: NSUInteger,
+}
+
+static SIMPLE_FULLSCREEN_APP_STATE: Mutex<Option<SimpleFullscreenAppState>> = Mutex::new(None);
+
+unsafe fn push_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    match app_state.as_mut() {
+        Some(app_state) => app_state.window_count += 1,
+        None => unsafe {
+            let app = shared_application();
+            let saved_presentation_options: NSUInteger = msg_send![app, presentationOptions];
+            let _: () = msg_send![
+                app,
+                setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+                    | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+            ];
+            *app_state = Some(SimpleFullscreenAppState {
+                window_count: 1,
+                saved_presentation_options,
+            });
+        },
+    }
+}
+
+unsafe fn pop_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    if let Some(state) = app_state.as_mut() {
+        state.window_count = state.window_count.saturating_sub(1);
+        if state.window_count == 0 {
+            unsafe {
+                let app = shared_application();
+                let _: () = msg_send![
+                    app,
+                    setPresentationOptions: state.saved_presentation_options
+                ];
+            }
+            *app_state = None;
+        }
+    }
+}
+
+unsafe fn apply_simple_fullscreen_plan(
+    native_window: id,
+    native_view: id,
+    plan: SimpleFullscreenPlan,
+) {
+    unsafe {
+        match plan {
+            SimpleFullscreenPlan::Exit(saved) => {
+                pop_simple_fullscreen_presentation_options();
+                let _: () = msg_send![native_window, setStyleMask: saved.style_mask];
+                let _: () = msg_send![native_window, setFrame: saved.frame display: YES];
+            }
+            SimpleFullscreenPlan::Enter { screen_frame } => {
+                push_simple_fullscreen_presentation_options();
+                let _: () = msg_send![native_window, setStyleMask: NSWindowStyleMask::Borderless];
+                let _: () = msg_send![native_window, setFrame: screen_frame display: YES];
+            }
+        }
+
+        // Changing the style mask makes AppKit resign the window's key status and
+        // first responder, so keyboard input stops reaching the editor. Re-make the
+        // window key and restore the GPUI view as first responder.
+        let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+        let _: () = msg_send![native_window, makeFirstResponder: native_view];
+    }
+}
+
 struct MacWindowState {
     self_ref: Weak<Mutex<MacWindowState>>,
     handle: AnyWindowHandle,
@@ -612,6 +772,7 @@ struct MacWindowState {
     first_mouse: bool,
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
@@ -638,6 +799,14 @@ impl MacWindowState {
         self.is_closing = true;
         self.request_frame_callback.take();
         self.stop_display_link();
+        // Drop clears the AppKit delegate before asynchronously sending `close`, so
+        // `close_window` may never run. Release here so both explicit close and Rust
+        // Drop restore presentation options. `take()` makes a second pop a no-op.
+        if self.simple_fullscreen_state.take().is_some() {
+            unsafe {
+                pop_simple_fullscreen_presentation_options();
+            }
+        }
     }
 
     fn move_traffic_light(&self) {
@@ -745,6 +914,33 @@ impl MacWindowState {
         }
     }
 
+    fn toggle_simple_fullscreen(&mut self) -> Option<SimpleFullscreenPlan> {
+        // If the window is in native fullscreen, simple fullscreen would conflict
+        // with AppKit's own fullscreen handling, so ignore the request.
+        if self.is_fullscreen() {
+            return None;
+        }
+
+        if let Some(saved) = self.simple_fullscreen_state.take() {
+            Some(SimpleFullscreenPlan::Exit(saved))
+        } else {
+            let screen = unsafe { window_screen(self.native_window) };
+            if screen == nil {
+                return None;
+            }
+            let screen_frame = unsafe { screen_frame(screen) };
+            let bounds = self.bounds();
+
+            self.simple_fullscreen_state = Some(SimpleFullscreenState {
+                frame: unsafe { window_frame(self.native_window) },
+                bounds,
+                style_mask: unsafe { window_style_mask(self.native_window) },
+            });
+
+            Some(SimpleFullscreenPlan::Enter { screen_frame })
+        }
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { window_frame(self.native_window) };
         let screen = unsafe { window_screen(self.native_window) };
@@ -790,6 +986,8 @@ impl MacWindowState {
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if let Some(state) = &self.simple_fullscreen_state {
+            WindowBounds::Windowed(state.bounds)
         } else {
             WindowBounds::Windowed(self.bounds())
         }
@@ -967,6 +1165,7 @@ impl MacWindow {
                         first_mouse: false,
                         app_owns_titlebar_drag,
                         fullscreen_restore_bounds: Bounds::default(),
+                        simple_fullscreen_state: None,
                         move_tab_to_new_window_callback: None,
                         merge_all_windows_callback: None,
                         select_next_tab_callback: None,
@@ -1225,6 +1424,8 @@ impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
         let window = this.native_window;
+        // Must run before `setDelegate: nil` so simple-fullscreen presentation
+        // options are popped even when the later async `close` skips `close_window`.
         this.begin_close();
         this.frame_source.take();
         this.renderer.destroy();
@@ -1331,6 +1532,118 @@ impl PlatformWindow for MacWindow {
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
             }
+        }
+    }
+
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        let native_window = {
+            let state = self.0.lock();
+            if state.is_fullscreen() || state.simple_fullscreen_state.is_some() {
+                return None;
+            }
+            state.native_window
+        };
+        // SAFETY: `native_window` is a live `NSWindow` retained by this window's state, and the
+        // selectors below are AppKit/Foundation methods sent with their documented signatures. The
+        // archived bytes are copied into an owned `Vec` before the objects we allocated are
+        // released, so no pointer into Objective-C memory escapes this block.
+        unsafe {
+            let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
+            let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
+            if archiver.is_null() {
+                log::warn!("failed to create an archiver for the native window state");
+                return None;
+            }
+            let delegate: id = msg_send![WINDOW_STATE_ARCHIVER_DELEGATE_CLASS, new];
+            let _: () = msg_send![archiver, setDelegate: delegate];
+            let _: () = msg_send![native_window, encodeRestorableStateWithCoder: archiver];
+            let _: () = msg_send![archiver, finishEncoding];
+            // The archiver holds a weak reference to its delegate; clear it before the delegate
+            // is released below.
+            let _: () = msg_send![archiver, setDelegate: nil];
+
+            let data: id = msg_send![archiver, encodedData];
+            let bytes: *const u8 = if data.is_null() {
+                ptr::null()
+            } else {
+                let bytes: *const c_void = msg_send![data, bytes];
+                bytes as *const u8
+            };
+            let state = if bytes.is_null() {
+                log::warn!("the archiver produced no data for the native window state");
+                None
+            } else {
+                let length: NSUInteger = msg_send![data, length];
+                Some(std::slice::from_raw_parts(bytes, length).to_vec())
+            };
+
+            let _: () = msg_send![delegate, release];
+            let _: () = msg_send![archiver, release];
+            state
+        }
+    }
+
+    fn restore_native_window_state(&self, state: &[u8]) {
+        if state.is_empty() {
+            return;
+        }
+        let native_window = self.0.lock().native_window;
+        // SAFETY: `native_window` is a live `NSWindow` retained by this window's state. The NSData,
+        // NSKeyedUnarchiver and `restoreStateWithCoder:` selectors are sent with their documented
+        // signatures, and the `NSData` only borrows `state` for the duration of this synchronous
+        // call (it is consumed before `state` could be freed).
+        unsafe {
+            let data: id = msg_send![
+                class!(NSData),
+                dataWithBytes: state.as_ptr() as *const c_void
+                length: state.len() as NSUInteger
+            ];
+            if data.is_null() {
+                log::warn!(
+                    "failed to wrap {} bytes of native window state",
+                    state.len()
+                );
+                return;
+            }
+
+            // On macOS < 15 the `NSWindowRestoresWorkspaceAtLaunch` user default controls whether
+            // the window is restored to its original Space. On macOS 15+ that default is broken
+            // (FB15644170), and the `_windowRestorationOptions` override on our unarchiver subclass
+            // handles it instead.
+            if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+                RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT.call_once(|| {
+                    let defaults = user_defaults();
+                    let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
+                    let yes_value: id = msg_send![class!(NSNumber), numberWithBool: YES];
+                    let dict: id = msg_send![
+                        class!(NSDictionary),
+                        dictionaryWithObject: yes_value
+                        forKey: key
+                    ];
+                    let _: () = msg_send![defaults, registerDefaults: dict];
+                });
+            }
+
+            let unarchiver: id = msg_send![WINDOW_STATE_UNARCHIVER_CLASS, alloc];
+            let mut error: id = nil;
+            let unarchiver: id =
+                msg_send![unarchiver, initForReadingFromData: data error: &mut error];
+            if unarchiver.is_null() {
+                log::warn!(
+                    "failed to unarchive the native window state: {}",
+                    ns_error_description(error)
+                );
+                return;
+            }
+            let _: () = msg_send![native_window, restoreStateWithCoder: unarchiver];
+            let error: id = msg_send![unarchiver, error];
+            if !error.is_null() {
+                log::warn!(
+                    "failed to restore the native window state: {}",
+                    ns_error_description(error)
+                );
+            }
+            let _: () = msg_send![unarchiver, release];
         }
     }
 
@@ -1649,6 +1962,33 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn toggle_simple_fullscreen(&self) {
+        let state = self.0.clone();
+        let executor = {
+            let this = self.0.lock();
+            this.executor.clone()
+        };
+        executor
+            .spawn(async move {
+                let (native_window, native_view, plan) = {
+                    let mut lock = state.lock();
+                    (
+                        lock.native_window,
+                        lock.native_view.as_ptr() as id,
+                        lock.toggle_simple_fullscreen(),
+                    )
+                };
+                if let Some(plan) = plan {
+                    unsafe { apply_simple_fullscreen_plan(native_window, native_view, plan) };
+                }
+            })
+            .detach();
+    }
+
+    fn is_simple_fullscreen(&self) -> bool {
+        self.0.lock().simple_fullscreen_state.is_some()
+    }
+
     fn is_fullscreen(&self) -> bool {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1851,6 +2191,9 @@ impl PlatformWindow for MacWindow {
 
     fn titlebar_double_click(&self) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
         this.executor
             .spawn(async move {
@@ -1883,8 +2226,15 @@ impl PlatformWindow for MacWindow {
                             let _: () = msg_send![window, zoom: nil];
                         }
                         "Fill" => {
-                            // There is no documented API for "Fill" action, so we'll just zoom the window
-                            let _: () = msg_send![window, zoom: nil];
+                            // Unlike `zoom:`, AppKit's private Fill action honors the system's
+                            // "Tiled windows have margins" setting.
+                            let responds_to_zoom_fill: BOOL =
+                                msg_send![window, respondsToSelector: sel!(_zoomFill:)];
+                            if responds_to_zoom_fill == YES {
+                                let _: () = msg_send![window, _zoomFill: nil];
+                            } else {
+                                let _: () = msg_send![window, zoom: nil];
+                            }
                         }
                         _ => {
                             let _: () = msg_send![window, zoom: nil];
@@ -2481,6 +2831,16 @@ pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bo
     unsafe {
         let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
         msg_send![process_info, isOperatingSystemAtLeastVersion: version]
+    }
+}
+
+fn ns_error_description(error: id) -> String {
+    if error.is_null() {
+        return "unknown error".to_owned();
+    }
+    unsafe {
+        let description: id = msg_send![error, localizedDescription];
+        description.to_str().to_owned()
     }
 }
 
