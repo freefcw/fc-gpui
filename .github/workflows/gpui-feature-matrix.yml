@@ -219,9 +219,10 @@ jobs:
             cache-key: macos-real-visual
             linux-native: false
             require_real_visual: true
-            # screen-capture is opt-in; enable it so this job compiles the
-            # macOS SCStream start/stop path (workspace tests do not).
-            command: cargo test -p fc-gpui-macos --lib --features screen-capture --locked && cargo test -p fc-gpui --test real_visual_smoke --features test-support,screen-capture --locked -- --ignored
+            # screen-capture is opt-in; workspace tests do not compile SCStream.
+            # Run only that module (serialized): the full gpui-macos lib suite
+            # without --test-threads=1 SIGABRTs on AppKit clipboard/text paths.
+            command: cargo test -p fc-gpui-macos --lib --features screen-capture --locked -- --test-threads=1 screen_capture && cargo test -p fc-gpui --test real_visual_smoke --features test-support,screen-capture --locked -- --ignored
           - name: Windows / workspace tests
             os: windows-2022
             cache-key: windows-workspace-tests
