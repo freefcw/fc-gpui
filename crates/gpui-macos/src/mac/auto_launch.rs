@@ -28,5 +28,5 @@ pub fn is_auto_launch_enabled(_app_id: &str) -> bool {
     let Ok(service) = main_app_service() else {
         return false;
     };
-    unsafe { service.status() } == SMAppServiceStatus::Enabled
+    unsafe { service.status() == SMAppServiceStatus::Enabled }
 }

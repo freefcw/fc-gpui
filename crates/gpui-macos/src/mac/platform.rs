@@ -38,12 +38,11 @@ use objc::{
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
     NSApplication as Objc2NSApplication,
-    NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy,
-    NSEvent as Objc2NSEvent, NSEventMask as Objc2NSEventMask,
-    NSEventModifierFlags as Objc2NSEventModifierFlags, NSImage as Objc2NSImage,
-    NSMenu as Objc2NSMenu, NSMenuItem as Objc2NSMenuItem, NSModalResponse as Objc2NSModalResponse,
-    NSModalResponseOK as Objc2NSModalResponseOK, NSOpenPanel as Objc2NSOpenPanel,
-    NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
+    NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy, NSEvent as Objc2NSEvent,
+    NSEventMask as Objc2NSEventMask, NSEventModifierFlags as Objc2NSEventModifierFlags,
+    NSImage as Objc2NSImage, NSMenu as Objc2NSMenu, NSMenuItem as Objc2NSMenuItem,
+    NSModalResponse as Objc2NSModalResponse, NSModalResponseOK as Objc2NSModalResponseOK,
+    NSOpenPanel as Objc2NSOpenPanel, NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
     NSPasteboardTypePNG as Objc2NSPasteboardTypePNG,
     NSPasteboardTypeRTF as Objc2NSPasteboardTypeRTF,
     NSPasteboardTypeRTFD as Objc2NSPasteboardTypeRTFD,
@@ -53,8 +52,9 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     NSAutoreleasePool as Objc2NSAutoreleasePool, NSBundle as Objc2NSBundle, NSData as Objc2NSData,
-    NSProcessInfo as Objc2NSProcessInfo, NSProcessInfoThermalState as Objc2NSProcessInfoThermalState,
-    NSSize as Objc2NSSize, NSString as Objc2NSString, NSURL as Objc2NSURL,
+    NSProcessInfo as Objc2NSProcessInfo,
+    NSProcessInfoThermalState as Objc2NSProcessInfoThermalState, NSSize as Objc2NSSize,
+    NSString as Objc2NSString, NSURL as Objc2NSURL,
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
