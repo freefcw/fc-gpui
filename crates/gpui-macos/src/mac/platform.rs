@@ -49,11 +49,12 @@ use objc2_app_kit::{
     NSPasteboardTypeRTFD as Objc2NSPasteboardTypeRTFD,
     NSPasteboardTypeString as Objc2NSPasteboardTypeString,
     NSPasteboardTypeTIFF as Objc2NSPasteboardTypeTIFF, NSSavePanel as Objc2NSSavePanel,
+    NSWorkspace as Objc2NSWorkspace,
 };
 use objc2_foundation::{
     NSAutoreleasePool as Objc2NSAutoreleasePool, NSBundle as Objc2NSBundle, NSData as Objc2NSData,
-    NSProcessInfo as Objc2NSProcessInfo, NSSize as Objc2NSSize, NSString as Objc2NSString,
-    NSURL as Objc2NSURL,
+    NSProcessInfo as Objc2NSProcessInfo, NSProcessInfoThermalState as Objc2NSProcessInfoThermalState,
+    NSSize as Objc2NSSize, NSString as Objc2NSString, NSURL as Objc2NSURL,
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
@@ -828,14 +829,11 @@ impl Platform for MacPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        unsafe {
-            let url_string = Objc2NSString::from_str(url);
-            let Some(url) = Objc2NSURL::initWithString(Objc2NSURL::alloc(), &url_string) else {
-                return;
-            };
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let _: () = msg_send![workspace, openURL: Retained::as_ptr(&url) as ObjcId];
-        }
+        let url_string = Objc2NSString::from_str(url);
+        let Some(url) = Objc2NSURL::initWithString(Objc2NSURL::alloc(), &url_string) else {
+            return;
+        };
+        Objc2NSWorkspace::sharedWorkspace().openURL(&url);
     }
 
     fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
@@ -1019,23 +1017,17 @@ impl Platform for MacPlatform {
     }
 
     fn reveal_path(&self, path: &Path) {
-        unsafe {
-            let path = path.to_path_buf();
-            self.0
-                .lock()
-                .background_executor
-                .spawn(async move {
-                    let full_path = Objc2NSString::from_str(path.to_str().unwrap_or(""));
-                    let root_full_path = Objc2NSString::from_str("");
-                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-                    let _: BOOL = msg_send![
-                        workspace,
-                        selectFile: Retained::as_ptr(&full_path) as ObjcId
-                        inFileViewerRootedAtPath: Retained::as_ptr(&root_full_path) as ObjcId
-                    ];
-                })
-                .detach();
-        }
+        let path = path.to_path_buf();
+        self.0
+            .lock()
+            .background_executor
+            .spawn(async move {
+                let full_path = Objc2NSString::from_str(path.to_str().unwrap_or(""));
+                let root_full_path = Objc2NSString::from_str("");
+                Objc2NSWorkspace::sharedWorkspace()
+                    .selectFile_inFileViewerRootedAtPath(Some(&full_path), &root_full_path);
+            })
+            .detach();
     }
 
     fn open_with_system(&self, path: &Path) {
@@ -1073,16 +1065,12 @@ impl Platform for MacPlatform {
     }
 
     fn thermal_state(&self) -> ThermalState {
-        unsafe {
-            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-            let state: NSInteger = msg_send![process_info, thermalState];
-            match state {
-                0 => ThermalState::Nominal,
-                1 => ThermalState::Fair,
-                2 => ThermalState::Serious,
-                3 => ThermalState::Critical,
-                _ => ThermalState::Nominal,
-            }
+        match Objc2NSProcessInfo::processInfo().thermalState() {
+            Objc2NSProcessInfoThermalState::Nominal => ThermalState::Nominal,
+            Objc2NSProcessInfoThermalState::Fair => ThermalState::Fair,
+            Objc2NSProcessInfoThermalState::Serious => ThermalState::Serious,
+            Objc2NSProcessInfoThermalState::Critical => ThermalState::Critical,
+            _ => ThermalState::Nominal,
         }
     }
 
