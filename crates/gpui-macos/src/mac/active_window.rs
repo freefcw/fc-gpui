@@ -1,8 +1,7 @@
 use crate::FocusedWindowInfo;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
-use objc::runtime::Object;
-use objc::{class, msg_send, sel, sel_impl};
+use objc2_app_kit::NSWorkspace;
 use std::ffi::c_void;
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -16,30 +15,19 @@ unsafe extern "C" {
 }
 
 pub fn get_focused_window_info() -> Option<FocusedWindowInfo> {
-    unsafe {
-        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let frontmost_app: *mut Object = msg_send![workspace, frontmostApplication];
-        if frontmost_app.is_null() {
-            return None;
-        }
+    let workspace = NSWorkspace::sharedWorkspace();
+    let frontmost_app = workspace.frontmostApplication()?;
+    let app_name = frontmost_app.localizedName()?.to_string();
+    let bundle_id = frontmost_app.bundleIdentifier().map(|s| s.to_string());
+    let pid = frontmost_app.processIdentifier();
+    let window_title = get_window_title_via_accessibility(pid).unwrap_or_default();
 
-        let app_name_ns: *mut Object = msg_send![frontmost_app, localizedName];
-        let app_name = nsstring_to_string(app_name_ns)?;
-
-        let bundle_id_ns: *mut Object = msg_send![frontmost_app, bundleIdentifier];
-        let bundle_id = nsstring_to_string(bundle_id_ns);
-
-        let pid: i32 = msg_send![frontmost_app, processIdentifier];
-
-        let window_title = get_window_title_via_accessibility(pid).unwrap_or_default();
-
-        Some(FocusedWindowInfo {
-            app_name,
-            window_title,
-            bundle_id,
-            pid: Some(pid as u32),
-        })
-    }
+    Some(FocusedWindowInfo {
+        app_name,
+        window_title,
+        bundle_id,
+        pid: Some(pid as u32),
+    })
 }
 
 fn get_window_title_via_accessibility(pid: i32) -> Option<String> {
@@ -79,22 +67,5 @@ fn get_window_title_via_accessibility(pid: i32) -> Option<String> {
             title_value as core_foundation::string::CFStringRef,
         );
         Some(cf_title.to_string())
-    }
-}
-
-unsafe fn nsstring_to_string(nsstring: *mut Object) -> Option<String> {
-    unsafe {
-        if nsstring.is_null() {
-            return None;
-        }
-        let bytes: *const std::ffi::c_char = msg_send![nsstring, UTF8String];
-        if bytes.is_null() {
-            return None;
-        }
-        Some(
-            std::ffi::CStr::from_ptr(bytes)
-                .to_string_lossy()
-                .into_owned(),
-        )
     }
 }
