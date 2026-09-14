@@ -309,23 +309,37 @@ impl MacScreenCaptureSource {
         register_stream_termination_callback(&stream, termination_callback);
 
         let tx = Rc::new(RefCell::new(Some(tx)));
-        let handler_stream = stream.clone();
-        let handler_output = output.clone();
-        let handler_delegate = delegate.clone();
+        // `RcBlock` requires `Fn`. Take the owned start state on the first
+        // (and only) completion-handler invocation, matching `get_sources`.
+        let pending_start = Rc::new(RefCell::new(Some((
+            stream.clone(),
+            output.clone(),
+            delegate.clone(),
+            meta,
+        ))));
         let handler = RcBlock::new(move |error: *mut NSError| {
             let result = if let Some(error) = unsafe { error.as_ref() } {
-                take_stream_termination_callback(&handler_stream);
+                if let Some((stream, _, _, _)) = pending_start.borrow_mut().take() {
+                    take_stream_termination_callback(&stream);
+                }
                 Err(anyhow!(
                     "failed to start screen capture stream {}",
                     error.localizedDescription()
                 ))
             } else {
-                Ok(Box::new(MacScreenCaptureStream {
-                    meta,
-                    sc_stream: handler_stream,
-                    sc_stream_output: handler_output,
-                    _sc_stream_delegate: handler_delegate,
-                }) as Box<dyn ScreenCaptureStream>)
+                match pending_start.borrow_mut().take() {
+                    Some((sc_stream, sc_stream_output, sc_stream_delegate, meta)) => {
+                        Ok(Box::new(MacScreenCaptureStream {
+                            meta,
+                            sc_stream,
+                            sc_stream_output,
+                            _sc_stream_delegate: sc_stream_delegate,
+                        }) as Box<dyn ScreenCaptureStream>)
+                    }
+                    None => Err(anyhow!(
+                        "screen capture start handler invoked more than once"
+                    )),
+                }
             };
             if let Some(tx) = tx.borrow_mut().take() {
                 tx.send(result).ok();
