@@ -1704,16 +1704,17 @@ impl Platform for MacPlatform {
     ) {
         self.0.lock().context_menu_callback = Some(callback);
 
+        let menu = Objc2NSMenu::new(main_thread_marker());
+        menu.setAutoenablesItems(false);
         unsafe {
-            let menu: id = msg_send![class!(NSMenu), new];
-            let _: () = msg_send![menu, setAutoenablesItems: NO];
-            super::tray::build_menu_with_selector(menu, &items, sel!(handleContextMenuItem:));
-
+            super::tray::build_menu_with_selector(
+                &menu,
+                &items,
+                objc2::sel!(handleContextMenuItem:),
+            );
             if let Some(point) = global_point_to_native_screen_point(position) {
-                let _: () =
-                    msg_send![menu, popUpMenuPositioningItem: nil atLocation: point inView: nil];
+                menu.popUpMenuPositioningItem_atLocation_inView(None, point, None);
             }
-            let _: () = msg_send![menu, release];
         }
     }
 

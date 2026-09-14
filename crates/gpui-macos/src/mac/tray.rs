@@ -1,20 +1,14 @@
 use super::screen_frame_to_tray_anchor;
 use crate::TrayMenuItem;
 use crate::{Bounds, Pixels, TrayAnchor, TrayIconRenderingMode};
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc::runtime::Object;
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
-    NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSImage, NSMenu, NSMenuItem,
-    NSStatusBar, NSStatusItem,
+    NSApplication, NSApplicationDelegate, NSControlStateValueOff, NSControlStateValueOn, NSImage,
+    NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
 };
 use objc2_foundation::{NSData, NSSize, NSString};
-use std::{
-    cell::{Cell, RefCell},
-    ffi::c_void,
-    ptr,
-};
-
-type ObjcId = *mut Object;
+use std::cell::{Cell, RefCell};
 
 pub(crate) struct MacTray {
     status_item: Retained<NSStatusItem>,
@@ -80,7 +74,7 @@ impl MacTray {
         }
     }
 
-    #[allow(unused_unsafe)]
+    #[allow(dead_code, unused_unsafe)]
     unsafe fn apply_icon_rendering_mode(image: &NSImage, rendering_mode: TrayIconRenderingMode) {
         let is_template = matches!(rendering_mode, TrayIconRenderingMode::Adaptive);
         unsafe { image.setTemplate(is_template) };
@@ -110,11 +104,7 @@ impl MacTray {
         unsafe {
             let menu = NSMenu::new(main_thread_marker());
             menu.setAutoenablesItems(false);
-            build_menu_with_selector(
-                Retained::as_ptr(&menu) as ObjcId,
-                &items,
-                sel!(handleTrayMenuItem:),
-            );
+            build_menu_with_selector(&menu, &items, objc2::sel!(handleTrayMenuItem:));
 
             self.stored_menu.replace(Some(menu));
 
@@ -132,19 +122,15 @@ impl MacTray {
                 self.status_item.setMenu(None);
 
                 if let Some(button) = self.status_item.button(main_thread_marker()) {
-                    let delegate = get_app_delegate();
-                    if !delegate.is_null() {
-                        let button = Retained::as_ptr(&button) as ObjcId;
-                        let _: () = msg_send![button, setTarget: delegate];
-                        let _: () = msg_send![button, setAction: sel!(handleTrayPanelClick:)];
+                    if let Some(delegate) = get_app_delegate() {
+                        button.setTarget(Some(delegate.as_ref()));
+                        button.setAction(Some(objc2::sel!(handleTrayPanelClick:)));
                     }
                 }
             } else {
                 if let Some(button) = self.status_item.button(main_thread_marker()) {
-                    let button = Retained::as_ptr(&button) as ObjcId;
-                    let null_sel: *const c_void = ptr::null();
-                    let _: () = msg_send![button, setTarget: ptr::null_mut::<Object>()];
-                    let _: () = msg_send![button, setAction: null_sel];
+                    button.setTarget(None);
+                    button.setAction(None);
                 }
 
                 let stored = self.stored_menu.borrow();
@@ -178,38 +164,34 @@ impl Drop for MacTray {
     }
 }
 
-unsafe fn get_app_delegate() -> ObjcId {
+fn get_app_delegate() -> Option<Retained<objc2::runtime::ProtocolObject<dyn NSApplicationDelegate>>>
+{
     let app = NSApplication::sharedApplication(main_thread_marker());
-    let app = Retained::as_ptr(&app) as ObjcId;
-    msg_send![app, delegate]
+    app.delegate()
 }
 
 pub(crate) unsafe fn configure_actionable_item_with_selector(
-    menu_item: ObjcId,
+    menu_item: &NSMenuItem,
     item_id: &str,
-    selector: objc::runtime::Sel,
+    selector: objc2::runtime::Sel,
 ) {
     unsafe {
-        let delegate = get_app_delegate();
-        if !delegate.is_null() {
-            let menu_item_ref = &*menu_item.cast::<NSMenuItem>();
-            let _: () = msg_send![menu_item, setTarget: delegate];
-            let _: () = msg_send![menu_item, setAction: selector];
+        if let Some(delegate) = get_app_delegate() {
+            menu_item.setTarget(Some(delegate.as_ref()));
+            menu_item.setAction(Some(selector));
             let represented = NSString::from_str(item_id);
-            let represented = Retained::as_ptr(&represented) as ObjcId;
-            let _: () = msg_send![menu_item, setRepresentedObject: represented];
-            menu_item_ref.setEnabled(true);
+            menu_item.setRepresentedObject(Some(represented.as_ref()));
+            menu_item.setEnabled(true);
         }
     }
 }
 
 pub(crate) unsafe fn build_menu_with_selector(
-    menu: ObjcId,
+    menu: &NSMenu,
     items: &[TrayMenuItem],
-    selector: objc::runtime::Sel,
+    selector: objc2::runtime::Sel,
 ) {
     unsafe {
-        let menu = &*menu.cast::<NSMenu>();
         for item in items {
             match item {
                 TrayMenuItem::Action { label, id } => {
@@ -221,11 +203,7 @@ pub(crate) unsafe fn build_menu_with_selector(
                         None,
                         &empty,
                     );
-                    configure_actionable_item_with_selector(
-                        Retained::as_ptr(&menu_item) as ObjcId,
-                        id.as_ref(),
-                        selector,
-                    );
+                    configure_actionable_item_with_selector(&menu_item, id.as_ref(), selector);
                     menu.addItem(&menu_item);
                 }
                 TrayMenuItem::Separator => {
@@ -245,11 +223,7 @@ pub(crate) unsafe fn build_menu_with_selector(
                         &empty,
                     );
                     let submenu = NSMenu::new(main_thread_marker());
-                    build_menu_with_selector(
-                        Retained::as_ptr(&submenu) as ObjcId,
-                        sub_items,
-                        selector,
-                    );
+                    build_menu_with_selector(&submenu, sub_items, selector);
                     menu_item.setSubmenu(Some(&submenu));
                     menu.addItem(&menu_item);
                 }
@@ -262,11 +236,7 @@ pub(crate) unsafe fn build_menu_with_selector(
                         None,
                         &empty,
                     );
-                    configure_actionable_item_with_selector(
-                        Retained::as_ptr(&menu_item) as ObjcId,
-                        id.as_ref(),
-                        selector,
-                    );
+                    configure_actionable_item_with_selector(&menu_item, id.as_ref(), selector);
                     menu_item.setState(if *checked {
                         NSControlStateValueOn
                     } else {
