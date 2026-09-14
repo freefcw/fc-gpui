@@ -219,7 +219,9 @@ jobs:
             cache-key: macos-real-visual
             linux-native: false
             require_real_visual: true
-            command: cargo test -p fc-gpui --test real_visual_smoke --features test-support --locked -- --ignored
+            # screen-capture is opt-in; enable it so this job compiles the
+            # macOS SCStream start/stop path (workspace tests do not).
+            command: cargo test -p fc-gpui-macos --lib --features screen-capture --locked && cargo test -p fc-gpui --test real_visual_smoke --features test-support,screen-capture --locked -- --ignored
           - name: Windows / workspace tests
             os: windows-2022
             cache-key: windows-workspace-tests
