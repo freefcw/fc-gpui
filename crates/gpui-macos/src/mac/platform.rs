@@ -16,7 +16,6 @@ use crate::{
     TrayIconRenderingMode, TrayMenuItem, WindowAppearance, WindowParams,
 };
 use anyhow::{Context as _, anyhow};
-use block::ConcreteBlock;
 use block2::RcBlock;
 use core_foundation::{
     base::{CFRelease, CFType, CFTypeRef, OSStatus, TCFType},
@@ -40,6 +39,7 @@ use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
     NSApplication as Objc2NSApplication,
     NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy,
+    NSEvent as Objc2NSEvent, NSEventMask as Objc2NSEventMask,
     NSEventModifierFlags as Objc2NSEventModifierFlags, NSImage as Objc2NSImage,
     NSMenu as Objc2NSMenu, NSMenuItem as Objc2NSMenuItem, NSModalResponse as Objc2NSModalResponse,
     NSModalResponseOK as Objc2NSModalResponseOK, NSOpenPanel as Objc2NSOpenPanel,
@@ -92,6 +92,11 @@ const NSUTF8StringEncoding: NSUInteger = 4;
 const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
+
+/// `NX_SUBTYPE_AUX_CONTROL_BUTTONS` — media keys arrive as system-defined
+/// events with this subtype. The numeric value collides with
+/// `NSEventSubtype::ScreenChanged`.
+const NX_SUBTYPE_AUX_CONTROL_BUTTONS: i16 = 8;
 
 fn main_thread_marker() -> MainThreadMarker {
     unsafe { MainThreadMarker::new_unchecked() }
@@ -1577,7 +1582,7 @@ impl Platform for MacPlatform {
                 return;
             }
 
-            let block = ConcreteBlock::new(move |path: *const c_void| {
+            let block = RcBlock::new(move |path: *const c_void| {
                 let status = super::network::path_status_to_network_status(path);
 
                 struct NetworkChangeCtx {
@@ -1609,14 +1614,14 @@ impl Platform for MacPlatform {
 
                 dispatch_async_f(dispatch_get_main_queue(), ctx as *mut c_void, Some(invoke));
             });
-            let block = block.copy();
 
             let queue = super::dispatcher::dispatch_get_main_queue();
             super::network::start_path_monitor(
                 monitor,
-                &*block as *const _ as *const c_void,
+                RcBlock::as_ptr(&block).cast(),
                 queue as *const c_void,
             );
+            // `nw_path_monitor` keeps the handler pointer; retain the heap block.
             std::mem::forget(block);
 
             state.network_monitor = Some(monitor);
@@ -1633,54 +1638,48 @@ impl Platform for MacPlatform {
 
         let platform_ptr = &self.0 as *const Mutex<MacPlatformState> as *const c_void;
 
-        unsafe {
-            let mask: u64 = 1 << 14; // NSSystemDefinedMask
+        let handler = RcBlock::new(move |event: ptr::NonNull<Objc2NSEvent>| {
+            let event = unsafe { event.as_ref() };
+            if event.subtype().0 != NX_SUBTYPE_AUX_CONTROL_BUTTONS {
+                return;
+            }
 
-            let block = ConcreteBlock::new(move |event: id| {
-                let subtype: i16 = msg_send![event, subtype];
-                if subtype != 8 {
-                    return;
-                }
+            let data1 = event.data1();
+            let key_code = (data1 >> 16) & 0xFF;
+            let flags = (data1 >> 8) & 0xFF;
+            let is_down = (flags & 0x1) == 0;
 
-                let data1: isize = msg_send![event, data1];
-                let key_code = (data1 >> 16) & 0xFF;
-                let flags = (data1 >> 8) & 0xFF;
-                let is_down = (flags & 0x1) == 0;
+            if !is_down {
+                return;
+            }
 
-                if !is_down {
-                    return;
-                }
+            let media_event = match key_code {
+                16 => crate::MediaKeyEvent::PlayPause,
+                17 => crate::MediaKeyEvent::NextTrack,
+                18 => crate::MediaKeyEvent::PreviousTrack,
+                19 => crate::MediaKeyEvent::Stop,
+                20 => crate::MediaKeyEvent::Play,
+                _ => return,
+            };
 
-                let media_event = match key_code {
-                    16 => crate::MediaKeyEvent::PlayPause,
-                    17 => crate::MediaKeyEvent::NextTrack,
-                    18 => crate::MediaKeyEvent::PreviousTrack,
-                    19 => crate::MediaKeyEvent::Stop,
-                    20 => crate::MediaKeyEvent::Play,
-                    _ => return,
-                };
+            let platform_state = unsafe { &*(platform_ptr as *const Mutex<MacPlatformState>) };
+            let mut lock = platform_state.lock();
+            if let Some(mut callback) = lock.media_key_callback.take() {
+                drop(lock);
+                callback(media_event);
+                platform_state
+                    .lock()
+                    .media_key_callback
+                    .get_or_insert(callback);
+            }
+        });
+        let monitor = Objc2NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+            Objc2NSEventMask::SystemDefined,
+            &handler,
+        );
+        std::mem::forget(handler);
 
-                let platform_state = &*(platform_ptr as *const Mutex<MacPlatformState>);
-                let mut lock = platform_state.lock();
-                if let Some(mut callback) = lock.media_key_callback.take() {
-                    drop(lock);
-                    callback(media_event);
-                    platform_state
-                        .lock()
-                        .media_key_callback
-                        .get_or_insert(callback);
-                }
-            });
-            let block = block.copy();
-            let monitor: id = msg_send![
-                class!(NSEvent),
-                addGlobalMonitorForEventsMatchingMask: mask
-                handler: &*block
-            ];
-            std::mem::forget(block);
-
-            state.media_key_monitor = Some(monitor);
-        }
+        state.media_key_monitor = monitor.map(|monitor| Retained::into_raw(monitor) as id);
     }
 
     fn request_user_attention(&self, attention_type: crate::AttentionType) {
