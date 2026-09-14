@@ -1,55 +1,44 @@
 use crate::{BiometricKind, BiometricStatus};
-use objc::runtime::{BOOL, Object, YES};
-use objc::{class, msg_send, sel, sel_impl};
+use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2_foundation::NSString;
-use std::ptr::null_mut;
-
-const LA_POLICY_BIOMETRICS: i64 = 1;
-
-#[link(name = "LocalAuthentication", kind = "framework")]
-unsafe extern "C" {}
+use objc2::runtime::Bool;
+use objc2_foundation::{NSError, NSString};
+use objc2_local_authentication::{LAContext, LAPolicy};
 
 pub fn biometric_status() -> BiometricStatus {
-    unsafe {
-        let context: *mut Object = msg_send![class!(LAContext), new];
-        let mut error: *mut Object = null_mut();
-        let can_evaluate: BOOL = msg_send![
-            context,
-            canEvaluatePolicy: LA_POLICY_BIOMETRICS
-            error: &mut error
-        ];
-        let _: () = msg_send![context, release];
-        if can_evaluate == YES {
-            BiometricStatus::Available(BiometricKind::TouchId)
-        } else {
-            BiometricStatus::Unavailable
-        }
+    let context = unsafe { LAContext::new() };
+    let available = unsafe {
+        context
+            .canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics)
+            .is_ok()
+    };
+    if available {
+        BiometricStatus::Available(BiometricKind::TouchId)
+    } else {
+        BiometricStatus::Unavailable
     }
 }
 
 pub fn authenticate_biometric(reason: &str, callback: Box<dyn FnOnce(bool) + Send>) {
+    let context = unsafe { LAContext::new() };
+    let reason = NSString::from_str(reason);
+    let callback = std::sync::Mutex::new(Some(callback));
+
+    // Keep the context alive until the reply runs. `evaluatePolicy` may run on a
+    // private queue, so the retain is transferred as a raw pointer (Send).
+    let context_ptr = Retained::into_raw(context);
+    let handler = RcBlock::new(move |success: Bool, _error: *mut NSError| {
+        let _context = unsafe { Retained::from_raw(context_ptr) };
+        if let Some(cb) = callback.lock().ok().and_then(|mut guard| guard.take()) {
+            cb(success.as_bool());
+        }
+    });
+
     unsafe {
-        let context: *mut Object = msg_send![class!(LAContext), new];
-        let reason_ns = NSString::from_str(reason);
-        let reason_ns = Retained::as_ptr(&reason_ns).cast_mut().cast::<Object>();
-
-        let callback = std::sync::Mutex::new(Some(callback));
-
-        let block = block::ConcreteBlock::new(move |success: BOOL, _error: *mut Object| {
-            if let Some(cb) = callback.lock().ok().and_then(|mut guard| guard.take()) {
-                cb(success == YES);
-            }
-        });
-        let block = block.copy();
-
-        let _: () = msg_send![
-            context,
-            evaluatePolicy: LA_POLICY_BIOMETRICS
-            localizedReason: reason_ns
-            reply: &*block
-        ];
-
-        let _: () = msg_send![context, release];
+        (*context_ptr).evaluatePolicy_localizedReason_reply(
+            LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
+            &reason,
+            &handler,
+        );
     }
 }
