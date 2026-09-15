@@ -534,6 +534,46 @@ fn disable_autofill_heuristic_controller() {
     }
 }
 
+fn clear_menu_delegates(menu: &Objc2NSMenu) {
+    menu.setDelegate(None);
+    for item in menu.itemArray().iter() {
+        if let Some(submenu) = item.submenu() {
+            clear_menu_delegates(&submenu);
+        }
+    }
+}
+
+fn unhook_application_delegate(
+    app: &GPUIApplication,
+    delegate: &GPUIApplicationDelegate,
+    state: &MacPlatformState,
+) {
+    let observer = AsRef::<AnyObject>::as_ref(delegate);
+    unsafe {
+        NSNotificationCenter::defaultCenter().removeObserver(observer);
+        Objc2NSWorkspace::sharedWorkspace()
+            .notificationCenter()
+            .removeObserver(observer);
+    }
+
+    if let Some(menu) = app.mainMenu() {
+        clear_menu_delegates(&menu);
+    }
+    if let Some(menu) = app.servicesMenu() {
+        clear_menu_delegates(&menu);
+    }
+    if let Some(ptr) = state.dock_menu {
+        if let Some(menu) = unsafe { Retained::retain(ptr as *mut Objc2NSMenu) } {
+            clear_menu_delegates(&menu);
+        }
+    }
+    if let Some(tray) = state.tray.as_ref() {
+        tray.disconnect_app_delegate();
+    }
+
+    app.setDelegate(None);
+}
+
 fn register_launch_observers(this: &GPUIApplicationDelegate) {
     let notification_center = NSNotificationCenter::defaultCenter();
     let observer = AsRef::<AnyObject>::as_ref(this);
@@ -1011,6 +1051,9 @@ impl Platform for MacPlatform {
             pool.drain();
         }
 
+        // `NSApplication.delegate`, menu delegates, and notification observers
+        // are weak. Unhook them before dropping `app_delegate`.
+        unhook_application_delegate(&app, &app_delegate, &self.0.lock());
         app.set_platform(ptr::null());
         app_delegate.set_platform(ptr::null());
     }
