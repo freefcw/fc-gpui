@@ -191,8 +191,10 @@ define_class!(
             _sender: &Objc2NSApplication,
         ) -> Option<Retained<Objc2NSMenu>> {
             let state = delegate_platform(self).0.lock();
-            let ptr = state.dock_menu?;
-            unsafe { Retained::retain(ptr as *mut Objc2NSMenu) }
+            match state.dock_menu {
+                Some(ptr) => unsafe { Retained::retain(ptr as *mut Objc2NSMenu) },
+                None => None,
+            }
         }
 
         #[unsafe(method(application:openURLs:))]
