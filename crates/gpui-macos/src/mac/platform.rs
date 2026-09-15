@@ -27,10 +27,10 @@ use core_foundation::{
 };
 use futures::channel::oneshot;
 use itertools::Itertools;
-use objc::{class, msg_send, runtime::Object};
+use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class};
+use objc2::{AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class};
 use objc2_app_kit::{
     NSApplication as Objc2NSApplication,
     NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy, NSApplicationDelegate,
@@ -185,7 +185,7 @@ define_class!(
             }
         }
 
-        #[unsafe(method(applicationDockMenu:))]
+        #[unsafe(method_id(applicationDockMenu:))]
         fn application_dock_menu(
             &self,
             _sender: &Objc2NSApplication,
@@ -1003,9 +1003,11 @@ impl Platform for MacPlatform {
         let app_delegate = GPUIApplicationDelegate::new(self.1, platform_ptr);
         app.setDelegate(Some(ProtocolObject::from_ref(&*app_delegate)));
 
-        let pool = Objc2NSAutoreleasePool::new();
-        app.run();
-        pool.drain();
+        unsafe {
+            let pool = Objc2NSAutoreleasePool::new();
+            app.run();
+            pool.drain();
+        }
 
         app.set_platform(ptr::null());
         app_delegate.set_platform(ptr::null());
@@ -1160,7 +1162,7 @@ impl Platform for MacPlatform {
 
     fn window_appearance(&self) -> WindowAppearance {
         let appearance = shared_application().effectiveAppearance();
-        super::window_appearance::from_native(Retained::as_ptr(&appearance) as ObjcId)
+        unsafe { super::window_appearance::from_native(Retained::as_ptr(&appearance) as ObjcId) }
     }
 
     fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
