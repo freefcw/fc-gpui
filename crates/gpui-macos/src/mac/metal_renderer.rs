@@ -12,6 +12,7 @@ use dispatch2::DispatchData;
 use media::core_video::CVMetalTextureCache;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
+use objc2::{ClassType, Message};
 use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSRange, NSString};
 #[cfg(feature = "runtime_shaders")]
@@ -469,7 +470,7 @@ impl MetalRenderer {
                         command_buffer.waitUntilScheduled();
                         drawable.present();
                     } else {
-                        command_buffer.presentDrawable(ProtocolObject::from_ref(&**drawable));
+                        command_buffer.presentDrawable(ProtocolObject::from_ref(&*drawable));
                         command_buffer.commit();
                     }
                     return;
@@ -541,7 +542,7 @@ impl MetalRenderer {
                     let blit_encoder = command_buffer
                         .blitCommandEncoder()
                         .expect("blit command encoder");
-                    blit_encoder.synchronizeResource(ProtocolObject::from_ref(&**target_texture));
+                    blit_encoder.synchronizeResource(ProtocolObject::from_ref(&*target_texture));
                     blit_encoder.endEncoding();
 
                     command_buffer.commit();
@@ -1607,7 +1608,7 @@ fn release_instance_buffer_on_complete(
         },
     );
     unsafe {
-        command_buffer.addCompletedHandler(RcBlock::as_ptr(&handler).cast_mut());
+        command_buffer.addCompletedHandler(RcBlock::as_ptr(&handler));
     }
 }
 
