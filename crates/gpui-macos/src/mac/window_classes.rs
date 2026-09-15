@@ -28,9 +28,10 @@ use objc2_app_kit::{
     NSWindow, NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
 };
 use objc2_foundation::{
-    NSArray, NSAttributedString, NSAttributedStringKey, NSData, NSError, NSNotification,
-    NSObjectProtocol, NSPoint as Objc2NSPoint, NSRange as Objc2NSRange, NSRangePointer,
-    NSRect as Objc2NSRect, NSSize as Objc2NSSize, NSString, NSUInteger,
+    NSArray, NSAttributedString, NSAttributedStringKey, NSData, NSError, NSKeyedArchiver,
+    NSKeyedArchiverDelegate, NSKeyedUnarchiver, NSNotification, NSObject, NSObjectProtocol,
+    NSPoint as Objc2NSPoint, NSRange as Objc2NSRange, NSRangePointer, NSRect as Objc2NSRect,
+    NSSize as Objc2NSSize, NSString, NSUInteger,
 };
 use objc2_quartz_core::{CALayer, CALayerDelegate};
 use parking_lot::Mutex;
@@ -517,18 +518,18 @@ struct ArchiverDelegateIvars;
 define_class!(
     // SAFETY: `NSObject` has no subclassing requirements and
     // `GPUIWindowStateArchiverDelegate` does not implement `Drop`.
-    #[unsafe(super(objc2_foundation::NSObject))]
+    #[unsafe(super(NSObject))]
     #[name = "GPUIWindowStateArchiverDelegate"]
     #[ivars = ArchiverDelegateIvars]
     pub(super) struct GPUIWindowStateArchiverDelegate;
 
     unsafe impl NSObjectProtocol for GPUIWindowStateArchiverDelegate {}
 
-    unsafe impl objc2_foundation::NSKeyedArchiverDelegate for GPUIWindowStateArchiverDelegate {
+    unsafe impl NSKeyedArchiverDelegate for GPUIWindowStateArchiverDelegate {
         #[unsafe(method_id(archiver:willEncodeObject:))]
         unsafe fn archiver_will_encode_object(
             &self,
-            _archiver: &objc2_foundation::NSKeyedArchiver,
+            _archiver: &NSKeyedArchiver,
             object: &AnyObject,
         ) -> Option<Retained<AnyObject>> {
             if object.is_kind_of::<NSView>() || object.is_kind_of::<NSWindow>() {
@@ -543,7 +544,7 @@ define_class!(
 define_class!(
     // SAFETY: `NSKeyedUnarchiver` can be subclassed and
     // `GPUIWindowStateKeyedUnarchiver` does not implement `Drop`.
-    #[unsafe(super(objc2_foundation::NSKeyedUnarchiver))]
+    #[unsafe(super(NSKeyedUnarchiver))]
     #[name = "GPUIWindowStateKeyedUnarchiver"]
     pub(super) struct GPUIWindowStateKeyedUnarchiver;
 
