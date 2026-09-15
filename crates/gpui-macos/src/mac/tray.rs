@@ -139,6 +139,19 @@ impl MacTray {
         }
     }
 
+    pub(crate) fn disconnect_app_delegate(&self) {
+        unsafe {
+            if let Some(button) = self.status_item.button(main_thread_marker()) {
+                button.setTarget(None);
+                button.setAction(None);
+            }
+            self.status_item.setMenu(None);
+            if let Some(menu) = self.stored_menu.borrow().as_ref() {
+                clear_menu_item_targets(menu);
+            }
+        }
+    }
+
     pub fn get_icon_anchor(&self) -> Option<TrayAnchor> {
         unsafe {
             let button = self.status_item.button(main_thread_marker())?;
@@ -160,6 +173,15 @@ impl Drop for MacTray {
         unsafe {
             let status_bar = NSStatusBar::systemStatusBar();
             status_bar.removeStatusItem(&self.status_item);
+        }
+    }
+}
+
+fn clear_menu_item_targets(menu: &NSMenu) {
+    for item in menu.itemArray().iter() {
+        item.setTarget(None);
+        if let Some(submenu) = item.submenu() {
+            clear_menu_item_targets(&submenu);
         }
     }
 }
