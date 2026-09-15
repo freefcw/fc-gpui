@@ -18,10 +18,13 @@ use crate::{
 use objc::{
     class, msg_send,
     runtime::{BOOL, NO, Object, YES},
+    sel, sel_impl,
 };
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject, Sel};
-use objc2::{AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class};
+use objc2::{
+    AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class,
+};
 use objc2_app_kit::{
     NSCursor, NSDragOperation, NSDraggingDestination, NSDraggingInfo, NSEvent, NSPanel, NSScreen,
     NSTextInputClient, NSView, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
@@ -111,12 +114,12 @@ macro_rules! define_gpui_ns_window {
                 #[unsafe(method(close))]
                 fn close(&self) {
                     close_gpui_window(self);
-                    unsafe { objc2::msg_send![super(self), close] }
+                    let _: () = unsafe { objc2::msg_send![super(self), close] };
                 }
 
                 #[unsafe(method(addTitlebarAccessoryViewController:))]
                 fn add_titlebar_accessory_view_controller(&self, view_controller: &AnyObject) {
-                    unsafe {
+                    let _: () = unsafe {
                         objc2::msg_send![super(self), addTitlebarAccessoryViewController: view_controller]
                     };
                     hide_titlebar_accessory(view_controller);
@@ -125,14 +128,15 @@ macro_rules! define_gpui_ns_window {
                 #[unsafe(method(moveTabToNewWindow:))]
                 fn move_tab_to_new_window(&self, _sender: Option<&AnyObject>) {
                     let sender: Option<&AnyObject> = None;
-                    unsafe { objc2::msg_send![super(self), moveTabToNewWindow: sender] };
+                    let _: () =
+                        unsafe { objc2::msg_send![super(self), moveTabToNewWindow: sender] };
                     invoke_move_tab_to_new_window(self);
                 }
 
                 #[unsafe(method(mergeAllWindows:))]
                 fn merge_all_windows(&self, _sender: Option<&AnyObject>) {
                     let sender: Option<&AnyObject> = None;
-                    unsafe { objc2::msg_send![super(self), mergeAllWindows: sender] };
+                    let _: () = unsafe { objc2::msg_send![super(self), mergeAllWindows: sender] };
                     invoke_merge_all_windows(self);
                 }
 
@@ -149,7 +153,7 @@ macro_rules! define_gpui_ns_window {
                 #[unsafe(method(toggleTabBar:))]
                 fn toggle_tab_bar(&self, _sender: Option<&AnyObject>) {
                     let sender: Option<&AnyObject> = None;
-                    unsafe { objc2::msg_send![super(self), toggleTabBar: sender] };
+                    let _: () = unsafe { objc2::msg_send![super(self), toggleTabBar: sender] };
                     invoke_toggle_tab_bar(self);
                 }
             }
@@ -311,7 +315,7 @@ define_class!(
 
         #[unsafe(method(resetCursorRects))]
         fn reset_cursor_rects(&self) {
-            unsafe { objc2::msg_send![super(self), resetCursorRects] };
+            let _: () = unsafe { objc2::msg_send![super(self), resetCursorRects] };
             handle_reset_cursor_rects(self);
         }
 
@@ -360,7 +364,7 @@ define_class!(
             if !frame_size_changed(self, size) {
                 return;
             }
-            unsafe { objc2::msg_send![super(self), setFrameSize: size] };
+            let _: () = unsafe { objc2::msg_send![super(self), setFrameSize: size] };
             finish_set_frame_size(self, size);
         }
 
@@ -492,15 +496,13 @@ define_class!(
 
     impl BlurredView {
         #[unsafe(method_id(initWithFrame:))]
-        fn init_with_frame(this: Allocated<Self>, frame: Objc2NSRect) -> Option<Retained<Self>> {
-            let this: Option<Retained<Self>> =
+        fn init_with_frame(this: Allocated<Self>, frame: Objc2NSRect) -> Retained<Self> {
+            let this = this.set_ivars(());
+            let this: Retained<Self> =
                 unsafe { objc2::msg_send![super(this), initWithFrame: frame] };
-            let Some(this) = this else {
-                return None;
-            };
             this.setMaterial(NSVisualEffectMaterial::Selection);
             this.setState(NSVisualEffectState::Active);
-            Some(this)
+            this
         }
 
         #[unsafe(method(updateLayer))]
@@ -532,7 +534,9 @@ define_class!(
             _archiver: &NSKeyedArchiver,
             object: &AnyObject,
         ) -> Option<Retained<AnyObject>> {
-            if object.is_kind_of::<NSView>() || object.is_kind_of::<NSWindow>() {
+            if object.downcast_ref::<NSView>().is_some()
+                || object.downcast_ref::<NSWindow>().is_some()
+            {
                 None
             } else {
                 Some(object.retain())
@@ -552,13 +556,13 @@ define_class!(
         #[unsafe(method_id(_windowRestorationOptions))]
         fn window_restoration_options(&self) -> Option<Retained<AnyObject>> {
             if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
-                return None;
+                None
+            } else {
+                match AnyClass::get(c"NSWindowRestorationOptions") {
+                    Some(class) => unsafe { objc2::msg_send![class, new] },
+                    None => None,
+                }
             }
-            let Some(class) = AnyClass::get(c"NSWindowRestorationOptions") else {
-                return None;
-            };
-            let options: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![class, new] };
-            options
         }
     }
 );
@@ -621,8 +625,7 @@ impl GPUIView {
 impl BlurredView {
     pub(super) fn with_frame(mtm: MainThreadMarker, frame: Objc2NSRect) -> Retained<Self> {
         let this = Self::alloc(mtm);
-        let view: Option<Retained<Self>> = unsafe { objc2::msg_send![this, initWithFrame: frame] };
-        view.expect("BlurredView initWithFrame returned nil")
+        unsafe { objc2::msg_send![this, initWithFrame: frame] }
     }
 }
 
@@ -681,12 +684,9 @@ pub(super) fn assign_view_state(view: &GPUIView, state: &Arc<Mutex<MacWindowStat
 
 pub(super) unsafe fn gpui_window_from_id<'a>(ptr: id) -> Option<&'a GPUIWindow> {
     unsafe {
-        let object = ptr.cast::<AnyObject>().as_ref()?;
-        if object.is_kind_of::<GPUIWindow>() {
-            Some(&*ptr.cast::<GPUIWindow>())
-        } else {
-            None
-        }
+        ptr.cast::<AnyObject>()
+            .as_ref()?
+            .downcast_ref::<GPUIWindow>()
     }
 }
 

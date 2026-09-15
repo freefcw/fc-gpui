@@ -1,6 +1,4 @@
-use super::{
-    BoolExt, MacDisplay, NSRange, NSStringExt, display_id_for_screen, ns_string, renderer,
-};
+use super::{MacDisplay, NSRange, NSStringExt, display_id_for_screen, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ForegroundExecutor, KeyDownEvent,
     Keystroke, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -39,6 +37,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Once, Weak},
 };
+use util::ResultExt;
 
 type ObjcId = *mut Object;
 
@@ -823,11 +822,11 @@ impl MacWindow {
             match &created {
                 CreatedWindow::Window(gpui_window) => {
                     assign_window_state(gpui_window, &window.0);
-                    gpui_window.setDelegate(Some(ProtocolObject::from_ref(&*gpui_window)));
+                    gpui_window.setDelegate(Some(ProtocolObject::from_ref(&**gpui_window)));
                 }
                 CreatedWindow::Panel(gpui_panel) => {
                     assign_panel_state(gpui_panel, &window.0);
-                    gpui_panel.setDelegate(Some(ProtocolObject::from_ref(&*gpui_panel)));
+                    gpui_panel.setDelegate(Some(ProtocolObject::from_ref(&**gpui_panel)));
                 }
             }
             assign_view_state(&native_view_retained, &window.0);
