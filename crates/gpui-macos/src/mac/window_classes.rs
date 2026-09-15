@@ -346,12 +346,7 @@ define_class!(
 
         #[unsafe(method_id(makeBackingLayer))]
         fn make_backing_layer(&self) -> Retained<CALayer> {
-            let ptr = view_state(self)
-                .lock()
-                .renderer
-                .layer_ptr()
-                .cast::<CALayer>();
-            unsafe { Retained::retain(ptr).expect("CAMetalLayer backing layer") }
+            Retained::into_super(view_state(self).lock().renderer.layer().retain())
         }
 
         #[unsafe(method(viewDidChangeBackingProperties))]
@@ -1312,12 +1307,10 @@ fn handle_view_did_change_backing_properties(this: &GPUIView) {
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
     let drawable_size = size.to_device_pixels(scale_factor);
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setContentsScale: scale_factor as f64
-        ];
-    }
+    lock.renderer
+        .layer()
+        .as_super()
+        .setContentsScale(scale_factor as f64);
 
     lock.renderer.update_drawable_size(drawable_size);
 

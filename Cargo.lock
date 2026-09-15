@@ -1306,7 +1306,6 @@ dependencies = [
  "core-graphics2",
  "io-surface",
  "libc",
- "metal",
 ]
 
 [[package]]
@@ -1572,6 +1571,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.11.1",
+ "block2 0.6.2",
  "objc2 0.6.4",
 ]
 
@@ -2057,7 +2057,6 @@ dependencies = [
  "anyhow",
  "async-task",
  "bindgen",
- "block",
  "block2 0.6.2",
  "cbindgen",
  "core-foundation 0.10.1",
@@ -2078,13 +2077,14 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "metal",
  "objc",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
  "objc2-core-media",
  "objc2-foundation 0.3.2",
  "objc2-local-authentication",
+ "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "objc2-screen-capture-kit",
  "objc2-service-management",
@@ -2121,8 +2121,6 @@ dependencies = [
  "core-foundation 0.10.1",
  "core-video",
  "ctor 0.4.3",
- "foreign-types",
- "metal",
  "objc",
 ]
 
@@ -3707,21 +3705,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "metal"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7047791b5bc903b8cd963014b355f71dc9864a9a0b727057676c1dcae5cbc15"
-dependencies = [
- "bitflags 2.11.1",
- "block",
- "core-graphics-types 0.2.0",
- "foreign-types",
- "log",
- "objc",
- "paste",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4309,6 +4292,7 @@ checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.11.1",
  "block2 0.6.2",
+ "dispatch2",
  "objc2 0.6.4",
  "objc2-foundation 0.3.2",
 ]
