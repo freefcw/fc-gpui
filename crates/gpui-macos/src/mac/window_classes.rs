@@ -515,7 +515,7 @@ define_class!(
     }
 );
 
-struct ArchiverDelegateIvars;
+pub(super) struct ArchiverDelegateIvars;
 
 define_class!(
     // SAFETY: `NSObject` has no subclassing requirements and
