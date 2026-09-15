@@ -178,10 +178,12 @@ impl Drop for MacTray {
 }
 
 fn clear_menu_item_targets(menu: &NSMenu) {
-    for item in menu.itemArray().iter() {
-        item.setTarget(None);
-        if let Some(submenu) = item.submenu() {
-            clear_menu_item_targets(&submenu);
+    unsafe {
+        for item in menu.itemArray().iter() {
+            item.setTarget(None);
+            if let Some(submenu) = item.submenu() {
+                clear_menu_item_targets(&submenu);
+            }
         }
     }
 }
