@@ -4,18 +4,25 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::FxHashMap;
-use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
-use metal::Device;
+use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
+use objc2_metal::{
+    MTLDevice, MTLPixelFormat, MTLRegion, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
+};
 use parking_lot::Mutex;
 use std::borrow::Cow;
+use std::ptr::NonNull;
+
+type MetalDevice = Retained<ProtocolObject<dyn MTLDevice>>;
+type MetalTexture = Retained<ProtocolObject<dyn MTLTexture>>;
 
 pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, atlas_initial_size: Size<DevicePixels>) -> Self {
+    pub(crate) fn new(device: MetalDevice, atlas_initial_size: Size<DevicePixels>) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
-            device: AssertSend(device),
+            device,
             atlas_initial_size,
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
@@ -23,13 +30,13 @@ impl MetalAtlas {
         }))
     }
 
-    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
+    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> MetalTexture {
         self.0.lock().texture(id).metal_texture.clone()
     }
 }
 
 struct MetalAtlasState {
-    device: AssertSend<Device>,
+    device: MetalDevice,
     atlas_initial_size: Size<DevicePixels>,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
@@ -128,24 +135,23 @@ impl MetalAtlasState {
             height: DevicePixels(16384),
         };
         let size = min_size.max(&self.atlas_initial_size).min(&MAX_ATLAS_SIZE);
-        let texture_descriptor = metal::TextureDescriptor::new();
-        texture_descriptor.set_width(size.width.into());
-        texture_descriptor.set_height(size.height.into());
-        let pixel_format;
-        let usage;
-        match kind {
-            AtlasTextureKind::Monochrome => {
-                pixel_format = metal::MTLPixelFormat::A8Unorm;
-                usage = metal::MTLTextureUsage::ShaderRead;
-            }
-            AtlasTextureKind::Polychrome => {
-                pixel_format = metal::MTLPixelFormat::BGRA8Unorm;
-                usage = metal::MTLTextureUsage::ShaderRead;
-            }
+        let texture_descriptor = MTLTextureDescriptor::new();
+        unsafe {
+            texture_descriptor.setWidth(size.width.into());
+            texture_descriptor.setHeight(size.height.into());
         }
-        texture_descriptor.set_pixel_format(pixel_format);
-        texture_descriptor.set_usage(usage);
-        let metal_texture = self.device.new_texture(&texture_descriptor);
+        let (pixel_format, usage) = match kind {
+            AtlasTextureKind::Monochrome => (MTLPixelFormat::A8Unorm, MTLTextureUsage::ShaderRead),
+            AtlasTextureKind::Polychrome => {
+                (MTLPixelFormat::BGRA8Unorm, MTLTextureUsage::ShaderRead)
+            }
+        };
+        texture_descriptor.setPixelFormat(pixel_format);
+        texture_descriptor.setUsage(usage);
+        let metal_texture = self
+            .device
+            .newTextureWithDescriptor(&texture_descriptor)
+            .expect("atlas texture");
 
         let texture_list = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
@@ -160,7 +166,7 @@ impl MetalAtlasState {
                 kind,
             },
             allocator: etagere::BucketedAtlasAllocator::new(device_size_to_etagere(size)),
-            metal_texture: AssertSend(metal_texture),
+            metal_texture,
             live_atlas_keys: 0,
         };
 
@@ -188,9 +194,13 @@ impl MetalAtlasState {
 struct MetalAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
-    metal_texture: AssertSend<metal::Texture>,
+    metal_texture: MetalTexture,
     live_atlas_keys: u32,
 }
+
+// Metal textures are usable from any thread; objc2's `ProtocolObject<dyn MTLTexture>`
+// is not marked `Send`, but `PlatformAtlas` requires `Send + Sync`.
+unsafe impl Send for MetalAtlasTexture {}
 
 impl MetalAtlasTexture {
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
@@ -209,25 +219,33 @@ impl MetalAtlasTexture {
     }
 
     fn upload(&self, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        let region = metal::MTLRegion::new_2d(
-            bounds.origin.x.into(),
-            bounds.origin.y.into(),
-            bounds.size.width.into(),
-            bounds.size.height.into(),
-        );
-        self.metal_texture.replace_region(
-            region,
-            0,
-            bytes.as_ptr() as *const _,
-            bounds.size.width.to_bytes(self.bytes_per_pixel()) as u64,
-        );
+        let region = MTLRegion {
+            origin: objc2_metal::MTLOrigin {
+                x: bounds.origin.x.into(),
+                y: bounds.origin.y.into(),
+                z: 0,
+            },
+            size: objc2_metal::MTLSize {
+                width: bounds.size.width.into(),
+                height: bounds.size.height.into(),
+                depth: 1,
+            },
+        };
+        unsafe {
+            self.metal_texture
+                .replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                    region,
+                    0,
+                    NonNull::new(bytes.as_ptr() as *mut _).expect("atlas upload bytes"),
+                    bounds.size.width.to_bytes(self.bytes_per_pixel()) as usize,
+                );
+        }
     }
 
     fn bytes_per_pixel(&self) -> u8 {
-        use metal::MTLPixelFormat::*;
-        match self.metal_texture.pixel_format() {
-            A8Unorm | R8Unorm => 1,
-            RGBA8Unorm | BGRA8Unorm => 4,
+        match self.metal_texture.pixelFormat() {
+            MTLPixelFormat::A8Unorm | MTLPixelFormat::R8Unorm => 1,
+            MTLPixelFormat::RGBA8Unorm | MTLPixelFormat::BGRA8Unorm => 4,
             _ => unimplemented!(),
         }
     }
@@ -251,8 +269,3 @@ fn etagere_point_to_device(point: etagere::Point) -> Point<DevicePixels> {
         y: DevicePixels::from(point.y),
     }
 }
-
-#[derive(Deref, DerefMut)]
-struct AssertSend<T>(T);
-
-unsafe impl<T> Send for AssertSend<T> {}

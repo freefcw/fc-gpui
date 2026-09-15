@@ -353,7 +353,6 @@ optional = true
 
 [target.'cfg(target_os = "macos")'.dependencies.core-video]
 version = "0.5.2"
-features = ["metal"]
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"

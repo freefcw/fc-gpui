@@ -231,9 +231,6 @@ pub mod core_video {
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };
-    use foreign_types::ForeignTypeRef;
-
-    use metal::{MTLDevice, MTLPixelFormat};
     use std::ptr;
 
     #[repr(C)]
@@ -251,8 +248,9 @@ pub mod core_video {
     impl CVMetalTextureCache {
         /// # Safety
         ///
-        /// metal_device must be valid according to CVMetalTextureCacheCreate
-        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
+        /// `metal_device` must be a valid `id<MTLDevice>` according to
+        /// `CVMetalTextureCacheCreate`.
+        pub unsafe fn new(metal_device: *const c_void) -> Result<Self> {
             let mut this = ptr::null();
             let result = unsafe {
                 CVMetalTextureCacheCreate(
@@ -277,7 +275,7 @@ pub mod core_video {
             &self,
             source: ::core_video::image_buffer::CVImageBufferRef,
             texture_attributes: CFDictionaryRef,
-            pixel_format: MTLPixelFormat,
+            pixel_format: usize,
             width: usize,
             height: usize,
             plane_index: usize,
@@ -310,7 +308,7 @@ pub mod core_video {
         fn CVMetalTextureCacheCreate(
             allocator: CFAllocatorRef,
             cache_attributes: CFDictionaryRef,
-            metal_device: *const MTLDevice,
+            metal_device: *const c_void,
             texture_attributes: CFDictionaryRef,
             cache_out: *mut CVMetalTextureCacheRef,
         ) -> CVReturn;
@@ -319,7 +317,7 @@ pub mod core_video {
             texture_cache: CVMetalTextureCacheRef,
             source_image: ::core_video::image_buffer::CVImageBufferRef,
             texture_attributes: CFDictionaryRef,
-            pixel_format: MTLPixelFormat,
+            pixel_format: usize,
             width: usize,
             height: usize,
             plane_index: usize,
@@ -336,11 +334,9 @@ pub mod core_video {
     impl_CFTypeDescription!(CVMetalTexture);
 
     impl CVMetalTexture {
-        pub fn as_texture_ref(&self) -> &metal::TextureRef {
-            unsafe {
-                let texture = CVMetalTextureGetTexture(self.as_concrete_TypeRef());
-                metal::TextureRef::from_ptr(texture as *mut _)
-            }
+        /// Returns the wrapped `id<MTLTexture>` without transferring ownership.
+        pub fn as_texture_ptr(&self) -> *mut c_void {
+            unsafe { CVMetalTextureGetTexture(self.as_concrete_TypeRef()) }
         }
     }
 
