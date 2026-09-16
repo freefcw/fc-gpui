@@ -350,7 +350,7 @@ unsafe fn apply_simple_fullscreen_plan(
         // first responder, so keyboard input stops reaching the editor. Re-make the
         // window key and restore the GPUI view as first responder.
         let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
-        let _: () = msg_send![native_window, makeFirstResponder: native_view];
+        let _: bool = msg_send![native_window, makeFirstResponder: native_view];
     }
 }
 
@@ -858,7 +858,7 @@ impl MacWindow {
 
             let _: () = msg_send![content_view, addSubview: native_view];
             drop(native_view_retained);
-            let _: () = msg_send![native_window, makeFirstResponder: native_view];
+            let _: bool = msg_send![native_window, makeFirstResponder: native_view];
 
             match &kind {
                 WindowKind::Normal | WindowKind::Floating => {
@@ -877,11 +877,11 @@ impl MacWindow {
                     // the window or application aren't active, which is often the case
                     // e.g. for notification windows.
                     let tracking_area: id = msg_send![NSTrackingArea::class(), alloc];
-                    let _: () = msg_send![
+                    let tracking_area: id = msg_send![
                         tracking_area,
-                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
-                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
-                        owner: native_view
+                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
+                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect,
+                        owner: native_view,
                         userInfo: nil
                     ];
                     let _: () = msg_send![native_view, addTrackingArea: autorelease(tracking_area)];
@@ -900,11 +900,11 @@ impl MacWindow {
                 }
                 WindowKind::Overlay => {
                     let tracking_area: id = msg_send![NSTrackingArea::class(), alloc];
-                    let _: () = msg_send![
+                    let tracking_area: id = msg_send![
                         tracking_area,
-                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
-                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
-                        owner: native_view
+                        initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
+                        options: NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect,
+                        owner: native_view,
                         userInfo: nil
                     ];
                     let _: () = msg_send![native_view, addTrackingArea: autorelease(tracking_area)];
