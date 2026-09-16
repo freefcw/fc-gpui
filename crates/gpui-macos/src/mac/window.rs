@@ -8,12 +8,11 @@ use crate::{
     dispatch_get_main_queue, dispatch_sys::dispatch_async_f, point, px, size,
 };
 use block2::RcBlock;
-use core_graphics::display::{CGPoint, CGRect};
 use futures::channel::oneshot;
 use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{ClassType, MainThreadMarker, msg_send};
+use objc2::{ClassType, DefinedClass, MainThreadMarker, msg_send};
 use objc2_app_kit::{
     NSAlert, NSAlertStyle, NSApplication, NSAutoresizingMaskOptions, NSBeep,
     NSButton as Objc2NSButton, NSColor, NSCursor, NSEvent, NSEventModifierFlags,
@@ -448,9 +447,9 @@ impl MacWindowState {
                     standardWindowButton: NSWindowButton::ZoomButton
                 ];
 
-                let mut close_button_frame: CGRect = msg_send![close_button, frame];
-                let mut min_button_frame: CGRect = msg_send![min_button, frame];
-                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
+                let mut close_button_frame: NSRect = msg_send![close_button, frame];
+                let mut min_button_frame: NSRect = msg_send![min_button, frame];
+                let mut zoom_button_frame: NSRect = msg_send![zoom_button, frame];
                 let mut origin = point(
                     traffic_light_position.x,
                     titlebar_height
@@ -460,15 +459,15 @@ impl MacWindowState {
                 let button_spacing =
                     px((min_button_frame.origin.x - close_button_frame.origin.x) as f32);
 
-                close_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
+                close_button_frame.origin = NSPoint::new(origin.x.into(), origin.y.into());
                 let _: () = msg_send![close_button, setFrame: close_button_frame];
                 origin.x += button_spacing;
 
-                min_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
+                min_button_frame.origin = NSPoint::new(origin.x.into(), origin.y.into());
                 let _: () = msg_send![min_button, setFrame: min_button_frame];
                 origin.x += button_spacing;
 
-                zoom_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
+                zoom_button_frame.origin = NSPoint::new(origin.x.into(), origin.y.into());
                 let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
                 origin.x += button_spacing;
             }
@@ -593,7 +592,7 @@ impl MacWindowState {
     fn titlebar_height(&self) -> Pixels {
         unsafe {
             let frame = window_frame(self.native_window);
-            let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
+            let content_layout_rect: NSRect = msg_send![self.native_window, contentLayoutRect];
             px((frame.size.height - content_layout_rect.size.height) as f32)
         }
     }
@@ -721,7 +720,7 @@ impl MacWindow {
             };
             assert!(!native_window.is_null());
             let dragged_types: id =
-                msg_send![NSArray::class(), arrayWithObject: filenames_pboard_type()];
+                msg_send![NSArray::<AnyObject>::class(), arrayWithObject: filenames_pboard_type()];
             let () = msg_send![
                 native_window,
                 registerForDraggedTypes: dragged_types
@@ -1234,7 +1233,7 @@ impl PlatformWindow for MacWindow {
                     let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
                     let yes_value: id = msg_send![NSNumber::class(), numberWithBool: true];
                     let dict: id = msg_send![
-                        NSDictionary::class(),
+                        NSDictionary::<AnyObject, AnyObject>::class(),
                         dictionaryWithObject: yes_value
                         forKey: key
                     ];

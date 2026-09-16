@@ -30,11 +30,12 @@ use objc2::{AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly
 use objc2_app_kit::{
     NSApplication as Objc2NSApplication,
     NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSDocumentController, NSEvent as Objc2NSEvent, NSEventMask as Objc2NSEventMask,
-    NSEventModifierFlags as Objc2NSEventModifierFlags, NSImage as Objc2NSImage,
-    NSMenu as Objc2NSMenu, NSMenuDelegate, NSMenuItem as Objc2NSMenuItem, NSMenuItemValidation,
-    NSModalResponse as Objc2NSModalResponse, NSModalResponseOK as Objc2NSModalResponseOK,
-    NSOpenPanel as Objc2NSOpenPanel, NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
+    NSAttributedStringAppKitDocumentFormats, NSDocumentController, NSEvent as Objc2NSEvent,
+    NSEventMask as Objc2NSEventMask, NSEventModifierFlags as Objc2NSEventModifierFlags,
+    NSImage as Objc2NSImage, NSMenu as Objc2NSMenu, NSMenuDelegate, NSMenuItem as Objc2NSMenuItem,
+    NSMenuItemValidation, NSModalResponse as Objc2NSModalResponse,
+    NSModalResponseOK as Objc2NSModalResponseOK, NSOpenPanel as Objc2NSOpenPanel,
+    NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
     NSPasteboardTypePNG as Objc2NSPasteboardTypePNG,
     NSPasteboardTypeRTF as Objc2NSPasteboardTypeRTF,
     NSPasteboardTypeRTFD as Objc2NSPasteboardTypeRTFD,
@@ -1583,17 +1584,21 @@ impl Platform for MacPlatform {
                     let range = Objc2NSRange::from(0..attributed_string.length());
                     let attrs: Retained<NSDictionary<Objc2NSString, AnyObject>> =
                         NSDictionary::new();
-                    if let Some(rtfd_data) =
-                        unsafe { attributed_string.RTFDFromRange_documentAttributes(range, &attrs) }
-                    {
+                    if let Some(rtfd_data) = unsafe {
+                        attributed_string
+                            .as_super()
+                            .RTFDFromRange_documentAttributes(range, &attrs)
+                    } {
                         state
                             .pasteboard
                             .setData_forType(Some(&rtfd_data), Objc2NSPasteboardTypeRTFD);
                     }
 
-                    if let Some(rtf_data) =
-                        unsafe { attributed_string.RTFFromRange_documentAttributes(range, &attrs) }
-                    {
+                    if let Some(rtf_data) = unsafe {
+                        attributed_string
+                            .as_super()
+                            .RTFFromRange_documentAttributes(range, &attrs)
+                    } {
                         state
                             .pasteboard
                             .setData_forType(Some(&rtf_data), Objc2NSPasteboardTypeRTF);

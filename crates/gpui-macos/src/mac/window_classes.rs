@@ -1401,8 +1401,7 @@ fn get_frame(this: &GPUIView) -> NSRect {
         let state = view_state(this);
         let lock = state.lock();
         let mut frame = super::window_frame(lock.native_window);
-        let content_layout_rect: core_graphics::display::CGRect =
-            msg_send![lock.native_window, contentLayoutRect];
+        let content_layout_rect: NSRect = msg_send![lock.native_window, contentLayoutRect];
         let style_mask = super::window_style_mask(lock.native_window);
         if !style_mask.contains(NSWindowStyleMask::FullSizeContentView) {
             frame.origin.y -= frame.size.height - content_layout_rect.size.height;
