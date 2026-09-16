@@ -14,8 +14,6 @@ pub mod metal_renderer;
 
 use metal_renderer as renderer;
 
-mod attributed_string;
-
 #[cfg(feature = "font-kit")]
 mod open_type;
 
@@ -37,17 +35,11 @@ mod tray;
 mod window;
 mod window_appearance;
 
-use objc::{
-    msg_send,
-    runtime::{BOOL, NO, Object, YES},
-    sel, sel_impl,
-};
+use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_foundation::{NSNotFound, NSString};
-use std::{
-    ffi::{CStr, c_char},
-    ops::Range,
-};
+use std::{ffi::CStr, ops::Range};
 
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
@@ -59,24 +51,17 @@ pub(crate) use window::*;
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;
 
-trait BoolExt {
-    fn to_objc(self) -> BOOL;
-}
-
-impl BoolExt for bool {
-    fn to_objc(self) -> BOOL {
-        if self { YES } else { NO }
-    }
-}
-
 trait NSStringExt {
     unsafe fn to_str(&self) -> &str;
 }
 
-impl NSStringExt for *mut Object {
+impl NSStringExt for *mut AnyObject {
     unsafe fn to_str(&self) -> &str {
         unsafe {
-            let cstr: *const c_char = msg_send![*self, UTF8String];
+            let Some(string) = self.cast::<NSString>().as_ref() else {
+                return "";
+            };
+            let cstr = string.UTF8String();
             if cstr.is_null() {
                 ""
             } else {
@@ -125,18 +110,15 @@ impl From<Range<usize>> for NSRange {
     }
 }
 
-unsafe impl objc::Encode for NSRange {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{NSRange={}{}}}",
-            usize::encode().as_str(),
-            usize::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
+unsafe impl Encode for NSRange {
+    const ENCODING: Encoding = Encoding::Struct("_NSRange", &[usize::ENCODING, usize::ENCODING]);
 }
 
-unsafe fn ns_string(string: &str) -> *mut Object {
-    let string = Retained::into_raw(NSString::from_str(string)).cast::<Object>();
-    unsafe { msg_send![string, autorelease] }
+unsafe impl RefEncode for NSRange {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
+}
+
+unsafe fn ns_string(string: &str) -> *mut AnyObject {
+    let string = Retained::into_raw(NSString::from_str(string));
+    unsafe { objc2::msg_send![string, autorelease] }
 }

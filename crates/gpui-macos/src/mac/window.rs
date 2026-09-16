@@ -10,23 +10,21 @@ use crate::{
 use block2::RcBlock;
 use core_graphics::display::{CGPoint, CGRect};
 use futures::channel::oneshot;
-use objc::{
-    class, msg_send,
-    runtime::{BOOL, NO, Object, YES},
-    sel, sel_impl,
-};
+use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
-use objc2::{DefinedClass, MainThreadMarker};
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{ClassType, MainThreadMarker, msg_send};
 use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSAutoresizingMaskOptions, NSBeep, NSButton as Objc2NSButton,
-    NSEventModifierFlags, NSScreen, NSWindow as Objc2NSWindow, NSWindowButton,
-    NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode, NSWindowStyleMask,
-    NSWindowTitleVisibility,
+    NSAlert, NSAlertStyle, NSApplication, NSAutoresizingMaskOptions, NSBeep,
+    NSButton as Objc2NSButton, NSColor, NSCursor, NSEvent, NSEventModifierFlags,
+    NSProgressIndicator, NSScreen, NSTextInputContext, NSTrackingArea, NSWindow as Objc2NSWindow,
+    NSWindowButton, NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+    NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSAutoreleasePool, NSData, NSPoint as Objc2NSPoint, NSRect as Objc2NSRect,
-    NSSize as Objc2NSSize,
+    NSArray, NSAutoreleasePool, NSData, NSDictionary, NSKeyedArchiver, NSNumber,
+    NSPoint as Objc2NSPoint, NSProcessInfo, NSRect as Objc2NSRect, NSSize as Objc2NSSize,
+    NSUserDefaults,
 };
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
@@ -39,7 +37,7 @@ use std::{
 };
 use util::ResultExt;
 
-type ObjcId = *mut Object;
+type ObjcId = *mut AnyObject;
 
 #[allow(non_camel_case_types)]
 type id = ObjcId;
@@ -66,15 +64,12 @@ impl NSPoint {
     }
 }
 
-unsafe impl objc::Encode for NSPoint {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{CGPoint={}{}}}",
-            f64::encode().as_str(),
-            f64::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
+unsafe impl Encode for NSPoint {
+    const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+}
+
+unsafe impl RefEncode for NSPoint {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
 }
 
 #[repr(C)]
@@ -90,15 +85,12 @@ impl NSSize {
     }
 }
 
-unsafe impl objc::Encode for NSSize {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{CGSize={}{}}}",
-            f64::encode().as_str(),
-            f64::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
+unsafe impl Encode for NSSize {
+    const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+}
+
+unsafe impl RefEncode for NSSize {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
 }
 
 #[repr(C)]
@@ -114,15 +106,12 @@ impl NSRect {
     }
 }
 
-unsafe impl objc::Encode for NSRect {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{CGRect={}{}}}",
-            NSPoint::encode().as_str(),
-            NSSize::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
-    }
+unsafe impl Encode for NSRect {
+    const ENCODING: Encoding = Encoding::Struct("CGRect", &[NSPoint::ENCODING, NSSize::ENCODING]);
+}
+
+unsafe impl RefEncode for NSRect {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
 }
 
 #[repr(C)]
@@ -144,18 +133,6 @@ impl NSOperatingSystemVersion {
             minor_version,
             patch_version,
         }
-    }
-}
-
-unsafe impl objc::Encode for NSOperatingSystemVersion {
-    fn encode() -> objc::Encoding {
-        let encoding = format!(
-            "{{NSOperatingSystemVersion={}{}{}}}",
-            NSUInteger::encode().as_str(),
-            NSUInteger::encode().as_str(),
-            NSUInteger::encode().as_str()
-        );
-        unsafe { objc::Encoding::from_str(&encoding) }
     }
 }
 
@@ -240,11 +217,11 @@ unsafe fn screen_visible_frame(screen: id) -> NSRect {
 }
 
 unsafe fn shared_application() -> id {
-    unsafe { msg_send![class!(NSApplication), sharedApplication] }
+    unsafe { msg_send![NSApplication::class(), sharedApplication] }
 }
 
 unsafe fn user_defaults() -> id {
-    unsafe { msg_send![class!(NSUserDefaults), standardUserDefaults] }
+    unsafe { msg_send![NSUserDefaults::class(), standardUserDefaults] }
 }
 
 unsafe fn view_bounds(view: id) -> NSRect {
@@ -361,12 +338,12 @@ unsafe fn apply_simple_fullscreen_plan(
             SimpleFullscreenPlan::Exit(saved) => {
                 pop_simple_fullscreen_presentation_options();
                 let _: () = msg_send![native_window, setStyleMask: saved.style_mask];
-                let _: () = msg_send![native_window, setFrame: saved.frame display: YES];
+                let _: () = msg_send![native_window, setFrame: saved.frame display: true];
             }
             SimpleFullscreenPlan::Enter { screen_frame } => {
                 push_simple_fullscreen_presentation_options();
                 let _: () = msg_send![native_window, setStyleMask: NSWindowStyleMask::Borderless];
-                let _: () = msg_send![native_window, setFrame: screen_frame display: YES];
+                let _: () = msg_send![native_window, setFrame: screen_frame display: true];
             }
         }
 
@@ -383,7 +360,7 @@ struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
-    native_view: NonNull<Object>,
+    native_view: NonNull<AnyObject>,
     blurred_view: Option<id>,
     cursor_style: CursorStyle,
     cursor_hidden: bool,
@@ -698,7 +675,7 @@ impl MacWindow {
             let mut target_screen = nil;
             let mut selected_screen_frame = None;
 
-            let screens: id = msg_send![class!(NSScreen), screens];
+            let screens: id = msg_send![NSScreen::class(), screens];
             let count = array_count(screens);
             for i in 0..count {
                 let screen = array_object_at_index(screens, i);
@@ -713,7 +690,7 @@ impl MacWindow {
             }
 
             let screen_frame = selected_screen_frame.unwrap_or_else(|| {
-                let screen: id = msg_send![class!(NSScreen), mainScreen];
+                let screen: id = msg_send![NSScreen::class(), mainScreen];
                 target_screen = screen;
                 screen_frame(screen)
             });
@@ -744,14 +721,14 @@ impl MacWindow {
             };
             assert!(!native_window.is_null());
             let dragged_types: id =
-                msg_send![class!(NSArray), arrayWithObject: filenames_pboard_type()];
+                msg_send![NSArray::class(), arrayWithObject: filenames_pboard_type()];
             let () = msg_send![
                 native_window,
                 registerForDraggedTypes: dragged_types
             ];
             let () = msg_send![
                 native_window,
-                setReleasedWhenClosed: NO
+                setReleasedWhenClosed: false
             ];
 
             let content_view = window_content_view(native_window);
@@ -846,7 +823,7 @@ impl MacWindow {
                 window.set_title(title);
             }
 
-            let _: () = msg_send![native_window, setMovable: is_movable as BOOL];
+            let _: () = msg_send![native_window, setMovable: is_movable];
 
             if let Some(window_min_size) = window_min_size {
                 let _: () = msg_send![native_window, setContentMinSize: NSSize {
@@ -856,7 +833,7 @@ impl MacWindow {
             }
 
             if titlebar.is_none_or(|titlebar| titlebar.appears_transparent) {
-                let _: () = msg_send![native_window, setTitlebarAppearsTransparent: YES];
+                let _: () = msg_send![native_window, setTitlebarAppearsTransparent: true];
                 let _: () =
                     msg_send![native_window, setTitleVisibility: NSWindowTitleVisibility::Hidden];
             }
@@ -867,14 +844,14 @@ impl MacWindow {
                     NSAutoresizingMaskOptions::ViewWidthSizable
                         | NSAutoresizingMaskOptions::ViewHeightSizable
             ];
-            let _: () = msg_send![native_view, setWantsBestResolutionOpenGLSurface: YES];
+            let _: () = msg_send![native_view, setWantsBestResolutionOpenGLSurface: true];
 
             // From winit crate: On Mojave, views automatically become layer-backed shortly after
             // being added to a native_window. Changing the layer-backedness of a view breaks the
             // association between the view and its associated OpenGL context. To work around this,
             // on we explicitly make the view layer-backed up front so that AppKit doesn't do it
             // itself and break the association with its context.
-            let _: () = msg_send![native_view, setWantsLayer: YES];
+            let _: () = msg_send![native_view, setWantsLayer: true];
             let _: () = msg_send![
             native_view,
             setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
@@ -887,7 +864,7 @@ impl MacWindow {
             match &kind {
                 WindowKind::Normal | WindowKind::Floating => {
                     let _: () = msg_send![native_window, setLevel: NSNormalWindowLevel];
-                    let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: YES];
+                    let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: true];
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = ns_string(tabbing_identifier.as_str());
@@ -900,7 +877,7 @@ impl MacWindow {
                     // Use a tracking area to allow receiving MouseMoved events even when
                     // the window or application aren't active, which is often the case
                     // e.g. for notification windows.
-                    let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
+                    let tracking_area: id = msg_send![NSTrackingArea::class(), alloc];
                     let _: () = msg_send![
                         tracking_area,
                         initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
@@ -923,7 +900,7 @@ impl MacWindow {
                     ];
                 }
                 WindowKind::Overlay => {
-                    let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
+                    let tracking_area: id = msg_send![NSTrackingArea::class(), alloc];
                     let _: () = msg_send![
                         tracking_area,
                         initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
@@ -963,11 +940,10 @@ impl MacWindow {
                         && main_window_is_fullscreen;
 
                 if should_add_as_tab {
-                    let main_window_can_tab: BOOL =
-                        msg_send![main_window, respondsToSelector: sel!(addTabbedWindow:ordered:)];
-                    let main_window_visible: BOOL = msg_send![main_window, isVisible];
+                    let main_window_can_tab: bool = msg_send![main_window, respondsToSelector: objc2::sel!(addTabbedWindow:ordered:)];
+                    let main_window_visible: bool = msg_send![main_window, isVisible];
 
-                    if main_window_can_tab == YES && main_window_visible == YES {
+                    if main_window_can_tab && main_window_visible {
                         let _: () = msg_send![
                             main_window,
                             addTabbedWindow: native_window
@@ -984,7 +960,7 @@ impl MacWindow {
             }
 
             if mouse_passthrough {
-                let _: () = msg_send![native_window, setIgnoresMouseEvents: YES];
+                let _: () = msg_send![native_window, setIgnoresMouseEvents: true];
             }
 
             if focus && show {
@@ -1175,9 +1151,9 @@ impl PlatformWindow for MacWindow {
         unsafe {
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
             if allows_automatic_window_tabbing {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
+                let () = msg_send![Objc2NSWindow::class(), setAllowsAutomaticWindowTabbing: true];
             } else {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+                let () = msg_send![Objc2NSWindow::class(), setAllowsAutomaticWindowTabbing: false];
             }
 
             if let Some(tabbing_identifier) = tabbing_identifier {
@@ -1202,8 +1178,8 @@ impl PlatformWindow for MacWindow {
         // archived bytes are copied into an owned `Vec` before the objects we allocated are
         // released, so no pointer into Objective-C memory escapes this block.
         unsafe {
-            let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
-            let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
+            let archiver: id = msg_send![NSKeyedArchiver::class(), alloc];
+            let archiver: id = msg_send![archiver, initRequiringSecureCoding: true];
             if archiver.is_null() {
                 log::warn!("failed to create an archiver for the native window state");
                 return None;
@@ -1256,9 +1232,9 @@ impl PlatformWindow for MacWindow {
                 RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT.call_once(|| {
                     let defaults = user_defaults();
                     let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
-                    let yes_value: id = msg_send![class!(NSNumber), numberWithBool: YES];
+                    let yes_value: id = msg_send![NSNumber::class(), numberWithBool: true];
                     let dict: id = msg_send![
-                        class!(NSDictionary),
+                        NSDictionary::class(),
                         dictionaryWithObject: yes_value
                         forKey: key
                     ];
@@ -1328,7 +1304,7 @@ impl PlatformWindow for MacWindow {
 
     fn modifiers(&self) -> Modifiers {
         unsafe {
-            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+            let modifiers: NSEventModifierFlags = msg_send![NSEvent::class(), modifierFlags];
 
             let control = modifiers.contains(NSEventModifierFlags::Control);
             let alt = modifiers.contains(NSEventModifierFlags::Option);
@@ -1348,7 +1324,7 @@ impl PlatformWindow for MacWindow {
 
     fn capslock(&self) -> Capslock {
         unsafe {
-            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+            let modifiers: NSEventModifierFlags = msg_send![NSEvent::class(), modifierFlags];
 
             Capslock {
                 on: modifiers.contains(NSEventModifierFlags::CapsLock),
@@ -1471,8 +1447,8 @@ impl PlatformWindow for MacWindow {
 
     fn is_active(&self) -> bool {
         unsafe {
-            let is_key_window: BOOL = msg_send![self.0.lock().native_window, isKeyWindow];
-            is_key_window == YES
+            let is_key_window: bool = msg_send![self.0.lock().native_window, isKeyWindow];
+            is_key_window
         }
     }
 
@@ -1512,12 +1488,12 @@ impl PlatformWindow for MacWindow {
         this.renderer.update_transparency(!opaque);
 
         unsafe {
-            let _: () = msg_send![this.native_window, setOpaque: opaque as BOOL];
+            let _: () = msg_send![this.native_window, setOpaque: opaque];
             let background_color: id = if opaque {
-                msg_send![class!(NSColor), colorWithSRGBRed: 0f64 green: 0f64 blue: 0f64 alpha: 1f64]
+                msg_send![NSColor::class(), colorWithSRGBRed: 0f64 green: 0f64 blue: 0f64 alpha: 1f64]
             } else {
                 // Not using `+[NSColor clearColor]` to avoid broken shadow.
-                msg_send![class!(NSColor), colorWithSRGBRed: 0f64 green: 0f64 blue: 0f64 alpha: 0.0001]
+                msg_send![NSColor::class(), colorWithSRGBRed: 0f64 green: 0f64 blue: 0f64 alpha: 0.0001]
             };
             let _: () = msg_send![this.native_window, setBackgroundColor: background_color];
 
@@ -1553,7 +1529,7 @@ impl PlatformWindow for MacWindow {
     fn set_edited(&mut self, edited: bool) {
         unsafe {
             let window = self.0.lock().native_window;
-            msg_send![window, setDocumentEdited: edited as BOOL]
+            msg_send![window, setDocumentEdited: edited]
         }
 
         // Changing the document edited state resets the traffic light position,
@@ -1710,8 +1686,8 @@ impl PlatformWindow for MacWindow {
             if tab_group.is_null() {
                 false
             } else {
-                let tab_bar_visible: BOOL = msg_send![tab_group, isTabBarVisible];
-                tab_bar_visible == YES
+                let tab_bar_visible: bool = msg_send![tab_group, isTabBarVisible];
+                tab_bar_visible
             }
         }
     }
@@ -1762,7 +1738,7 @@ impl PlatformWindow for MacWindow {
             .spawn(async move {
                 unsafe {
                     let input_context: id =
-                        msg_send![class!(NSTextInputContext), currentInputContext];
+                        msg_send![NSTextInputContext::class(), currentInputContext];
                     if input_context.is_null() {
                         return;
                     }
@@ -1829,8 +1805,7 @@ impl PlatformWindow for MacWindow {
 
     fn set_mouse_passthrough(&self, passthrough: bool) {
         unsafe {
-            let _: () =
-                msg_send![self.0.lock().native_window, setIgnoresMouseEvents: passthrough as BOOL];
+            let _: () = msg_send![self.0.lock().native_window, setIgnoresMouseEvents: passthrough];
         }
     }
 
@@ -1873,9 +1848,9 @@ impl PlatformWindow for MacWindow {
                         "Fill" => {
                             // Unlike `zoom:`, AppKit's private Fill action honors the system's
                             // "Tiled windows have margins" setting.
-                            let responds_to_zoom_fill: BOOL =
-                                msg_send![window, respondsToSelector: sel!(_zoomFill:)];
-                            if responds_to_zoom_fill == YES {
+                            let responds_to_zoom_fill: bool =
+                                msg_send![window, respondsToSelector: objc2::sel!(_zoomFill:)];
+                            if responds_to_zoom_fill {
                                 let _: () = msg_send![window, _zoomFill: nil];
                             } else {
                                 let _: () = msg_send![window, zoom: nil];
@@ -1892,7 +1867,7 @@ impl PlatformWindow for MacWindow {
 
     fn set_progress_bar(&self, state: crate::ProgressBarState) {
         unsafe {
-            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let app: id = msg_send![NSApplication::class(), sharedApplication];
             let dock_tile: id = msg_send![app, dockTile];
             if dock_tile == nil {
                 return;
@@ -1905,14 +1880,14 @@ impl PlatformWindow for MacWindow {
                     let _: () = msg_send![dock_tile, display];
                 }
                 crate::ProgressBarState::Indeterminate => {
-                    let indicator: id = msg_send![class!(NSProgressIndicator), alloc];
+                    let indicator: id = msg_send![NSProgressIndicator::class(), alloc];
                     let frame = NSRect {
                         origin: NSPoint::new(0.0, 0.0),
                         size: NSSize::new(140.0, 140.0),
                     };
                     let indicator: id = msg_send![indicator, initWithFrame: frame];
                     let _: () = msg_send![indicator, setStyle: 0i64]; // NSProgressIndicatorBarStyle
-                    let _: () = msg_send![indicator, setIndeterminate: YES];
+                    let _: () = msg_send![indicator, setIndeterminate: true];
                     let _: () = msg_send![indicator, startAnimation: nil];
                     let _: () = msg_send![dock_tile, setContentView: indicator];
                     let _: () = msg_send![indicator, release];
@@ -1921,14 +1896,14 @@ impl PlatformWindow for MacWindow {
                 crate::ProgressBarState::Normal(pct)
                 | crate::ProgressBarState::Error(pct)
                 | crate::ProgressBarState::Paused(pct) => {
-                    let indicator: id = msg_send![class!(NSProgressIndicator), alloc];
+                    let indicator: id = msg_send![NSProgressIndicator::class(), alloc];
                     let frame = NSRect {
                         origin: NSPoint::new(0.0, 0.0),
                         size: NSSize::new(140.0, 140.0),
                     };
                     let indicator: id = msg_send![indicator, initWithFrame: frame];
                     let _: () = msg_send![indicator, setStyle: 0i64]; // NSProgressIndicatorBarStyle
-                    let _: () = msg_send![indicator, setIndeterminate: NO];
+                    let _: () = msg_send![indicator, setIndeterminate: false];
                     let _: () = msg_send![indicator, setMinValue: 0.0f64];
                     let _: () = msg_send![indicator, setMaxValue: 100.0f64];
                     let _: () = msg_send![indicator, setDoubleValue: pct * 100.0];
@@ -1947,7 +1922,7 @@ impl PlatformWindow for MacWindow {
             // waiting for resetCursorRects, so other windows/apps aren't affected.
             if state.cursor_hidden && !matches!(style, CursorStyle::None) {
                 unsafe {
-                    let _: () = msg_send![class!(NSCursor), unhide];
+                    let _: () = msg_send![NSCursor::class(), unhide];
                 }
                 state.cursor_hidden = false;
             }
@@ -2007,10 +1982,13 @@ impl rwh::HasDisplayHandle for MacWindow {
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
-    unsafe {
-        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-        msg_send![process_info, isOperatingSystemAtLeastVersion: version]
-    }
+    NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(
+        objc2_foundation::NSOperatingSystemVersion {
+            majorVersion: version.major_version as isize,
+            minorVersion: version.minor_version as isize,
+            patchVersion: version.patch_version as isize,
+        },
+    )
 }
 
 fn ns_error_description(error: id) -> String {

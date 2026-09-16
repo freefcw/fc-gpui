@@ -71,11 +71,8 @@ fn lock_registry() -> MutexGuard<'static, Registry> {
 fn debug_assert_main_thread() {
     #[cfg(debug_assertions)]
     {
-        use objc::{class, msg_send, sel, sel_impl};
-        let is_main_thread: objc::runtime::BOOL =
-            unsafe { msg_send![class!(NSThread), isMainThread] };
         debug_assert!(
-            is_main_thread == objc::runtime::YES,
+            objc2_foundation::NSThread::isMainThread_class(),
             "display-link registry mutations must run on the main thread"
         );
     }

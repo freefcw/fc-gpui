@@ -15,26 +15,22 @@ use crate::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput,
     PlatformInputHandler, Point, Size, Timer, point, px,
 };
-use objc::{
-    class, msg_send,
-    runtime::{BOOL, NO, Object, YES},
-    sel, sel_impl,
-};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject, Sel};
 use objc2::{
     AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class,
+    msg_send,
 };
 use objc2_app_kit::{
     NSCursor, NSDragOperation, NSDraggingDestination, NSDraggingInfo, NSEvent, NSPanel, NSScreen,
-    NSTextInputClient, NSView, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWindow, NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
+    NSTextInputClient, NSView, NSViewController, NSVisualEffectMaterial, NSVisualEffectState,
+    NSVisualEffectView, NSWindow, NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSData, NSError, NSKeyedArchiver,
-    NSKeyedArchiverDelegate, NSKeyedUnarchiver, NSNotification, NSObject, NSObjectProtocol,
-    NSPoint as Objc2NSPoint, NSRange as Objc2NSRange, NSRangePointer, NSRect as Objc2NSRect,
-    NSSize as Objc2NSSize, NSString, NSUInteger,
+    NSKeyedArchiverDelegate, NSKeyedUnarchiver, NSMutableIndexSet, NSNotification, NSObject,
+    NSObjectProtocol, NSPoint as Objc2NSPoint, NSRange as Objc2NSRange, NSRangePointer,
+    NSRect as Objc2NSRect, NSSize as Objc2NSSize, NSString, NSUInteger,
 };
 use objc2_quartz_core::{CALayer, CALayerDelegate};
 use parking_lot::Mutex;
@@ -49,7 +45,7 @@ use std::{
     time::Duration,
 };
 
-type ObjcId = *mut Object;
+type ObjcId = *mut AnyObject;
 
 #[allow(non_camel_case_types)]
 type id = ObjcId;
@@ -766,13 +762,12 @@ fn close_gpui_window(this: &impl HasWindowIvars) {
 }
 
 fn hide_titlebar_accessory(view_controller: &AnyObject) {
-    unsafe {
-        let accessory_view: id = msg_send![view_controller as *const AnyObject as id, view];
-        let _: () = msg_send![accessory_view, setHidden: YES];
-        let mut frame: NSRect = msg_send![accessory_view, frame];
-        frame.size.height = 0.0;
-        let _: () = msg_send![accessory_view, setFrame: frame];
-    }
+    let view_controller = unsafe { &*ptr::from_ref(view_controller).cast::<NSViewController>() };
+    let accessory_view = view_controller.view();
+    accessory_view.setHidden(true);
+    let mut frame = accessory_view.frame();
+    frame.size.height = 0.0;
+    accessory_view.setFrame(frame);
 }
 
 fn invoke_move_tab_to_new_window(this: &impl HasWindowIvars) {
@@ -848,7 +843,7 @@ fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {
 
     if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0)) {
         unsafe {
-            let _: () = msg_send![lock.native_window, setTitlebarAppearsTransparent: NO];
+            let _: () = msg_send![lock.native_window, setTitlebarAppearsTransparent: false];
         }
     }
 }
@@ -860,7 +855,7 @@ fn handle_window_will_exit_fullscreen(this: &impl HasWindowIvars) {
         && lock.transparent_titlebar
     {
         unsafe {
-            let _: () = msg_send![lock.native_window, setTitlebarAppearsTransparent: YES];
+            let _: () = msg_send![lock.native_window, setTitlebarAppearsTransparent: true];
         }
     }
 }
@@ -879,8 +874,8 @@ fn handle_window_did_change_key_status(this: &impl HasWindowIvars, became_key: b
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
     let is_active = unsafe {
-        let is_key_window: BOOL = msg_send![lock.native_window, isKeyWindow];
-        is_key_window == YES
+        let is_key_window: bool = msg_send![lock.native_window, isKeyWindow];
+        is_key_window
     };
 
     if became_key && !is_active {
@@ -1588,52 +1583,37 @@ where
 }
 
 fn remove_layer_background(layer: &CALayer) {
-    unsafe {
-        let layer = layer as *const CALayer as id;
-        let _: () = msg_send![layer, setBackgroundColor:nil];
+    layer.setBackgroundColor(None);
 
-        let class_name: id = msg_send![layer, className];
-        let is_chameleon_layer: BOOL =
-            msg_send![class_name, isEqualToString: ns_string("CAChameleonLayer")];
-        if is_chameleon_layer == YES {
-            let _: () = msg_send![layer, setHidden: YES];
-            return;
-        }
+    if AnyObject::class(layer).name().to_str() == Ok("CAChameleonLayer") {
+        layer.setHidden(true);
+        return;
+    }
 
-        let filters: id = msg_send![layer, filters];
-        if !filters.is_null() {
-            let test_string = ns_string("Saturat");
-            let count = super::array_count(filters);
-            for i in 0..count {
-                let filter = super::array_object_at_index(filters, i);
-                let description: id = msg_send![filter, description];
-                let hit: BOOL = msg_send![description, containsString: test_string];
-                if hit == NO {
-                    continue;
-                }
-
-                let all_indices = NSRange {
-                    location: 0,
-                    length: count as usize,
-                };
-                let indices: id = msg_send![class!(NSMutableIndexSet), indexSet];
-                let _: () = msg_send![indices, addIndexesInRange: all_indices];
-                let _: () = msg_send![indices, removeIndex:i];
-                let filtered: id = msg_send![filters, objectsAtIndexes: indices];
-                let _: () = msg_send![layer, setFilters: filtered];
-                break;
+    if let Some(filters) = layer.filters() {
+        let test_string = NSString::from_str("Saturat");
+        for i in 0..filters.count() {
+            let filter = filters.objectAtIndex(i);
+            let description: Retained<NSString> = unsafe { msg_send![&*filter, description] };
+            if !description.containsString(&test_string) {
+                continue;
             }
-        }
 
-        let sublayers: id = msg_send![layer, sublayers];
-        if !sublayers.is_null() {
-            let count = super::array_count(sublayers);
-            for i in 0..count {
-                let sublayer = super::array_object_at_index(sublayers, i);
-                if let Some(sublayer) = sublayer.cast::<CALayer>().as_ref() {
-                    remove_layer_background(sublayer);
-                }
-            }
+            let indices = NSMutableIndexSet::indexSetWithIndexesInRange(Objc2NSRange {
+                location: 0,
+                length: filters.count(),
+            });
+            indices.removeIndex(i);
+            let filtered = filters.objectsAtIndexes(&indices);
+            unsafe { layer.setFilters(Some(&filtered)) };
+            break;
+        }
+    }
+
+    if let Some(sublayers) = unsafe { layer.sublayers() } {
+        for i in 0..sublayers.count() {
+            let sublayer = sublayers.objectAtIndex(i);
+            remove_layer_background(&sublayer);
         }
     }
 }
