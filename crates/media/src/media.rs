@@ -222,11 +222,13 @@ pub mod core_video {
     #[cfg(target_os = "macos")]
     use std::ffi::c_void;
 
-    use crate::bindings::{CVReturn, kCVReturnSuccess};
-    pub use crate::bindings::{
+    // core-video already defines these C constants; bindgen `-xc` emits them as
+    // enum variants that `allowlist_var` does not keep.
+    pub use ::core_video::pixel_buffer::{
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
     };
+    use ::core_video::r#return::{CVReturn, kCVReturnSuccess};
     use anyhow::Result;
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,

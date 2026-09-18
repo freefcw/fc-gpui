@@ -26,8 +26,6 @@ fn main() {
         .allowlist_type("CMVideoCodecType")
         .allowlist_type("VTEncodeInfoFlags")
         .allowlist_function("CMTimeMake")
-        .allowlist_var("kCVPixelFormatType_.*")
-        .allowlist_var("kCVReturn.*")
         .allowlist_var("VTEncodeInfoFlags_.*")
         .allowlist_var("kCMVideoCodecType_.*")
         .allowlist_var("kCMTime.*")
