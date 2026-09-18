@@ -7,10 +7,10 @@ use crate::{
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
 };
+use core_foundation::base::CFRelease;
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
 use core_graphics::event::CGKeyCode;
-use objc::runtime::Object;
-use objc::{msg_send, sel, sel_impl};
+use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType};
 use std::{borrow::Cow, ffi::c_void};
 
@@ -78,7 +78,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
     Cow::Owned(String::from_utf16(&[code as u16]).unwrap())
 }
 
-unsafe fn as_event<'a>(native_event: *mut Object) -> &'a NSEvent {
+unsafe fn as_event<'a>(native_event: *mut AnyObject) -> &'a NSEvent {
     unsafe { &*native_event.cast::<NSEvent>() }
 }
 
@@ -101,7 +101,7 @@ fn read_modifiers(native_event: &NSEvent) -> Modifiers {
 }
 
 pub(crate) unsafe fn platform_input_from_native(
-    native_event: *mut Object,
+    native_event: *mut AnyObject,
     window_height: Option<Pixels>,
 ) -> Option<PlatformInput> {
     unsafe {
@@ -489,7 +489,7 @@ pub(super) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String 
     };
     if layout_data.is_null() {
         unsafe {
-            let _: () = msg_send![keyboard, release];
+            CFRelease(keyboard.cast());
         }
         return "".to_string();
     }
@@ -522,7 +522,7 @@ pub(super) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String 
                 &mut buffer as *mut u16,
             );
         }
-        let _: () = msg_send![keyboard, release];
+        CFRelease(keyboard.cast());
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }

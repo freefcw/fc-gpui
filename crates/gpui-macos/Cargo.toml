@@ -48,17 +48,17 @@ itertools = "0.14.0"
 libc = "0.2"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 media = { package = "fc-gpui-media", path = "../media", version = "0.5.1" }
-objc = "0.2"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSAlert", "NSApplication", "NSAppearance", "NSAttributedString", "NSButton", "NSCell", "NSColor", "NSControl", "NSCursor", "NSDockTile", "NSDragging", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSTextInputClient", "NSTextInputContext", "NSTrackingArea", "NSView", "NSVisualEffectView", "NSWindow", "NSWindowTabGroup", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "objc2-quartz-core"] }
+objc2-app-kit = { version = "0.3", features = ["NSAlert", "NSApplication", "NSAppearance", "NSAttributedString", "NSButton", "NSCell", "NSColor", "NSControl", "NSCursor", "NSDockTile", "NSDocumentController", "NSDragging", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSProgressIndicator", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSScroller", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSTextInputClient", "NSTextInputContext", "NSTrackingArea", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "NSWindowTabGroup", "NSWorkspace", "block2", "objc2-core-foundation", "objc2-core-graphics", "objc2-quartz-core"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFCGTypes", "objc2"] }
 objc2-core-media = { version = "0.3", default-features = false, features = ["CMSampleBuffer", "objc2"] }
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSAttributedString", "NSAutoreleasePool", "NSBundle", "NSCoder", "NSData", "NSDictionary", "NSError", "NSIndexSet", "NSKeyedArchiver", "NSLocale", "NSNotification", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSString", "NSURL", "NSUserDefaults", "NSValue", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSAttributedString", "NSAutoreleasePool", "NSBundle", "NSCoder", "NSData", "NSDictionary", "NSError", "NSIndexSet", "NSKeyedArchiver", "NSLocale", "NSNotification", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSString", "NSThread", "NSURL", "NSUserDefaults", "NSValue", "objc2-core-foundation"] }
 objc2-metal = { version = "0.3", default-features = false, features = ["MTLAllocation", "MTLBlitCommandEncoder", "MTLBuffer", "MTLCommandBuffer", "MTLCommandEncoder", "MTLCommandQueue", "MTLDevice", "MTLDrawable", "MTLLibrary", "MTLPixelFormat", "MTLRenderCommandEncoder", "MTLRenderPass", "MTLRenderPipeline", "MTLResource", "MTLTexture", "MTLTypes", "bitflags", "block2", "dispatch2", "std"] }
-objc2-quartz-core = { version = "0.3", default-features = false, features = ["CALayer", "CAMetalLayer", "objc2-core-foundation", "objc2-metal"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["CALayer", "CAMetalLayer", "objc2-core-foundation", "objc2-core-graphics", "objc2-metal"] }
 objc2-local-authentication = { version = "0.3", default-features = false, features = ["std", "LAContext", "block2"] }
 objc2-screen-capture-kit = { version = "0.3", default-features = false, features = ["SCError", "SCShareableContent", "SCStream", "block2", "dispatch2", "objc2-core-graphics", "objc2-core-media", "std"] }
 objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter", "block2"] }
 parking = "2.0.0"
 parking_lot = "0.12.1"
 pathfinder_geometry = "0.5"

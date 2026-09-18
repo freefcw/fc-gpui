@@ -2077,7 +2077,6 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "objc",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
@@ -2088,6 +2087,7 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "objc2-screen-capture-kit",
  "objc2-service-management",
+ "objc2-user-notifications",
  "parking",
  "parking_lot",
  "pathfinder_geometry",
@@ -4319,6 +4319,7 @@ dependencies = [
  "bitflags 2.11.1",
  "objc2 0.6.4",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
 ]
@@ -4358,6 +4359,18 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-security",
+]
+
+[[package]]
+name = "objc2-user-notifications"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
+dependencies = [
+ "bitflags 2.11.1",
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]

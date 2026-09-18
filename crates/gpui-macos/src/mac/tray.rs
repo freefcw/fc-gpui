@@ -1,7 +1,7 @@
 use super::screen_frame_to_tray_anchor;
 use crate::TrayMenuItem;
 use crate::{Bounds, Pixels, TrayAnchor, TrayIconRenderingMode};
-use objc::runtime::Object;
+use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSControlStateValueOff, NSControlStateValueOn, NSImage,
@@ -158,7 +158,7 @@ impl MacTray {
             let button_window = button.window()?;
             let frame = button_window.frame();
             let screen = button_window.screen()?;
-            screen_frame_to_tray_anchor(Retained::as_ptr(&screen) as *mut Object, frame)
+            screen_frame_to_tray_anchor(Retained::as_ptr(&screen) as *mut AnyObject, frame)
         }
     }
 

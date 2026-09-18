@@ -2,8 +2,8 @@ use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, TrayAnchor, point
 use anyhow::Result;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
-use objc::runtime::Object;
 use objc2::MainThreadMarker;
+use objc2::runtime::AnyObject;
 use objc2_app_kit::NSScreen;
 use objc2_foundation::{NSNumber, NSPoint, NSRect, NSString};
 use uuid::Uuid;
@@ -60,7 +60,7 @@ impl MacDisplay {
     }
 }
 
-unsafe fn as_screen<'a>(screen: *mut Object) -> Option<&'a NSScreen> {
+unsafe fn as_screen<'a>(screen: *mut AnyObject) -> Option<&'a NSScreen> {
     unsafe { screen.cast::<NSScreen>().as_ref() }
 }
 
@@ -75,7 +75,7 @@ unsafe fn screen_number(screen: &NSScreen) -> CGDirectDisplayID {
     screen_number.as_u32()
 }
 
-pub(crate) unsafe fn display_id_for_screen(screen: *mut Object) -> Option<DisplayId> {
+pub(crate) unsafe fn display_id_for_screen(screen: *mut AnyObject) -> Option<DisplayId> {
     unsafe {
         let screen = as_screen(screen)?;
         Some(DisplayId::new(screen_number(screen) as u64))
@@ -102,7 +102,7 @@ pub(crate) unsafe fn global_point_to_native_screen_point(
 }
 
 pub(crate) unsafe fn screen_frame_to_tray_anchor(
-    screen: *mut Object,
+    screen: *mut AnyObject,
     frame: NSRect,
 ) -> Option<TrayAnchor> {
     unsafe {

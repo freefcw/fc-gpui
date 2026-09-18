@@ -1,9 +1,6 @@
 use super::tray::MacTray;
 use super::{
-    MacKeyboardLayout, MacKeyboardMapper, NSRange as PlatformNSRange,
-    attributed_string::{NSAttributedString, NSMutableAttributedString},
-    events::key_to_native,
-    global_hotkey::NativeHotkeyMapper,
+    MacKeyboardLayout, MacKeyboardMapper, events::key_to_native, global_hotkey::NativeHotkeyMapper,
     global_point_to_native_screen_point, renderer,
 };
 use crate::{
@@ -27,68 +24,59 @@ use core_foundation::{
 };
 use futures::channel::oneshot;
 use itertools::Itertools;
-use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class};
 use objc2_app_kit::{
     NSApplication as Objc2NSApplication,
     NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSEvent as Objc2NSEvent, NSEventMask as Objc2NSEventMask,
-    NSEventModifierFlags as Objc2NSEventModifierFlags, NSImage as Objc2NSImage,
-    NSMenu as Objc2NSMenu, NSMenuDelegate, NSMenuItem as Objc2NSMenuItem, NSMenuItemValidation,
-    NSModalResponse as Objc2NSModalResponse, NSModalResponseOK as Objc2NSModalResponseOK,
-    NSOpenPanel as Objc2NSOpenPanel, NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
+    NSAttributedStringAppKitDocumentFormats, NSDocumentController, NSEvent as Objc2NSEvent,
+    NSEventMask as Objc2NSEventMask, NSEventModifierFlags as Objc2NSEventModifierFlags,
+    NSImage as Objc2NSImage, NSMenu as Objc2NSMenu, NSMenuDelegate, NSMenuItem as Objc2NSMenuItem,
+    NSMenuItemValidation, NSModalResponse as Objc2NSModalResponse,
+    NSModalResponseOK as Objc2NSModalResponseOK, NSOpenPanel as Objc2NSOpenPanel,
+    NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
     NSPasteboardTypePNG as Objc2NSPasteboardTypePNG,
     NSPasteboardTypeRTF as Objc2NSPasteboardTypeRTF,
     NSPasteboardTypeRTFD as Objc2NSPasteboardTypeRTFD,
     NSPasteboardTypeString as Objc2NSPasteboardTypeString,
-    NSPasteboardTypeTIFF as Objc2NSPasteboardTypeTIFF, NSSavePanel as Objc2NSSavePanel,
-    NSTextInputContextKeyboardSelectionDidChangeNotification, NSWorkspace as Objc2NSWorkspace,
-    NSWorkspaceDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
-    NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillPowerOffNotification,
-    NSWorkspaceWillSleepNotification,
+    NSPasteboardTypeTIFF as Objc2NSPasteboardTypeTIFF, NSSavePanel as Objc2NSSavePanel, NSScroller,
+    NSScrollerStyle, NSTextInputContextKeyboardSelectionDidChangeNotification,
+    NSWorkspace as Objc2NSWorkspace, NSWorkspaceDidWakeNotification,
+    NSWorkspaceSessionDidBecomeActiveNotification, NSWorkspaceSessionDidResignActiveNotification,
+    NSWorkspaceWillPowerOffNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
-    NSArray, NSAutoreleasePool as Objc2NSAutoreleasePool, NSBundle as Objc2NSBundle,
-    NSData as Objc2NSData, NSNotification, NSNotificationCenter, NSObjectProtocol,
-    NSProcessInfo as Objc2NSProcessInfo,
+    NSArray, NSAttributedString as Objc2NSAttributedString,
+    NSAutoreleasePool as Objc2NSAutoreleasePool, NSBundle as Objc2NSBundle, NSData as Objc2NSData,
+    NSDictionary, NSMutableAttributedString, NSNotification, NSNotificationCenter,
+    NSObjectProtocol, NSProcessInfo as Objc2NSProcessInfo,
     NSProcessInfoThermalState as Objc2NSProcessInfoThermalState,
-    NSProcessInfoThermalStateDidChangeNotification, NSSize as Objc2NSSize,
+    NSProcessInfoThermalStateDidChangeNotification, NSRange as Objc2NSRange, NSSize as Objc2NSSize,
     NSString as Objc2NSString, NSURL as Objc2NSURL, NSUserDefaults,
+};
+use objc2_user_notifications::{
+    UNMutableNotificationContent, UNNotificationRequest, UNUserNotificationCenter,
 };
 use parking_lot::Mutex;
 use std::{
     cell::Cell,
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
-    os::{raw::c_char, unix::ffi::OsStrExt},
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::Command,
     ptr,
     rc::Rc,
-    slice, str,
     sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
 use util::ResultExt;
 
-type ObjcId = *mut Object;
+type ObjcId = *mut AnyObject;
 
 #[allow(non_camel_case_types)]
 type id = ObjcId;
-
-#[allow(non_upper_case_globals)]
-const nil: ObjcId = ptr::null_mut();
-
-#[allow(non_camel_case_types)]
-type NSInteger = isize;
-
-#[allow(non_camel_case_types)]
-type NSUInteger = usize;
-
-#[allow(non_upper_case_globals)]
-const NSUTF8StringEncoding: NSUInteger = 4;
 
 /// `NX_SUBTYPE_AUX_CONTROL_BUTTONS` — media keys arrive as system-defined
 /// events with this subtype. The numeric value collides with
@@ -1484,11 +1472,8 @@ impl Platform for MacPlatform {
     }
 
     fn app_path(&self) -> Result<PathBuf> {
-        unsafe {
-            let bundle = Objc2NSBundle::mainBundle();
-            let bundle_path = bundle.bundlePath();
-            Ok(path_from_objc(Retained::as_ptr(&bundle_path) as ObjcId))
-        }
+        let bundle = Objc2NSBundle::mainBundle();
+        Ok(PathBuf::from(bundle.bundlePath().to_string()))
     }
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
@@ -1521,16 +1506,10 @@ impl Platform for MacPlatform {
 
     fn add_recent_document(&self, path: &Path) {
         if let Some(path_str) = path.to_str() {
-            unsafe {
-                let document_controller: id =
-                    msg_send![class!(NSDocumentController), sharedDocumentController];
-                let path = Objc2NSString::from_str(path_str);
-                let url = Objc2NSURL::fileURLWithPath(&path);
-                let _: () = msg_send![
-                    document_controller,
-                    noteNewRecentDocumentURL: Retained::as_ptr(&url) as ObjcId
-                ];
-            }
+            let path = Objc2NSString::from_str(path_str);
+            let url = Objc2NSURL::fileURLWithPath(&path);
+            NSDocumentController::sharedDocumentController(main_thread_marker())
+                .noteNewRecentDocumentURL(&url);
         }
     }
 
@@ -1541,7 +1520,7 @@ impl Platform for MacPlatform {
             let Some(url) = bundle.URLForAuxiliaryExecutable(&name) else {
                 anyhow::bail!("resource not found");
             };
-            ns_url_to_path(Retained::as_ptr(&url) as ObjcId)
+            ns_url_to_path(&url)
         }
     }
 
@@ -1550,13 +1529,7 @@ impl Platform for MacPlatform {
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        #[allow(non_upper_case_globals)]
-        const NSScrollerStyleOverlay: NSInteger = 1;
-
-        unsafe {
-            let style: NSInteger = msg_send![class!(NSScroller), preferredScrollerStyle];
-            style == NSScrollerStyleOverlay
-        }
+        NSScroller::preferredScrollerStyle(main_thread_marker()) == NSScrollerStyle::Overlay
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -1581,21 +1554,22 @@ impl Platform for MacPlatform {
                     }
                 }
             } else {
-                let mut any_images = false;
+                let any_images = false;
                 let attributed_string = {
-                    let initial_text = Objc2NSString::from_str("");
-                    let mut buf = NSMutableAttributedString::alloc(nil)
-                        // TODO can we skip this? Or at least part of it?
-                        .init_attributed_string(Retained::as_ptr(&initial_text) as ObjcId);
+                    let buf = NSMutableAttributedString::initWithString(
+                        NSMutableAttributedString::alloc(),
+                        &Objc2NSString::from_str(""),
+                    );
 
                     for entry in item.into_entries() {
                         if let ClipboardEntry::String(string) = entry {
                             let text = string.into_text();
                             let text = Objc2NSString::from_str(&text);
-                            let to_append = NSAttributedString::alloc(nil)
-                                .init_attributed_string(Retained::as_ptr(&text) as ObjcId);
-
-                            buf.appendAttributedString_(to_append);
+                            let to_append = Objc2NSAttributedString::initWithString(
+                                Objc2NSAttributedString::alloc(),
+                                &text,
+                            );
+                            buf.appendAttributedString(&to_append);
                         }
                     }
 
@@ -1607,36 +1581,34 @@ impl Platform for MacPlatform {
 
                 // Only set rich text clipboard types if we actually have 1+ images to include.
                 if any_images {
-                    let attributed_string_len: usize = msg_send![attributed_string, length];
-                    let rtfd_data = attributed_string.RTFDFromRange_documentAttributes_(
-                        PlatformNSRange::from(0..attributed_string_len),
-                        nil,
-                    );
-                    if let Some(rtfd_data) = rtfd_data.cast::<Objc2NSData>().as_ref() {
+                    let range = Objc2NSRange::from(0..attributed_string.length());
+                    let attrs: Retained<NSDictionary<Objc2NSString, AnyObject>> =
+                        NSDictionary::new();
+                    if let Some(rtfd_data) = unsafe {
+                        attributed_string
+                            .as_super()
+                            .RTFDFromRange_documentAttributes(range, &attrs)
+                    } {
                         state
                             .pasteboard
-                            .setData_forType(Some(rtfd_data), Objc2NSPasteboardTypeRTFD);
+                            .setData_forType(Some(&rtfd_data), Objc2NSPasteboardTypeRTFD);
                     }
 
-                    let rtf_data = attributed_string.RTFFromRange_documentAttributes_(
-                        PlatformNSRange::from(0..attributed_string_len),
-                        nil,
-                    );
-                    if let Some(rtf_data) = rtf_data.cast::<Objc2NSData>().as_ref() {
+                    if let Some(rtf_data) = unsafe {
+                        attributed_string
+                            .as_super()
+                            .RTFFromRange_documentAttributes(range, &attrs)
+                    } {
                         state
                             .pasteboard
-                            .setData_forType(Some(rtf_data), Objc2NSPasteboardTypeRTF);
+                            .setData_forType(Some(&rtf_data), Objc2NSPasteboardTypeRTF);
                     }
                 }
 
                 let plain_text = attributed_string.string();
-                let plain_text = plain_text
-                    .cast::<Objc2NSString>()
-                    .as_ref()
-                    .expect("NSMutableAttributedString::string should return NSString");
                 state
                     .pasteboard
-                    .setString_forType(plain_text, Objc2NSPasteboardTypeString);
+                    .setString_forType(&plain_text, Objc2NSPasteboardTypeString);
             }
         }
     }
@@ -1864,36 +1836,24 @@ impl Platform for MacPlatform {
     }
 
     fn show_notification(&self, title: &str, body: &str) -> Result<()> {
-        unsafe {
-            let bundle: id = msg_send![class!(NSBundle), mainBundle];
-            let bundle_id: id = msg_send![bundle, bundleIdentifier];
-            if bundle_id == nil {
-                return Err(anyhow!(
-                    "Notifications require an app bundle (bundleIdentifier is nil)"
-                ));
-            }
-
-            let center: id = msg_send![class!(UNUserNotificationCenter), currentNotificationCenter];
-            if center == nil {
-                return Err(anyhow!("UNUserNotificationCenter not available"));
-            }
-            let content: id = msg_send![class!(UNMutableNotificationContent), new];
-            let ns_title = Objc2NSString::from_str(title);
-            let _: () = msg_send![content, setTitle: Retained::as_ptr(&ns_title) as ObjcId];
-            let ns_body = Objc2NSString::from_str(body);
-            let _: () = msg_send![content, setBody: Retained::as_ptr(&ns_body) as ObjcId];
-
-            let uuid_str = uuid::Uuid::new_v4().to_string();
-            let ns_id = Objc2NSString::from_str(&uuid_str);
-            let request: id = msg_send![
-                class!(UNNotificationRequest),
-                requestWithIdentifier: Retained::as_ptr(&ns_id) as ObjcId
-                content: content
-                trigger: nil
-            ];
-            let _: () =
-                msg_send![center, addNotificationRequest: request withCompletionHandler: nil];
+        if Objc2NSBundle::mainBundle().bundleIdentifier().is_none() {
+            return Err(anyhow!(
+                "Notifications require an app bundle (bundleIdentifier is nil)"
+            ));
         }
+
+        let content = UNMutableNotificationContent::new();
+        content.setTitle(&Objc2NSString::from_str(title));
+        content.setBody(&Objc2NSString::from_str(body));
+
+        let uuid_str = uuid::Uuid::new_v4().to_string();
+        let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &Objc2NSString::from_str(&uuid_str),
+            content.as_super(),
+            None,
+        );
+        UNUserNotificationCenter::currentNotificationCenter()
+            .addNotificationRequest_withCompletionHandler(&request, None);
         Ok(())
     }
 
@@ -2201,13 +2161,6 @@ fn try_clipboard_image(
     }
 }
 
-unsafe fn path_from_objc(path: id) -> PathBuf {
-    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-    let bytes: *const u8 = unsafe { msg_send![path, UTF8String] };
-    let path = str::from_utf8(unsafe { slice::from_raw_parts(bytes, len) }).unwrap();
-    PathBuf::from(path)
-}
-
 unsafe fn install_global_hotkey_handler(
     platform_ptr: *const Mutex<MacPlatformState>,
     state: &mut MacPlatformState,
@@ -2397,15 +2350,16 @@ fn global_hotkey_registration_error(status: OSStatus) -> anyhow::Error {
     }
 }
 
-unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
-    let path: *mut c_char = msg_send![url, fileSystemRepresentation];
-    anyhow::ensure!(!path.is_null(), "url is not a file path: {}", unsafe {
-        let absolute_string: ObjcId = msg_send![url, absoluteString];
-        let utf8_string: *const c_char = msg_send![absolute_string, UTF8String];
-        CStr::from_ptr(utf8_string).to_string_lossy()
-    });
+unsafe fn ns_url_to_path(url: &Objc2NSURL) -> Result<PathBuf> {
+    anyhow::ensure!(
+        url.isFileURL(),
+        "url is not a file path: {}",
+        url.absoluteString()
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    );
     Ok(PathBuf::from(OsStr::from_bytes(unsafe {
-        CStr::from_ptr(path).to_bytes()
+        CStr::from_ptr(url.fileSystemRepresentation().as_ptr()).to_bytes()
     })))
 }
 
@@ -2449,11 +2403,11 @@ const fn four_char_code(bytes: [u8; 4]) -> u32 {
 
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
-    pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut AnyObject;
     pub(super) fn TISGetInputSourceProperty(
-        inputSource: *mut Object,
+        inputSource: *mut AnyObject,
         propertyKey: *const c_void,
-    ) -> *mut Object;
+    ) -> *mut AnyObject;
     fn GetApplicationEventTarget() -> EventTargetRef;
     fn InstallEventHandler(
         target: EventTargetRef,

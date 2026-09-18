@@ -1,7 +1,7 @@
 use collections::HashMap;
-use std::ffi::{CStr, c_void};
+use std::ffi::c_void;
 
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc2_foundation::NSString;
 
 use crate::{KeybindingKeystroke, Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper};
 
@@ -55,19 +55,10 @@ impl MacKeyboardLayout {
         unsafe {
             let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
 
-            let id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let id: *const std::os::raw::c_char = msg_send![id, UTF8String];
-            let id = CStr::from_ptr(id).to_str().unwrap().to_string();
-
-            let name: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyLocalizedName as *const c_void,
-            );
-            let name: *const std::os::raw::c_char = msg_send![name, UTF8String];
-            let name = CStr::from_ptr(name).to_str().unwrap().to_string();
+            let id =
+                cf_string_property(current_keyboard, kTISPropertyInputSourceID as *const c_void);
+            let name =
+                cf_string_property(current_keyboard, kTISPropertyLocalizedName as *const c_void);
 
             Self { id, name }
         }
@@ -79,6 +70,17 @@ impl MacKeyboardMapper {
         let key_equivalents = get_key_equivalents(layout_id);
 
         Self { key_equivalents }
+    }
+}
+
+unsafe fn cf_string_property(source: *mut objc2::runtime::AnyObject, key: *const c_void) -> String {
+    unsafe {
+        let value = TISGetInputSourceProperty(source, key);
+        value
+            .cast::<NSString>()
+            .as_ref()
+            .map(NSString::to_string)
+            .unwrap_or_default()
     }
 }
 
