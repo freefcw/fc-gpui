@@ -17,14 +17,15 @@ fn main() {
     let bindings = bindgen::Builder::default()
         .header("src/bindings.h")
         .clang_arg(format!("-isysroot{}", sdk_path))
-        .clang_arg("-xobjective-c")
+        // CoreMedia / CoreVideo / VideoToolbox are C APIs. Parsing as
+        // Objective-C made bindgen emit `use objc::...` and pulled in the
+        // legacy `objc` crate for otherwise-unused `id` aliases.
+        .clang_arg("-xc")
         .allowlist_type("CMItemIndex")
         .allowlist_type("CMSampleTimingInfo")
         .allowlist_type("CMVideoCodecType")
         .allowlist_type("VTEncodeInfoFlags")
         .allowlist_function("CMTimeMake")
-        .allowlist_var("kCVPixelFormatType_.*")
-        .allowlist_var("kCVReturn.*")
         .allowlist_var("VTEncodeInfoFlags_.*")
         .allowlist_var("kCMVideoCodecType_.*")
         .allowlist_var("kCMTime.*")

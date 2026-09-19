@@ -1,5 +1,3 @@
-#import <CoreMedia/CMFormatDescription.h>
-#import <CoreMedia/CMSampleBuffer.h>
-#import <CoreVideo/CVPixelFormatDescription.h>
-#import <CoreVideo/CVReturn.h>
-#import <VideoToolbox/VTCompressionSession.h>
+#include <CoreMedia/CMFormatDescription.h>
+#include <CoreMedia/CMSampleBuffer.h>
+#include <VideoToolbox/VTCompressionSession.h>

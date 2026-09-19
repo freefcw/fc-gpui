@@ -2121,7 +2121,6 @@ dependencies = [
  "core-foundation 0.10.1",
  "core-video",
  "ctor 0.4.3",
- "objc",
 ]
 
 [[package]]
