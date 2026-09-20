@@ -51,7 +51,7 @@ type NSUInteger = usize;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct NSPoint {
+pub(super) struct NSPoint {
     pub x: f64,
     pub y: f64,
 }
@@ -72,7 +72,7 @@ unsafe impl RefEncode for NSPoint {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct NSSize {
+pub(super) struct NSSize {
     pub width: f64,
     pub height: f64,
 }
@@ -93,7 +93,7 @@ unsafe impl RefEncode for NSSize {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct NSRect {
+pub(super) struct NSRect {
     pub origin: NSPoint,
     pub size: NSSize,
 }
@@ -233,7 +233,7 @@ fn add_popup_tracking_area(view: &NSView) {
             None,
         )
     };
-    unsafe { view.addTrackingArea(&tracking_area) };
+    view.addTrackingArea(&tracking_area);
 }
 
 fn global_domain_string(key: &str) -> String {
@@ -707,7 +707,7 @@ impl MacWindow {
             let native_window = ns_window_from_created(&created);
             let filename_type = NSString::from_str("NSFilenamesPboardType");
             native_window.registerForDraggedTypes(&NSArray::from_retained_slice(&[filename_type]));
-            unsafe { native_window.setReleasedWhenClosed(false) };
+            native_window.setReleasedWhenClosed(false);
 
             let content_view = native_window
                 .contentView()
@@ -1126,7 +1126,7 @@ impl PlatformWindow for MacWindow {
                 Err(error) => {
                     log::warn!(
                         "failed to unarchive the native window state: {}",
-                        error.localizedDescription().to_string()
+                        error.localizedDescription()
                     );
                     return;
                 }
@@ -1658,13 +1658,13 @@ impl PlatformWindow for MacWindow {
 
     fn set_progress_bar(&self, state: crate::ProgressBarState) {
         let app = shared_ns_application();
-        let dock_tile = unsafe { app.dockTile() };
+        let dock_tile = app.dockTile();
         let indicator_frame =
             Objc2NSRect::new(Objc2NSPoint::new(0.0, 0.0), Objc2NSSize::new(140.0, 140.0));
         match state {
             crate::ProgressBarState::None => {
                 dock_tile.setContentView(None);
-                unsafe { dock_tile.setBadgeLabel(None) };
+                dock_tile.setBadgeLabel(None);
                 dock_tile.display();
             }
             crate::ProgressBarState::Indeterminate => {

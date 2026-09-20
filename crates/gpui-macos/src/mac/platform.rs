@@ -24,7 +24,7 @@ use core_foundation::{
 };
 use futures::channel::oneshot;
 use itertools::Itertools;
-use objc2::rc::{Allocated, Retained};
+use objc2::rc::{Allocated, Retained, autoreleasepool};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class};
 use objc2_app_kit::{
@@ -47,10 +47,9 @@ use objc2_app_kit::{
     NSWorkspaceWillPowerOffNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
-    NSArray, NSAttributedString as Objc2NSAttributedString,
-    NSAutoreleasePool as Objc2NSAutoreleasePool, NSBundle as Objc2NSBundle, NSData as Objc2NSData,
-    NSDictionary, NSMutableAttributedString, NSNotification, NSNotificationCenter,
-    NSObjectProtocol, NSProcessInfo as Objc2NSProcessInfo,
+    NSArray, NSAttributedString as Objc2NSAttributedString, NSBundle as Objc2NSBundle,
+    NSData as Objc2NSData, NSDictionary, NSMutableAttributedString, NSNotification,
+    NSNotificationCenter, NSObjectProtocol, NSProcessInfo as Objc2NSProcessInfo,
     NSProcessInfoThermalState as Objc2NSProcessInfoThermalState,
     NSProcessInfoThermalStateDidChangeNotification, NSRange as Objc2NSRange, NSSize as Objc2NSSize,
     NSString as Objc2NSString, NSURL as Objc2NSURL, NSUserDefaults,
@@ -1033,11 +1032,9 @@ impl Platform for MacPlatform {
         let app_delegate = GPUIApplicationDelegate::new(self.1, platform_ptr);
         app.setDelegate(Some(ProtocolObject::from_ref(&*app_delegate)));
 
-        unsafe {
-            let pool = Objc2NSAutoreleasePool::new();
+        autoreleasepool(|_| {
             app.run();
-            pool.drain();
-        }
+        });
 
         // `NSApplication.delegate`, menu delegates, and notification observers
         // are weak. Unhook them before dropping `app_delegate`.
@@ -1584,21 +1581,19 @@ impl Platform for MacPlatform {
                     let range = Objc2NSRange::from(0..attributed_string.length());
                     let attrs: Retained<NSDictionary<Objc2NSString, AnyObject>> =
                         NSDictionary::new();
-                    if let Some(rtfd_data) = unsafe {
-                        attributed_string
-                            .as_super()
-                            .RTFDFromRange_documentAttributes(range, &attrs)
-                    } {
+                    if let Some(rtfd_data) = attributed_string
+                        .as_super()
+                        .RTFDFromRange_documentAttributes(range, &attrs)
+                    {
                         state
                             .pasteboard
                             .setData_forType(Some(&rtfd_data), Objc2NSPasteboardTypeRTFD);
                     }
 
-                    if let Some(rtf_data) = unsafe {
-                        attributed_string
-                            .as_super()
-                            .RTFFromRange_documentAttributes(range, &attrs)
-                    } {
+                    if let Some(rtf_data) = attributed_string
+                        .as_super()
+                        .RTFFromRange_documentAttributes(range, &attrs)
+                    {
                         state
                             .pasteboard
                             .setData_forType(Some(&rtf_data), Objc2NSPasteboardTypeRTF);
