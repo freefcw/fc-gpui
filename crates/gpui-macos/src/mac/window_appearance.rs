@@ -8,17 +8,20 @@ use objc2_app_kit::{
 
 pub(crate) fn from_ns_appearance(appearance: &NSAppearance) -> WindowAppearance {
     let name = appearance.name();
-    if &*name == NSAppearanceNameVibrantLight {
-        WindowAppearance::VibrantLight
-    } else if &*name == NSAppearanceNameVibrantDark {
-        WindowAppearance::VibrantDark
-    } else if &*name == NSAppearanceNameAqua {
-        WindowAppearance::Light
-    } else if &*name == NSAppearanceNameDarkAqua {
-        WindowAppearance::Dark
-    } else {
-        println!("unknown appearance: {}", name);
-        WindowAppearance::Light
+    // `NSAppearanceName*` are extern statics; reading them is unsafe.
+    unsafe {
+        if &*name == NSAppearanceNameVibrantLight {
+            WindowAppearance::VibrantLight
+        } else if &*name == NSAppearanceNameVibrantDark {
+            WindowAppearance::VibrantDark
+        } else if &*name == NSAppearanceNameAqua {
+            WindowAppearance::Light
+        } else if &*name == NSAppearanceNameDarkAqua {
+            WindowAppearance::Dark
+        } else {
+            println!("unknown appearance: {}", name);
+            WindowAppearance::Light
+        }
     }
 }
 

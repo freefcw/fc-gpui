@@ -12,20 +12,23 @@ use futures::channel::oneshot;
 use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{ClassType, MainThreadMarker, msg_send};
+use objc2::{
+    AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, msg_send,
+};
 use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSApplication, NSApplicationPresentationOptions,
-    NSAutoresizingMaskOptions, NSBeep, NSButton as Objc2NSButton, NSColor, NSCursor, NSEvent,
-    NSEventModifierFlags, NSNormalWindowLevel, NSPopUpMenuWindowLevel, NSProgressIndicator,
-    NSProgressIndicatorStyle, NSScreen, NSStatusWindowLevel, NSTextInputContext, NSTrackingArea,
-    NSTrackingAreaOptions, NSView, NSViewLayerContentsRedrawPolicy, NSWindow,
-    NSWindowAnimationBehavior, NSWindowButton, NSWindowCollectionBehavior, NSWindowOcclusionState,
-    NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSAlert, NSAlertStyle, NSAppearanceCustomization, NSApplication,
+    NSApplicationPresentationOptions, NSAutoresizingMaskOptions, NSBeep, NSButton as Objc2NSButton,
+    NSColor, NSCursor, NSEvent, NSEventModifierFlags, NSNormalWindowLevel, NSPopUpMenuWindowLevel,
+    NSProgressIndicator, NSProgressIndicatorStyle, NSScreen, NSStatusWindowLevel,
+    NSTextInputContext, NSTrackingArea, NSTrackingAreaOptions, NSView,
+    NSViewLayerContentsRedrawPolicy, NSWindow, NSWindowAnimationBehavior, NSWindowButton,
+    NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSArray, NSAutoreleasePool, NSData, NSDictionary, NSKeyedArchiver, NSKeyedArchiverDelegate,
-    NSNumber, NSPoint as Objc2NSPoint, NSProcessInfo, NSRect as Objc2NSRect, NSSize as Objc2NSSize,
-    NSString, NSUserDefaults,
+    NSArray, NSAutoreleasePool, NSData, NSDictionary, NSKeyedArchiver, NSNumber, NSObjectProtocol,
+    NSPoint as Objc2NSPoint, NSProcessInfo, NSRect as Objc2NSRect, NSSize as Objc2NSSize, NSString,
+    NSUserDefaults,
 };
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
@@ -1109,11 +1112,10 @@ impl PlatformWindow for MacWindow {
                 RESTORES_WORKSPACE_AT_LAUNCH_DEFAULT.call_once(|| {
                     let defaults = NSUserDefaults::standardUserDefaults();
                     let key = NSString::from_str("NSWindowRestoresWorkspaceAtLaunch");
-                    let yes_value = NSNumber::initWithBool(NSNumber::alloc(), true);
-                    let dict = NSDictionary::<NSString, AnyObject>::from_slices(
-                        &[&*key],
-                        &[yes_value.as_ref()],
-                    );
+                    let yes_value = NSNumber::numberWithBool(true);
+                    let yes_obj: &AnyObject = yes_value.as_ref();
+                    let dict =
+                        NSDictionary::<NSString, AnyObject>::from_slices(&[&*key], &[yes_obj]);
                     defaults.registerDefaults(&dict);
                 });
             }

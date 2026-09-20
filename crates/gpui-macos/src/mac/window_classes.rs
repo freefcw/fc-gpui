@@ -5,10 +5,11 @@
 //! legacy `objc` `ClassDecl`. This module is a local adaptation in the same
 //! objc2 style as `platform.rs` / `screen_capture.rs`.
 
+use super::super::NSRange;
 use super::super::events::platform_input_from_native;
 use super::{
-    MacWindowState, NSOperatingSystemVersion, NSPoint, NSRange, NSRect, NSSize,
-    convert_mouse_position, is_macos_version_at_least, titlebar_move_rect,
+    MacWindowState, NSOperatingSystemVersion, NSPoint, NSRect, NSSize, convert_mouse_position,
+    is_macos_version_at_least, titlebar_move_rect,
 };
 use crate::{
     CursorStyle, ExternalPaths, FileDropEvent, KeyDownEvent, Modifiers, ModifiersChangedEvent,
@@ -1487,7 +1488,7 @@ fn external_paths_from_event(
 ) -> Option<ExternalPaths> {
     let pasteboard = dragging_info.draggingPasteboard();
     let filenames_type = NSString::from_str("NSFilenamesPboardType");
-    let filenames = unsafe { pasteboard.propertyListForType(&filenames_type) }?;
+    let filenames = pasteboard.propertyListForType(&filenames_type)?;
     let filenames = filenames.downcast::<NSArray<AnyObject>>().ok()?;
     let mut paths = SmallVec::new();
     for i in 0..filenames.len() {
