@@ -34,7 +34,53 @@
   `fc-gpui` and `fc-gpui-core` instead of the old names, and the
   `[package.metadata.gpui-macros] crate = "…"` override is unchanged.
 
+### Fixes
+
+- **macOS clipboard tests under cargo's worker-thread harness** — `test_clipboard` no longer
+  constructs `MacPlatform` on a libtest worker, where `MainThreadMarker::new` is `None`. Production
+  `MacPlatform::new` still panics off the AppKit main thread.
+
 ### Improvements
+
+- **Workspace lockfile no longer records legacy `objc` or `block`** — a workspace-only
+  `[patch.crates-io]` for `zed-scap` omits unused macOS cocoa/`objc` deps (Linux/Windows/FreeBSD
+  capture still uses the 0.0.8-zed API). Residual `block` from `core-video` / `core-graphics2` is
+  gated behind unused `display-link` / `display-stream` features (`default-features = false` plus
+  `link` on `core-video`). Downstream lockfiles without these patches still see registry `objc` /
+  `block`.
+
+- **`MacWindowState::native_window` is `Option<Retained<NSWindow>>`** — typed AppKit replaces most
+  raw `id` `msg_send!` for frame, screen, tabbing, fullscreen, IME, and dock progress. Drop takes
+  the `Retained` to unwind the window-ivar `Arc` cycle. A few private or deprecated selectors stay
+  as objc2 `msg_send!` (`_zoomFill:`, nil tabbing identifier). Outbound `start_external_drag`
+  remains deferred.
+
+- **`fc-gpui-media` drops leftover `objc`** — bindgen generates C bindings instead of an
+  Objective-C path; Core Video return and pixel-format constants come from the `core-video` crate.
+  Public media API names are unchanged.
+
+- **`fc-gpui-macos` drops the `objc` crate** — leftover `window.rs` / `platform.rs` `msg_send!`
+  sites (clipboard RTF, notifications, scroller style, recent documents, paths, dispatcher and
+  display-link main-thread checks, keyboard, window lifecycle) use typed objc2. A few private
+  `msg_send!` leftovers remain.
+
+- **macOS Metal renderer on `objc2-metal`** — the gfx-rs `metal` crate and `ConcreteBlock`
+  presentable completed handlers are replaced by `objc2-metal`, `CAMetalLayer`, and `block2`. The
+  `metal` package is gone from the workspace lockfile.
+
+- **macOS AppKit classes via objc2 `define_class!`** — `GPUIApplication` /
+  `GPUIApplicationDelegate` and `GPUIWindow` / `GPUIPanel` / `GPUIView` / `BlurredView` plus the
+  window-state archiver and unarchiver (in `window_classes.rs`) replace legacy `ClassDecl` + ivars.
+
+- **macOS screen-capture stream on objc2** — SCStream start/stop, sample/output handlers, and the
+  remaining stream `ClassDecl` / `ConcreteBlock` path use objc2 `define_class!` and `block2`
+  `RcBlock`. CI's macOS visual smoke compiles `fc-gpui-macos` with `screen-capture`. Exactly-once
+  `Ended` / `Cancelled` / `Failed` callbacks are unchanged.
+
+- **macOS leftover objc2 islands** — biometric LocalAuthentication, SMAppService auto-launch,
+  `os_info`, focused-window lookup, network-path monitor, media keys, tray menus, `open_url` /
+  `reveal_path`, and thermal-state handlers move from leftover `objc` / `ConcreteBlock` call sites
+  to typed objc2 + `block2`.
 
 - **macOS simple fullscreen restore bounds** — `window_bounds()` reports the pre-simple-fullscreen frame so a restart does not reopen the window maximized.
 
