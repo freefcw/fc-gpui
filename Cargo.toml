@@ -28,3 +28,9 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
+
+# Workspace-only: drop zed-scap's unused macOS cocoa/objc graph from the lockfile.
+# Published fc-gpui-* manifests still depend on crates.io zed-scap 0.0.8-zed
+# (Linux/Windows/FreeBSD screen-capture). See vendor/zed-scap/README.md.
+[patch.crates-io]
+zed-scap = { path = "vendor/zed-scap" }

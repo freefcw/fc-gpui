@@ -337,6 +337,11 @@ version = "0.6.0"
 version = "2.6"
 optional = true
 
+# Optional Linux/Windows/FreeBSD capture only. macOS uses objc2-screen-capture-kit.
+# Registry zed-scap 0.0.8-zed (and Zed git pin 4afea48) still declare macOS
+# cocoa/objc/screencapturekit; root [patch.crates-io] points at vendor/zed-scap
+# so those unused deps leave this lockfile. The published manifest still names
+# crates.io zed-scap 0.0.8-zed.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies.scap]
 version = "0.0.8-zed"
 optional = true
