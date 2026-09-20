@@ -1,0 +1,98 @@
+# Workspace patch of crates.io `core-video` 0.5.2
+# (checksum 139679cc63eb9504bdbe37e37874b0247136177655f0008588781e90863afa62).
+#
+# Delta vs registry: `block` is optional and enabled only by `display-link`.
+# Registry 0.5.2 (and current 0.6.1) hard-depends on `block` for
+# `src/display_link.rs` only. fc-gpui does not use that module; frame pacing
+# is `crates/gpui-macos/src/mac/display_link.rs`. Pixel-buffer / image-buffer
+# / Metal CV paths are unchanged.
+#
+# This crate is not published. Published fc-gpui-* manifests still depend on
+# registry `core-video 0.5.2`; the patch is workspace-only.
+# See README.md.
+
+[package]
+edition = "2021"
+name = "core-video"
+version = "0.5.2"
+authors = ["Zhou Wei <zhouwei@ehom.net>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Safe bindings to CoreVideo framework"
+homepage = "https://github.com/rust-media/apple-media-rs"
+documentation = "https://docs.rs/core-video"
+readme = "README.md"
+keywords = ["corevideo"]
+categories = [
+    "multimedia::video",
+    "os::macos-apis",
+]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rust-media/apple-media-rs"
+publish = false
+
+[package.metadata.docs.rs]
+no-default-features = true
+features = [
+    "display-link",
+    "metal",
+    "objc",
+]
+default-target = "x86_64-apple-darwin"
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-apple-ios",
+    "x86_64-apple-darwin",
+    "x86_64-apple-ios",
+]
+
+[features]
+default = [
+    "display-link",
+    "link",
+]
+display-link = ["dep:block"]
+link = [
+    "core-foundation/link",
+    "core-graphics2/link",
+]
+objc = [
+    "dep:objc2",
+    "core-graphics2/objc",
+]
+
+[lib]
+name = "core_video"
+path = "src/lib.rs"
+
+[dependencies.block]
+version = "0.1"
+optional = true
+
+[dependencies.core-foundation]
+version = "0.10"
+default-features = false
+
+[dependencies.core-graphics2]
+version = "0.5.2"
+features = ["display"]
+default-features = false
+
+[dependencies.io-surface]
+version = "0.16"
+default-features = false
+
+[dependencies.libc]
+version = "0.2"
+
+[dependencies.metal]
+version = "0.33"
+optional = true
+
+[dependencies.objc2]
+version = "0.5"
+optional = true
