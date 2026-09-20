@@ -8,6 +8,7 @@ use anyhow::Result;
 use block2::RcBlock;
 use core_foundation::base::TCFType;
 use core_video::pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+#[cfg(not(feature = "runtime_shaders"))]
 use dispatch2::DispatchData;
 use media::core_video::CVMetalTextureCache;
 use objc2::rc::Retained;
@@ -17,12 +18,14 @@ use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSRange, NSString};
 #[cfg(feature = "runtime_shaders")]
 use objc2_metal::MTLCompileOptions;
+#[cfg(any(test, feature = "test-support"))]
+use objc2_metal::MTLRegion;
 use objc2_metal::{
     MTLBlendFactor, MTLBlendOperation, MTLBlitCommandEncoder, MTLBuffer, MTLClearColor,
     MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLCopyAllDevices, MTLDevice,
     MTLDrawable, MTLFunction, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat,
-    MTLPrimitiveType, MTLRegion, MTLRenderCommandEncoder, MTLRenderPassColorAttachmentDescriptor,
-    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLResource,
+    MTLPrimitiveType, MTLRenderCommandEncoder, MTLRenderPassColorAttachmentDescriptor,
+    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
     MTLResourceOptions, MTLSize, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
     MTLTextureType, MTLTextureUsage, MTLViewport,
 };

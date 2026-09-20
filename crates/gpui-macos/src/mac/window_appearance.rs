@@ -1,6 +1,5 @@
 use crate::WindowAppearance;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
     NSAppearanceNameVibrantLight,
@@ -22,15 +21,6 @@ pub(crate) fn from_ns_appearance(appearance: &NSAppearance) -> WindowAppearance 
             println!("unknown appearance: {}", name);
             WindowAppearance::Light
         }
-    }
-}
-
-pub(crate) unsafe fn from_native(appearance: *mut AnyObject) -> WindowAppearance {
-    unsafe {
-        let Some(appearance) = appearance.cast::<NSAppearance>().as_ref() else {
-            return WindowAppearance::Light;
-        };
-        from_ns_appearance(appearance)
     }
 }
 

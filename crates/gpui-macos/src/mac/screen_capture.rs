@@ -98,6 +98,7 @@ fn notify_stream_termination(stream: &SCStream, termination: ScreenCaptureStream
     }
 }
 
+#[cfg(test)]
 fn notify_stream_termination_key(key: StreamKey, termination: ScreenCaptureStreamTermination) {
     if let Some(callback) = take_stream_termination_callback_key(key) {
         callback(termination);

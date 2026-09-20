@@ -36,10 +36,8 @@ mod window;
 mod window_appearance;
 
 use objc2::encode::{Encode, Encoding, RefEncode};
-use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2_foundation::{NSNotFound, NSString};
-use std::{ffi::CStr, ops::Range};
+use objc2_foundation::NSNotFound;
+use std::ops::Range;
 
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
@@ -50,26 +48,6 @@ pub(crate) use window::*;
 
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;
-
-trait NSStringExt {
-    unsafe fn to_str(&self) -> &str;
-}
-
-impl NSStringExt for *mut AnyObject {
-    unsafe fn to_str(&self) -> &str {
-        unsafe {
-            let Some(string) = self.cast::<NSString>().as_ref() else {
-                return "";
-            };
-            let cstr = string.UTF8String();
-            if cstr.is_null() {
-                ""
-            } else {
-                CStr::from_ptr(cstr).to_str().unwrap()
-            }
-        }
-    }
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -116,9 +94,4 @@ unsafe impl Encode for NSRange {
 
 unsafe impl RefEncode for NSRange {
     const ENCODING_REF: Encoding = Encoding::Pointer(&Self::ENCODING);
-}
-
-unsafe fn ns_string(string: &str) -> *mut AnyObject {
-    let string = Retained::into_raw(NSString::from_str(string));
-    unsafe { objc2::msg_send![string, autorelease] }
 }

@@ -79,6 +79,7 @@ pub(crate) fn display_id_for_ns_screen(screen: &NSScreen) -> DisplayId {
     DisplayId::new(screen_number(screen) as u64)
 }
 
+#[cfg(test)]
 pub(crate) unsafe fn display_id_for_screen(screen: *mut AnyObject) -> Option<DisplayId> {
     unsafe {
         let screen = as_screen(screen)?;
