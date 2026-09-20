@@ -1632,7 +1632,10 @@ impl WindowBounds {
         }
     }
 
-    /// Creates a new window bounds that centers the window on the screen.
+    /// Creates windowed bounds centered in the primary display's work area.
+    ///
+    /// Delegates to [`Bounds::centered`], so the size is clamped with [`Size::min`]
+    /// and the origin uses `visible_bounds` rather than the full display.
     pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
         WindowBounds::Windowed(Bounds::centered(None, size, cx))
     }
