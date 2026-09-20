@@ -1,3 +1,8 @@
+// `core-video` 0.5.2 still exposes its IOSurface bridge through the deprecated
+// `io-surface` crate. Keep this compatibility module available until the
+// bridge is migrated to `objc2-io-surface`.
+#![allow(deprecated)]
+
 use std::ptr::{null, null_mut};
 
 use core_foundation::{
