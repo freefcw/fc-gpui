@@ -23,9 +23,10 @@ use objc2::{
     msg_send,
 };
 use objc2_app_kit::{
-    NSCursor, NSDragOperation, NSDraggingDestination, NSDraggingInfo, NSEvent, NSPanel, NSScreen,
-    NSTextInputClient, NSView, NSViewController, NSVisualEffectMaterial, NSVisualEffectState,
-    NSVisualEffectView, NSWindow, NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
+    NSCursor, NSCursorFrameResizeDirections, NSCursorFrameResizePosition, NSDragOperation,
+    NSDraggingDestination, NSDraggingInfo, NSEvent, NSPanel, NSScreen, NSTextInputClient, NSView,
+    NSViewController, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSData, NSError, NSKeyedArchiver,
@@ -1036,14 +1037,14 @@ fn cursor_for_style(cursor_style: CursorStyle) -> Retained<NSCursor> {
         CursorStyle::ClosedHand => NSCursor::closedHandCursor(),
         CursorStyle::OpenHand => NSCursor::openHandCursor(),
         CursorStyle::PointingHand => NSCursor::pointingHandCursor(),
-        CursorStyle::ResizeLeftRight => NSCursor::resizeLeftRightCursor(),
-        CursorStyle::ResizeUpDown => NSCursor::resizeUpDownCursor(),
-        CursorStyle::ResizeLeft => NSCursor::resizeLeftCursor(),
-        CursorStyle::ResizeRight => NSCursor::resizeRightCursor(),
-        CursorStyle::ResizeColumn => NSCursor::resizeLeftRightCursor(),
-        CursorStyle::ResizeRow => NSCursor::resizeUpDownCursor(),
-        CursorStyle::ResizeUp => NSCursor::resizeUpCursor(),
-        CursorStyle::ResizeDown => NSCursor::resizeDownCursor(),
+        CursorStyle::ResizeLeftRight
+        | CursorStyle::ResizeColumn
+        | CursorStyle::ResizeUpDown
+        | CursorStyle::ResizeRow
+        | CursorStyle::ResizeLeft
+        | CursorStyle::ResizeRight
+        | CursorStyle::ResizeUp
+        | CursorStyle::ResizeDown => resize_cursor_for_style(cursor_style),
         CursorStyle::ResizeUpLeftDownRight => unsafe {
             objc2::msg_send![NSCursor::class(), _windowResizeNorthWestSouthEastCursor]
         },
@@ -1056,6 +1057,47 @@ fn cursor_for_style(cursor_style: CursorStyle) -> Retained<NSCursor> {
         CursorStyle::DragCopy => NSCursor::dragCopyCursor(),
         CursorStyle::ContextualMenu => NSCursor::contextualMenuCursor(),
         CursorStyle::None => unreachable!(),
+    }
+}
+
+fn resize_cursor_for_style(cursor_style: CursorStyle) -> Retained<NSCursor> {
+    if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+        match cursor_style {
+            CursorStyle::ResizeLeftRight | CursorStyle::ResizeColumn => {
+                NSCursor::columnResizeCursor()
+            }
+            CursorStyle::ResizeUpDown | CursorStyle::ResizeRow => NSCursor::rowResizeCursor(),
+            CursorStyle::ResizeLeft => NSCursor::frameResizeCursorFromPosition_inDirections(
+                NSCursorFrameResizePosition::Left,
+                NSCursorFrameResizeDirections::All,
+            ),
+            CursorStyle::ResizeRight => NSCursor::frameResizeCursorFromPosition_inDirections(
+                NSCursorFrameResizePosition::Right,
+                NSCursorFrameResizeDirections::All,
+            ),
+            CursorStyle::ResizeUp => NSCursor::frameResizeCursorFromPosition_inDirections(
+                NSCursorFrameResizePosition::Top,
+                NSCursorFrameResizeDirections::All,
+            ),
+            CursorStyle::ResizeDown => NSCursor::frameResizeCursorFromPosition_inDirections(
+                NSCursorFrameResizePosition::Bottom,
+                NSCursorFrameResizeDirections::All,
+            ),
+            _ => unreachable!(),
+        }
+    } else {
+        #[allow(deprecated)]
+        match cursor_style {
+            CursorStyle::ResizeLeftRight | CursorStyle::ResizeColumn => {
+                NSCursor::resizeLeftRightCursor()
+            }
+            CursorStyle::ResizeUpDown | CursorStyle::ResizeRow => NSCursor::resizeUpDownCursor(),
+            CursorStyle::ResizeLeft => NSCursor::resizeLeftCursor(),
+            CursorStyle::ResizeRight => NSCursor::resizeRightCursor(),
+            CursorStyle::ResizeUp => NSCursor::resizeUpCursor(),
+            CursorStyle::ResizeDown => NSCursor::resizeDownCursor(),
+            _ => unreachable!(),
+        }
     }
 }
 
