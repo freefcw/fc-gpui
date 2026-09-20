@@ -40,6 +40,8 @@ parking = "2.0.0"
 parking_lot = "0.12.1"
 rand = "0.9"
 raw-window-handle = "0.6"
+# Same crates.io zed-scap 0.0.8-zed as fc-gpui-core; workspace [patch.crates-io]
+# strips unused macOS cocoa/objc transitives. See vendor/zed-scap/README.md.
 scap = { package = "zed-scap", version = "0.0.8-zed", optional = true, default-features = false }
 smallvec = "1.6"
 util = { package = "fc-gpui-util", path = "../util", version = "0.6.0" }
