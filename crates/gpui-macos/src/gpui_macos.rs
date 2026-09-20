@@ -14,7 +14,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
     Rc::new(mac::MacPlatform::new(headless))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "font-kit"))]
 mod tests {
     use super::{MacTextSystem, current_platform};
     use gpui::{TestApp, TextRun, VisualTestCapabilities, WindowTextSystem, black, font, px};
