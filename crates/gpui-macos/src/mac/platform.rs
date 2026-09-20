@@ -1195,7 +1195,7 @@ impl Platform for MacPlatform {
 
     fn window_appearance(&self) -> WindowAppearance {
         let appearance = shared_application().effectiveAppearance();
-        unsafe { super::window_appearance::from_native(Retained::as_ptr(&appearance) as ObjcId) }
+        super::window_appearance::from_ns_appearance(&appearance)
     }
 
     fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {

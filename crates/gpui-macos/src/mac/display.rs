@@ -64,7 +64,7 @@ unsafe fn as_screen<'a>(screen: *mut AnyObject) -> Option<&'a NSScreen> {
     unsafe { screen.cast::<NSScreen>().as_ref() }
 }
 
-unsafe fn screen_number(screen: &NSScreen) -> CGDirectDisplayID {
+fn screen_number(screen: &NSScreen) -> CGDirectDisplayID {
     let device_description = screen.deviceDescription();
     let screen_number_key = NSString::from_str("NSScreenNumber");
     let screen_number = device_description
@@ -75,10 +75,14 @@ unsafe fn screen_number(screen: &NSScreen) -> CGDirectDisplayID {
     screen_number.as_u32()
 }
 
+pub(crate) fn display_id_for_ns_screen(screen: &NSScreen) -> DisplayId {
+    DisplayId::new(screen_number(screen) as u64)
+}
+
 pub(crate) unsafe fn display_id_for_screen(screen: *mut AnyObject) -> Option<DisplayId> {
     unsafe {
         let screen = as_screen(screen)?;
-        Some(DisplayId::new(screen_number(screen) as u64))
+        Some(display_id_for_ns_screen(screen))
     }
 }
 

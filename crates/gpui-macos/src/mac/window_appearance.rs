@@ -6,12 +6,10 @@ use objc2_app_kit::{
     NSAppearanceNameVibrantLight,
 };
 
-pub(crate) unsafe fn from_native(appearance: *mut AnyObject) -> WindowAppearance {
+pub(crate) fn from_ns_appearance(appearance: &NSAppearance) -> WindowAppearance {
+    let name = appearance.name();
+    // `NSAppearanceName*` are extern statics; reading them is unsafe.
     unsafe {
-        let Some(appearance) = appearance.cast::<NSAppearance>().as_ref() else {
-            return WindowAppearance::Light;
-        };
-        let name = appearance.name();
         if &*name == NSAppearanceNameVibrantLight {
             WindowAppearance::VibrantLight
         } else if &*name == NSAppearanceNameVibrantDark {
@@ -24,6 +22,15 @@ pub(crate) unsafe fn from_native(appearance: *mut AnyObject) -> WindowAppearance
             println!("unknown appearance: {}", name);
             WindowAppearance::Light
         }
+    }
+}
+
+pub(crate) unsafe fn from_native(appearance: *mut AnyObject) -> WindowAppearance {
+    unsafe {
+        let Some(appearance) = appearance.cast::<NSAppearance>().as_ref() else {
+            return WindowAppearance::Light;
+        };
+        from_ns_appearance(appearance)
     }
 }
 
