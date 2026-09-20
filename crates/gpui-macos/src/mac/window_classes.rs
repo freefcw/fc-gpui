@@ -7,8 +7,8 @@
 
 use super::super::events::platform_input_from_native;
 use super::{
-    MacWindowState, NSOperatingSystemVersion, NSPoint, NSRange, NSRect, NSSize, NSStringExt,
-    convert_mouse_position, is_macos_version_at_least, ns_string, titlebar_move_rect,
+    MacWindowState, NSOperatingSystemVersion, NSPoint, NSRange, NSRect, NSSize,
+    convert_mouse_position, is_macos_version_at_least, titlebar_move_rect,
 };
 use crate::{
     CursorStyle, ExternalPaths, FileDropEvent, KeyDownEvent, Modifiers, ModifiersChangedEvent,
@@ -50,9 +50,6 @@ type ObjcId = *mut AnyObject;
 #[allow(non_camel_case_types)]
 type id = ObjcId;
 
-#[allow(non_upper_case_globals)]
-const nil: ObjcId = ptr::null_mut();
-
 pub(super) struct WindowIvars {
     pub(super) state: Cell<*const Mutex<MacWindowState>>,
 }
@@ -76,7 +73,7 @@ impl Drop for ViewIvars {
         let window_state = unsafe { Arc::from_raw(raw) };
         let mut state = window_state.lock();
         if state.cursor_hidden {
-            let _: () = unsafe { objc2::msg_send![NSCursor::class(), unhide] };
+            NSCursor::unhide();
             state.cursor_hidden = false;
         }
     }
@@ -673,12 +670,8 @@ pub(super) fn assign_view_state(view: &GPUIView, state: &Arc<Mutex<MacWindowStat
         .set(Arc::into_raw(state.clone()) as *const Mutex<MacWindowState>);
 }
 
-pub(super) unsafe fn gpui_window_from_id<'a>(ptr: id) -> Option<&'a GPUIWindow> {
-    unsafe {
-        ptr.cast::<AnyObject>()
-            .as_ref()?
-            .downcast_ref::<GPUIWindow>()
-    }
+pub(super) fn gpui_window_from_ns(window: &NSWindow) -> Option<&GPUIWindow> {
+    window.downcast_ref()
 }
 
 fn window_ivars_state(ivars: &WindowIvars) -> Arc<Mutex<MacWindowState>> {
@@ -824,15 +817,15 @@ fn invoke_toggle_tab_bar(this: &impl HasWindowIvars) {
 fn handle_window_did_change_occlusion_state(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let lock = &mut *window_state.lock();
-    unsafe {
-        if super::window_occlusion_state(lock.native_window)
-            .contains(NSWindowOcclusionState::Visible)
-        {
-            lock.move_traffic_light();
-            lock.start_display_link();
-        } else {
-            lock.stop_display_link();
-        }
+    if lock
+        .native_window()
+        .occlusionState()
+        .contains(NSWindowOcclusionState::Visible)
+    {
+        lock.move_traffic_light();
+        lock.start_display_link();
+    } else {
+        lock.stop_display_link();
     }
 }
 
@@ -842,9 +835,7 @@ fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {
     lock.fullscreen_restore_bounds = lock.bounds();
 
     if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0)) {
-        unsafe {
-            let _: () = msg_send![lock.native_window, setTitlebarAppearsTransparent: false];
-        }
+        lock.native_window().setTitlebarAppearsTransparent(false);
     }
 }
 
@@ -854,9 +845,7 @@ fn handle_window_will_exit_fullscreen(this: &impl HasWindowIvars) {
     if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0))
         && lock.transparent_titlebar
     {
-        unsafe {
-            let _: () = msg_send![lock.native_window, setTitlebarAppearsTransparent: true];
-        }
+        lock.native_window().setTitlebarAppearsTransparent(true);
     }
 }
 
@@ -873,15 +862,10 @@ fn handle_window_did_move(this: &impl HasWindowIvars) {
 fn handle_window_did_change_key_status(this: &impl HasWindowIvars, became_key: bool) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
-    let is_active = unsafe {
-        let is_key_window: bool = msg_send![lock.native_window, isKeyWindow];
-        is_key_window
-    };
+    let is_active = lock.native_window().isKeyWindow();
 
     if became_key && !is_active {
-        unsafe {
-            let _: () = msg_send![lock.native_window, resignKeyWindow];
-        }
+        lock.native_window().resignKeyWindow();
         return;
     }
 
@@ -1023,7 +1007,7 @@ fn handle_reset_cursor_rects(this: &GPUIView) {
         let mut window_state = window_state.lock();
         if matches!(window_state.cursor_style, CursorStyle::None) {
             if !window_state.cursor_hidden {
-                let _: () = unsafe { objc2::msg_send![NSCursor::class(), hide] };
+                NSCursor::hide();
                 window_state.cursor_hidden = true;
             }
             return;
@@ -1036,7 +1020,7 @@ fn handle_reset_cursor_rects(this: &GPUIView) {
     let cursor = cursor_for_style(cursor_style);
 
     if cursor_hidden {
-        let _: () = unsafe { objc2::msg_send![NSCursor::class(), unhide] };
+        NSCursor::unhide();
         window_state.lock().cursor_hidden = false;
     }
 
@@ -1397,17 +1381,15 @@ fn first_rect_for_character_range(this: &GPUIView, range: Objc2NSRange) -> NSRec
 }
 
 fn get_frame(this: &GPUIView) -> NSRect {
-    unsafe {
-        let state = view_state(this);
-        let lock = state.lock();
-        let mut frame = super::window_frame(lock.native_window);
-        let content_layout_rect: NSRect = msg_send![lock.native_window, contentLayoutRect];
-        let style_mask = super::window_style_mask(lock.native_window);
-        if !style_mask.contains(NSWindowStyleMask::FullSizeContentView) {
-            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
-        }
-        frame
+    let state = view_state(this);
+    let lock = state.lock();
+    let mut frame = super::from_objc_rect(lock.native_window().frame());
+    let content_layout_rect = super::from_objc_rect(lock.native_window().contentLayoutRect());
+    let style_mask = lock.native_window().styleMask();
+    if !style_mask.contains(NSWindowStyleMask::FullSizeContentView) {
+        frame.origin.y -= frame.size.height - content_layout_rect.size.height;
     }
+    frame
 }
 
 fn insert_text(this: &GPUIView, text: &AnyObject, replacement_range: Objc2NSRange) {
@@ -1503,23 +1485,17 @@ fn screen_point_to_gpui_point(this: &GPUIView, position: NSPoint) -> Point<Pixel
 fn external_paths_from_event(
     dragging_info: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> Option<ExternalPaths> {
-    let mut paths = SmallVec::new();
     let pasteboard = dragging_info.draggingPasteboard();
-    let filenames_type = unsafe { ns_string("NSFilenamesPboardType") };
-    let filenames: id = unsafe {
-        msg_send![
-            Retained::as_ptr(&pasteboard) as id,
-            propertyListForType: filenames_type
-        ]
-    };
-    if filenames == nil {
-        return None;
-    }
-    let count = unsafe { super::array_count(filenames) };
-    for i in 0..count {
-        let file = unsafe { super::array_object_at_index(filenames, i) };
-        let path = unsafe { file.to_str().to_owned() };
-        paths.push(PathBuf::from(path))
+    let filenames_type = NSString::from_str("NSFilenamesPboardType");
+    let filenames = unsafe { pasteboard.propertyListForType(&filenames_type) }?;
+    let filenames = filenames.downcast::<NSArray<AnyObject>>().ok()?;
+    let mut paths = SmallVec::new();
+    for i in 0..filenames.len() {
+        let file = filenames.objectAtIndex(i);
+        let Some(path) = file.downcast_ref::<NSString>() else {
+            continue;
+        };
+        paths.push(PathBuf::from(path.to_string()));
     }
     Some(ExternalPaths(paths))
 }
