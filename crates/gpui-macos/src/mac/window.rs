@@ -220,7 +220,14 @@ fn as_any_object(object: &impl AsRef<AnyObject>) -> &AnyObject {
     object.as_ref()
 }
 
-fn add_mouse_tracking_area(native_view: &NSView, options: NSTrackingAreaOptions) {
+fn add_mouse_tracking_area(native_view: &NSView) {
+    let options = NSTrackingAreaOptions::MouseEnteredAndExited
+        | NSTrackingAreaOptions::MouseMoved
+        // Track even when another application is active so visible
+        // windows can respond to hover without being focused.
+        | NSTrackingAreaOptions::ActiveAlways
+        | NSTrackingAreaOptions::InVisibleRect;
+
     // SAFETY: NSView provides the tracking-event callbacks, and the owner is
     // the same view that retains the tracking area. No user info is supplied.
     let tracking_area = unsafe {
@@ -840,28 +847,12 @@ impl MacWindow {
                         native_window.setAcceptsMouseMovedEvents(true);
                     } else {
                         native_window.setAcceptsMouseMovedEvents(false);
-                        add_mouse_tracking_area(
-                            tracking_view,
-                            NSTrackingAreaOptions::MouseEnteredAndExited
-                                | NSTrackingAreaOptions::MouseMoved
-                                // Track while this application is active, even if another
-                                // window in the application has focus.
-                                | NSTrackingAreaOptions::ActiveInActiveApp
-                                | NSTrackingAreaOptions::InVisibleRect,
-                        );
+                        add_mouse_tracking_area(tracking_view);
                     }
                     set_tabbing_identifier(native_window.as_ref(), tabbing_identifier.as_deref());
                 }
                 WindowKind::PopUp => {
-                    add_mouse_tracking_area(
-                        tracking_view,
-                        NSTrackingAreaOptions::MouseEnteredAndExited
-                            | NSTrackingAreaOptions::MouseMoved
-                            // Track even when another application is active, e.g. so
-                            // notification windows can respond to hover.
-                            | NSTrackingAreaOptions::ActiveAlways
-                            | NSTrackingAreaOptions::InVisibleRect,
-                    );
+                    add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel(NSPopUpMenuWindowLevel);
                     native_window.setAnimationBehavior(NSWindowAnimationBehavior::UtilityWindow);
@@ -871,15 +862,7 @@ impl MacWindow {
                     );
                 }
                 WindowKind::Overlay => {
-                    add_mouse_tracking_area(
-                        tracking_view,
-                        NSTrackingAreaOptions::MouseEnteredAndExited
-                            | NSTrackingAreaOptions::MouseMoved
-                            // Track even when another application is active, e.g. so
-                            // overlay windows can respond to hover.
-                            | NSTrackingAreaOptions::ActiveAlways
-                            | NSTrackingAreaOptions::InVisibleRect,
-                    );
+                    add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel(NSStatusWindowLevel);
                     native_window.setAnimationBehavior(NSWindowAnimationBehavior::UtilityWindow);
