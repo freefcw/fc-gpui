@@ -962,6 +962,18 @@ impl Drop for MacWindow {
         // options are popped even when the later async `close` skips `close_window`.
         this.begin_close();
         this.frame_source.take();
+        // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
+        // window's content view, and that content view keeps the `GPUIView` it
+        // hosts alive. Together with the `Arc<Mutex<MacWindowState>>` parked in
+        // both views' ivars, that forms
+        // `MacWindowState -> adapter -> content view -> GPUIView -> MacWindowState`,
+        // a cycle `begin_close` / `frame_source.take()` / `native_window.take()`
+        // cannot break. Drop the adapter here so the native view, its
+        // `CAMetalLayer` and the renderer's command queue are actually released
+        // with the window. The field is feature-gated; without `accessibility`
+        // there is no adapter to take.
+        #[cfg(feature = "accessibility")]
+        drop(this.accesskit_adapter.take());
         this.renderer.destroy();
         let window = this
             .native_window
