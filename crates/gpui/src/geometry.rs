@@ -2193,6 +2193,12 @@ impl Corner {
             },
         }
     }
+
+    /// Returns whether the corner is bottom-positioned.
+    #[inline]
+    pub fn is_bottom(&self) -> bool {
+        matches!(self, Self::BottomLeft | Self::BottomRight)
+    }
 }
 
 /// Represents the corners of a box in a 2D space, such as border radius.
@@ -3934,5 +3940,13 @@ mod tests {
 
         // Test Case 3: Bounds intersecting with themselves
         assert!(bounds1.intersects(&bounds1));
+    }
+
+    #[test]
+    fn test_corner_is_bottom() {
+        assert!(Corner::BottomLeft.is_bottom());
+        assert!(Corner::BottomRight.is_bottom());
+        assert!(!Corner::TopLeft.is_bottom());
+        assert!(!Corner::TopRight.is_bottom());
     }
 }
