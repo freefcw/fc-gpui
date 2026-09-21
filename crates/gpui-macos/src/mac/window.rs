@@ -220,20 +220,26 @@ fn as_any_object(object: &impl AsRef<AnyObject>) -> &AnyObject {
     object.as_ref()
 }
 
-fn add_popup_tracking_area(view: &NSView) {
+fn add_mouse_tracking_area(native_view: &NSView) {
+    let options = NSTrackingAreaOptions::MouseEnteredAndExited
+        | NSTrackingAreaOptions::MouseMoved
+        // Track even when another application is active so visible
+        // windows can respond to hover without being focused.
+        | NSTrackingAreaOptions::ActiveAlways
+        | NSTrackingAreaOptions::InVisibleRect;
+
+    // SAFETY: NSView provides the tracking-event callbacks, and the owner is
+    // the same view that retains the tracking area. No user info is supplied.
     let tracking_area = unsafe {
         NSTrackingArea::initWithRect_options_owner_userInfo(
             NSTrackingArea::alloc(),
-            Objc2NSRect::new(Objc2NSPoint::new(0.0, 0.0), Objc2NSSize::new(0.0, 0.0)),
-            NSTrackingAreaOptions::MouseEnteredAndExited
-                | NSTrackingAreaOptions::MouseMoved
-                | NSTrackingAreaOptions::ActiveAlways
-                | NSTrackingAreaOptions::InVisibleRect,
-            Some(as_any_object(view)),
+            Objc2NSRect::ZERO,
+            options,
+            Some(as_any_object(native_view)),
             None,
         )
     };
-    view.addTrackingArea(&tracking_area);
+    native_view.addTrackingArea(&tracking_area);
 }
 
 fn global_domain_string(key: &str) -> String {
@@ -830,17 +836,23 @@ impl MacWindow {
             content_view.addSubview(&native_view_retained);
             let _: bool = native_window.makeFirstResponder(Some(&*native_view_retained));
 
+            // This is the live GPUIView (an NSView subclass) added to the
+            // content view above, and window creation runs on the main thread.
+            let tracking_view: &NSView = &native_view_retained;
+
             match &kind {
                 WindowKind::Normal | WindowKind::Floating => {
                     native_window.setLevel(NSNormalWindowLevel);
-                    native_window.setAcceptsMouseMovedEvents(true);
+                    if matches!(kind, WindowKind::Floating) {
+                        native_window.setAcceptsMouseMovedEvents(true);
+                    } else {
+                        native_window.setAcceptsMouseMovedEvents(false);
+                        add_mouse_tracking_area(tracking_view);
+                    }
                     set_tabbing_identifier(native_window.as_ref(), tabbing_identifier.as_deref());
                 }
                 WindowKind::PopUp => {
-                    // Use a tracking area to allow receiving MouseMoved events even when
-                    // the window or application aren't active, which is often the case
-                    // e.g. for notification windows.
-                    add_popup_tracking_area(&native_view_retained);
+                    add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel(NSPopUpMenuWindowLevel);
                     native_window.setAnimationBehavior(NSWindowAnimationBehavior::UtilityWindow);
@@ -850,7 +862,7 @@ impl MacWindow {
                     );
                 }
                 WindowKind::Overlay => {
-                    add_popup_tracking_area(&native_view_retained);
+                    add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel(NSStatusWindowLevel);
                     native_window.setAnimationBehavior(NSWindowAnimationBehavior::UtilityWindow);
