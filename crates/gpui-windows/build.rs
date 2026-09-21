@@ -7,9 +7,24 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(gles)");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        #[cfg(feature = "windows-manifest")]
+        embed_resource();
+
         #[cfg(target_os = "windows")]
         windows::build();
     }
+}
+
+#[cfg(feature = "windows-manifest")]
+fn embed_resource() {
+    let resource_dir = std::path::Path::new("resources/windows");
+    let manifest = resource_dir.join("gpui.manifest.xml");
+    let rc_file = resource_dir.join("gpui.rc");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rerun-if-changed={}", rc_file.display());
+    embed_resource::compile(rc_file, embed_resource::ParamsIncludeDirs([resource_dir]))
+        .manifest_required()
+        .unwrap();
 }
 
 #[cfg(target_os = "windows")]
@@ -24,20 +39,6 @@ mod windows {
     pub(super) fn build() {
         #[cfg(not(debug_assertions))]
         compile_shaders();
-
-        #[cfg(feature = "windows-manifest")]
-        embed_resource();
-    }
-
-    #[cfg(feature = "windows-manifest")]
-    fn embed_resource() {
-        let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
-        let rc_file = std::path::Path::new("resources/windows/gpui.rc");
-        println!("cargo:rerun-if-changed={}", manifest.display());
-        println!("cargo:rerun-if-changed={}", rc_file.display());
-        embed_resource::compile(rc_file, embed_resource::NONE)
-            .manifest_required()
-            .unwrap();
     }
 
     fn compile_shaders() {
