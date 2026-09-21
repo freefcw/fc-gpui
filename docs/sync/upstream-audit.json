@@ -4,9 +4,9 @@
   "baseline": "ec3d887507f272119d9fe146c685f0a941d0e798",
   "audited_upstream": "4bd1993783703e92affb781503916d1f152f599f",
   "compared_against": "0eda7703f6c88aa08a25c1d2105ff1ca46f775d4",
-  "newest_ported_by_date": "5b4a2153a087055a7f9cb3464f188f1cab9fd678",
-  "newest_ported_by_trailer": "33c6212b055fa8a97b17c8653311c9ccab7fb3b6",
-  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#34 cherry-picked 34 later SHAs listed in post_audit_backports. PRs #35-#45 are local objc2/lockfile adaptations with no Zed-Origin. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports. 2026-09-20 ranked scan compared_against Zed main 0eda7703; do not advance audited_upstream until remaining mapped commits are classified equivalent / deferred / not-applicable.",
+  "newest_ported_by_date": "c24e309d935d83f672dff1df64b2331749bcb44c",
+  "newest_ported_by_trailer": "25b5569dd231e740922cfebafa26b1a6c08531e8",
+  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#34 and Ready #48-#54 cherry-picked 41 later SHAs listed in post_audit_backports. PRs #35-#45 are local objc2/lockfile adaptations with no Zed-Origin. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports. 2026-09-20 ranked scan compared_against Zed main 0eda7703; do not advance audited_upstream until remaining mapped commits are classified equivalent / deferred / not-applicable.",
   "paths": [
     "crates/gpui",
     "crates/gpui_platform",
@@ -115,6 +115,13 @@
     {"commit":"c7801b0c447c1f2cacffaa86b1f0cbdb0d922b6c","pr":34,"note":"macos: honor tiled-window margins for titlebar Fill via _zoomFill:"},
     {"commit":"33c6212b055fa8a97b17c8653311c9ccab7fb3b6","pr":34,"note":"native_window_state / restore_native_window_state (macOS Space restore)"},
     {"commit":"2893b86b048a6e5877eb2f61dac97c172460ba07","pr":34,"note":"macos: simple fullscreen covering the notch"},
-    {"commit":"242fe31a399f695103dd0cfe7dcef33a59fbf596","pr":34,"note":"macos: restore windowed bounds after simple fullscreen"}
+    {"commit":"242fe31a399f695103dd0cfe7dcef33a59fbf596","pr":34,"note":"macos: restore windowed bounds after simple fullscreen"},
+    {"commit":"a7c7219d5bfd0fa7c59edb7198b6c26a58ba6116","pr":48,"note":"Linux: create XKB context with XKB_CONTEXT_NO_DEFAULT_INCLUDES for server keymaps"},
+    {"commit":"b9419ae72814157164b09592ab2466f9f4709f09","pr":49,"note":"Windows: swap reversed HLSL linear_to_srgb / srgb_to_linear exponents"},
+    {"commit":"ac6818fb2de7aaec9ee00d4ff697e948c8b8f0a3","pr":50,"note":"Windows: keep DirectWrite default ligatures when FontFeatures is empty"},
+    {"commit":"cf4deb270f04b75ecf5b1d4990591e1146560ea0","pr":51,"note":"Bounds::centered uses display work area and Size::min"},
+    {"commit":"c24e309d935d83f672dff1df64b2331749bcb44c","pr":52,"note":"Windows: resolve gpui.manifest.xml path for xwin / llvm-rc"},
+    {"commit":"fc952d52dab0920732b01d031d7324e664e6734f","pr":53,"note":"util: #[track_caller] on standalone log_err"},
+    {"commit":"25b5569dd231e740922cfebafa26b1a6c08531e8","pr":54,"note":"Corner::is_bottom (Zed Anchor::is_bottom portable hunk)"}
   ]
 }

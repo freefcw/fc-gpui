@@ -18,18 +18,18 @@
 
 | 字段 | SHA | 说明 |
 |---|---|---|
-| 当前仓库（含 absorb #15–#34 与本地 #35–#45） | `2159001722d132e2041ed669d4f793db91d9326f` | 2026-09-20；`develop/0.9` 含 #45 `6993fdb` |
+| 当前仓库（含 absorb #15–#34、#48–#54 与本地 #35–#45） | `46f4439c6ef22520279573d7f20738948c46c738` | 2026-09-21；`develop/0.9` 含 #54 `46f4439` |
 | 上一完整分类区间起点（不含） | `ec3d887507f272119d9fe146c685f0a941d0e798` | 2026-07-22；JSON `baseline` |
 | 上一完整分类区间终点 | `4bd1993783703e92affb781503916d1f152f599f` | 2026-08-10；JSON `audited_upstream`；区间内 49 条已分类 |
-| 按 Zed 提交日期最新已吸收 | `5b4a2153a087055a7f9cb3464f188f1cab9fd678` | 2026-09-11；#24 `all_font_names` |
-| 按本仓库 `Zed-Origin` 最新吸收 | `33c6212b055fa8a97b17c8653311c9ccab7fb3b6` | #34 Space restore（本地 `f8546b4`；同秒四条 #34 提交取更大本地 SHA） |
+| 按 Zed 提交日期最新已吸收 | `c24e309d935d83f672dff1df64b2331749bcb44c` | 2026-09-17；#52 Windows xwin/llvm-rc manifest path |
+| 按本仓库 `Zed-Origin` 最新吸收 | `25b5569dd231e740922cfebafa26b1a6c08531e8` | #54 `Corner::is_bottom`（本地 `46f4439`） |
 | 对照的 Zed `main` | `0eda7703f6c88aa08a25c1d2105ff1ca46f775d4` | 2026-09-20；`gpui_macos: Release the accessibility adapter when a window is dropped (#64143)`；JSON `compared_against` |
 
 `newest_ported_by_date` 必须是已追踪 backport 中 Zed committer 日期最晚的 SHA（同秒则取更大的 SHA）。`newest_ported_by_trailer` 必须是对应本地 `Zed-Origin` 提交 committer 日期最晚的 SHA（同秒则本地 SHA、再 origin SHA 更大者）。`scripts/verify-upstream-sync.sh` 会强制这两条。
 
-下一轮增量扫描从 `4bd19937` 开始，**不要**从 `5b4a2153` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
+下一轮增量扫描从 `4bd19937` 开始，**不要**从 `c24e309d` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
 
-#15–#34 共 cherry-pick 34 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
+#15–#34 与 Ready #48–#54 共 cherry-pick 41 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
 
 | PR | 主题 | Zed SHA（短） |
 |---|---|---|
@@ -50,10 +50,17 @@
 | #31 | bindgen 0.72 | `6b5e15ed` |
 | #33 | macOS objc2 prompt/path/url/get_sources | `a60addb9` `d3865b09` `907b55f7` `86b2cf96` |
 | #34 | macOS Fill / Space / simple fullscreen | `c7801b0c` `33c6212b` `2893b86b` `242fe31a` |
+| #48 | Linux XKB NO_DEFAULT_INCLUDES | `a7c7219d` |
+| #49 | Windows HLSL sRGB exponents | `b9419ae7` |
+| #50 | DirectWrite default ligatures | `ac6818fb` |
+| #51 | Bounds::centered work area | `cf4deb27` |
+| #52 | Windows xwin/llvm-rc manifest path | `c24e309d` |
+| #53 | #[track_caller] on standalone log_err | `fc952d52` |
+| #54 | Corner::is_bottom（Zed Anchor::is_bottom 可移植片段） | `25b5569d` |
 
-#35–#45 是本地 objc2 / lockfile 适配，**没有** `Zed-Origin`（Zed 仍走 ClassDecl / `metal` crate / `native_window: id` / 删除 `crates/media`）。不要把这些 SHA 写进 `post_audit_backports`。
+#35–#45 是本地 objc2 / lockfile 适配，**没有** `Zed-Origin`（Zed 仍走 ClassDecl / `metal` crate / `native_window: id` / 删除 `crates/media`）。不要把这些 SHA 写进 `post_audit_backports`。`#50` 与 `#51` 之间还有若干本地 macos/core-video 清理提交，同样没有 trailer。
 
-自 `4bd19937` 到对照 HEAD `0eda7703`，映射路径上有 131 个提交；其中 44 个已有本地 `Zed-Origin`（含 0.9.0 时代与 #15–#34），`post_audit_backports` 现列 34 个主题 cherry-pick。其余约 87 个尚未写入 `entries`。**不要**把 `audited_upstream` 前移到 `0eda7703`，直到这些提交被标成 `equivalent` / `deferred` / `not-applicable`。
+自 `4bd19937` 到对照 HEAD `0eda7703`，映射路径上有 131 个提交；其中 51 个已有本地 `Zed-Origin`（含 0.9.0 时代与 #15–#34、#48–#54），`post_audit_backports` 现列 41 个主题 cherry-pick。其余约 80 个尚未写入 `entries`。**不要**把 `audited_upstream` 前移到 `0eda7703`，直到这些提交被标成 `equivalent` / `deferred` / `not-applicable`。
 
 2026-08-10 分类里仍成立的延期：外部文件拖放（`f52fd9ac` / `a8491e63` / `c7aea6cb`，外加后续 `72c53bf0` objc2 迁移）、native flags（`e99616cd`）、Windows `path` crate（`26103320`，外加 `fa00dccc42`）、同步动画（`4ed3738c`）。`79cc17c2` sticky-axis 滚动当时标为 deferred，已在独立 PR #5 吸收，不改写那次分类记录。
 
@@ -61,11 +68,7 @@
 
 方法：`git -C ../zed log 4bd19937..0eda7703 --` 映射 crate；排除 JSON backport / `post_audit_backports` / 本地 `Zed-Origin`。上一对照点 `9d272b03`（2026-09-12）之后新增 30 个映射提交。
 
-推荐下一轮 **Ready** 吸收顺序（一次一个主题，合并后再开下一个）：
-
-1. `a7c7219d5b` Linux：`XKB_CONTEXT_NO_DEFAULT_INCLUDES`（无本地 XKB 文件时的启动崩溃；X11 fixture 仍用 `CONTEXT_NO_FLAGS`）
-2. `b9419ae728` Windows：对调 HLSL `linear_to_srgb` / `srgb_to_linear` 指数（与 Metal/WGSL 对齐）
-3. `ac6818fb2d` Windows：空 `FontFeatures` 时不要提前 return，保留 DirectWrite 默认 ligatures
+该扫描当时推荐的 Ready 七项已由 #48–#54 吸收（`a7c7219d` Linux XKB、`b9419ae7` HLSL sRGB、`ac6818fb` DirectWrite ligatures、`cf4deb27` `Bounds::centered`、`c24e309d` xwin manifest、`fc952d52` `log_err` `#[track_caller]`、`25b5569d` `Corner::is_bottom`）。不要再开同主题 PR。同一轮留下的 Care 项仍未吸收。
 
 不要回吸收 Zed 仍落后的 ClassDecl / `metal` crate / `start_external_drag`。Zed `4b47ceb9` 删除 `crates/media`；本仓库已用 #37–#42 本地 objc2 路径并保留 `fc-gpui-media`。
 
