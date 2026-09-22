@@ -192,6 +192,9 @@ define_class!(
                 .frame_callback
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
+            // `FrameCallback` is only required to be `Send`, not `Sync`. Keep
+            // the mutex held while invoking it so callbacks are serialized
+            // without widening that bound or changing their ownership model.
             if let Some(callback) = guard.as_ref() {
                 callback(ScreenCaptureFrame(buffer));
             }
@@ -312,12 +315,7 @@ impl MacScreenCaptureSource {
         let tx = Rc::new(RefCell::new(Some(tx)));
         // `RcBlock` requires `Fn`. Take the owned start state on the first
         // (and only) completion-handler invocation, matching `get_sources`.
-        let pending_start = Rc::new(RefCell::new(Some((
-            stream.clone(),
-            output.clone(),
-            delegate.clone(),
-            meta,
-        ))));
+        let pending_start = Rc::new(RefCell::new(Some((stream.clone(), output, delegate, meta))));
         let handler = RcBlock::new(move |error: *mut NSError| {
             let result = if let Some(error) = unsafe { error.as_ref() } {
                 if let Some((stream, _, _, _)) = pending_start.borrow_mut().take() {
@@ -554,6 +552,26 @@ mod tests {
 
         drop(StreamOutput::new(callback));
 
+        assert_eq!(receiver.recv_timeout(Duration::from_millis(100)), Ok(()));
+    }
+
+    #[test]
+    fn stream_output_clone_keeps_frame_callback_alive_until_last_owner_drops() {
+        let (sender, receiver) = mpsc::channel();
+        let drop_signal = CallbackDropSignal(sender);
+        let callback: FrameCallback = Box::new(move |_| {
+            let _ = &drop_signal;
+        });
+
+        let output = StreamOutput::new(callback);
+        let output_clone = output.clone();
+        drop(output);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        drop(output_clone);
         assert_eq!(receiver.recv_timeout(Duration::from_millis(100)), Ok(()));
     }
 }
