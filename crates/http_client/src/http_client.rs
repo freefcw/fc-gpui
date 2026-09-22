@@ -28,8 +28,20 @@ pub enum RedirectPolicy {
 }
 pub struct FollowRedirects(pub bool);
 
+/// The caller's deadline for a complete HTTP request, including its response body.
+///
+/// This value is stored in [`http::Request::extensions`]. Every concrete [`HttpClient`]
+/// adapter is responsible for reading and enforcing it; the trait cannot enforce a
+/// deadline on an arbitrary implementation by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestTimeout(pub Duration);
+
+impl RequestTimeout {
+    /// Reads the request deadline attached by [`HttpRequestExt::timeout`].
+    pub fn from_request<T>(request: &http::Request<T>) -> Option<Duration> {
+        request.extensions().get::<Self>().map(|timeout| timeout.0)
+    }
+}
 
 pub trait HttpRequestExt {
     /// Conditionally modify self with the given closure.
@@ -54,7 +66,11 @@ pub trait HttpRequestExt {
     /// Whether or not to follow redirects
     fn follow_redirects(self, follow: RedirectPolicy) -> Self;
 
-    /// Sets a deadline for the complete HTTP request, including its response body.
+    /// Requests a deadline for the complete HTTP request, including its response body.
+    ///
+    /// The deadline is attached as [`RequestTimeout`] metadata. Concrete HTTP client
+    /// adapters must read this metadata and enforce the deadline around their full
+    /// request/response operation.
     fn timeout(self, timeout: Duration) -> Self;
 }
 
@@ -489,5 +505,35 @@ impl HttpClient for FakeHttpClient {
 
     fn as_fake(&self) -> &FakeHttpClient {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HttpRequestExt, RequestTimeout};
+    use std::time::Duration;
+
+    #[test]
+    fn request_timeout_is_extractable_from_request() {
+        let request = http::Request::builder()
+            .uri("https://example.com")
+            .timeout(Duration::from_secs(3))
+            .body(())
+            .unwrap();
+
+        assert_eq!(
+            RequestTimeout::from_request(&request),
+            Some(Duration::from_secs(3))
+        );
+    }
+
+    #[test]
+    fn request_timeout_is_absent_when_not_configured() {
+        let request = http::Request::builder()
+            .uri("https://example.com")
+            .body(())
+            .unwrap();
+
+        assert_eq!(RequestTimeout::from_request(&request), None);
     }
 }

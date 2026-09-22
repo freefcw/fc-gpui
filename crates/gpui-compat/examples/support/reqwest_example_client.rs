@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures::{AsyncReadExt as _, FutureExt as _};
 use http_client::{
-    AsyncBody, HttpClient, Response, Url,
+    AsyncBody, HttpClient, RequestTimeout, Response, Url,
     http::{HeaderValue, Request},
 };
 
@@ -36,11 +36,15 @@ impl HttpClient for ReqwestExampleClient {
         let client = self.client.clone();
         async move {
             let (parts, mut body) = req.into_parts();
+            let timeout = parts.extensions.get::<RequestTimeout>().copied();
             let mut request_body = Vec::new();
             body.read_to_end(&mut request_body).await?;
 
             let mut request = client.request(parts.method, parts.uri.to_string());
             request = request.headers(parts.headers);
+            if let Some(timeout) = timeout {
+                request = request.timeout(timeout.0);
+            }
             let response = request.body(request_body).send().await?;
             let mut builder = Response::builder().status(response.status());
 
