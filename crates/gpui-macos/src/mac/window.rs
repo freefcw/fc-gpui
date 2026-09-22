@@ -265,6 +265,39 @@ enum CreatedWindow {
     Panel(Retained<GPUIPanel>),
 }
 
+fn window_style_mask(
+    titlebar: Option<&crate::TitlebarOptions>,
+    kind: &WindowKind,
+    is_resizable: bool,
+    is_minimizable: bool,
+) -> NSWindowStyleMask {
+    let mut style_mask = if let Some(titlebar) = titlebar {
+        let mut style_mask = NSWindowStyleMask::Closable | NSWindowStyleMask::Titled;
+
+        if is_resizable {
+            style_mask |= NSWindowStyleMask::Resizable;
+        }
+
+        if is_minimizable {
+            style_mask |= NSWindowStyleMask::Miniaturizable;
+        }
+
+        if titlebar.appears_transparent {
+            style_mask |= NSWindowStyleMask::FullSizeContentView;
+        }
+
+        style_mask
+    } else {
+        NSWindowStyleMask::Titled | NSWindowStyleMask::FullSizeContentView
+    };
+
+    if matches!(kind, WindowKind::PopUp | WindowKind::Overlay) {
+        style_mask |= NSWindowStyleMask::NonactivatingPanel;
+    }
+
+    style_mask
+}
+
 fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
@@ -643,29 +676,9 @@ impl MacWindow {
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
             NSWindow::setAllowsAutomaticWindowTabbing(allows_automatic_window_tabbing, marker);
 
-            let mut style_mask;
-            if let Some(titlebar) = titlebar.as_ref() {
-                style_mask = NSWindowStyleMask::Closable | NSWindowStyleMask::Titled;
-
-                if is_resizable {
-                    style_mask |= NSWindowStyleMask::Resizable;
-                }
-
-                if is_minimizable {
-                    style_mask |= NSWindowStyleMask::Miniaturizable;
-                }
-
-                if titlebar.appears_transparent {
-                    style_mask |= NSWindowStyleMask::FullSizeContentView;
-                }
-            } else {
-                style_mask = NSWindowStyleMask::Titled | NSWindowStyleMask::FullSizeContentView;
-            }
-
+            let style_mask =
+                window_style_mask(titlebar.as_ref(), &kind, is_resizable, is_minimizable);
             let is_panel = matches!(&kind, WindowKind::PopUp | WindowKind::Overlay);
-            if is_panel {
-                style_mask |= NSWindowStyleMask::NonactivatingPanel;
-            }
 
             let display = display_id
                 .and_then(MacDisplay::find_by_id)
@@ -1851,5 +1864,21 @@ mod tests {
         assert_eq!(native.origin.y, 0.);
         assert_eq!(native.size.width, 0.);
         assert_eq!(native.size.height, 0.);
+    }
+
+    #[test]
+    fn window_style_mask_matches_titlebar_and_window_kind_options() {
+        let titlebar = crate::TitlebarOptions {
+            appears_transparent: true,
+            ..Default::default()
+        };
+        let mask = window_style_mask(Some(&titlebar), &WindowKind::PopUp, true, true);
+
+        assert!(mask.contains(NSWindowStyleMask::Closable));
+        assert!(mask.contains(NSWindowStyleMask::Titled));
+        assert!(mask.contains(NSWindowStyleMask::Resizable));
+        assert!(mask.contains(NSWindowStyleMask::Miniaturizable));
+        assert!(mask.contains(NSWindowStyleMask::FullSizeContentView));
+        assert!(mask.contains(NSWindowStyleMask::NonactivatingPanel));
     }
 }
