@@ -173,6 +173,10 @@ impl PlatformTextSystem for CosmicTextSystem {
         Ok(candidates[ix])
     }
 
+    fn clear_glyph_raster_cache(&self) {
+        self.0.write().pending_glyph_images.clear();
+    }
+
     fn prewarm_fonts(&self, font_ids: &[FontId]) {
         self.0.write().prewarm_fonts(font_ids);
     }
@@ -956,6 +960,36 @@ mod tests {
         let (size, data) = text_system.rasterize_glyph(&params, bounds).unwrap();
         assert_eq!(size, bounds.size);
         assert!(!data.is_empty());
+        assert!(text_system.0.read().pending_glyph_images.is_empty());
+    }
+
+    #[test]
+    fn clear_glyph_raster_cache_drops_pending_images() {
+        let text_system = CosmicTextSystem::new();
+        text_system
+            .add_fonts(vec![Cow::Borrowed(IBM_PLEX_SANS)])
+            .unwrap();
+        let font_id = text_system
+            .font_id(&font(family_name(IBM_PLEX_SANS)))
+            .unwrap();
+        let glyph_id = text_system
+            .glyph_for_char(font_id, 'A')
+            .expect("IBM Plex Sans contains A");
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size: px(16.),
+            subpixel_variant: point(0, 0),
+            scale_factor: 1.0,
+            is_emoji: false,
+            dilation: 0,
+        };
+
+        assert!(!text_system.glyph_raster_bounds(&params).unwrap().is_zero());
+        assert_eq!(text_system.0.read().pending_glyph_images.len(), 1);
+
+        text_system.clear_glyph_raster_cache();
+
         assert!(text_system.0.read().pending_glyph_images.is_empty());
     }
 

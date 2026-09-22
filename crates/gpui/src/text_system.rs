@@ -129,6 +129,7 @@ impl TextSystem {
     pub fn clear_layout_cache(&self) {
         self.global_line_layout_cache.clear();
         self.raster_bounds.write().clear();
+        self.platform_text_system.clear_glyph_raster_cache();
     }
 
     /// Snapshot of the current sizes of the long-lived text caches, primarily
@@ -393,6 +394,7 @@ impl TextSystem {
             if let Some(max) = self.raster_bounds_max_entries {
                 if raster_bounds.len() >= max {
                     raster_bounds.clear();
+                    self.platform_text_system.clear_glyph_raster_cache();
                 }
             }
             let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
@@ -1037,7 +1039,94 @@ pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppResourceProfile, NoopTextSystem};
+    use crate::{AppResourceProfile, NoopTextSystem, point, size};
+    use parking_lot::Mutex;
+    use std::collections::HashSet;
+
+    struct TrackingTextSystem {
+        noop: NoopTextSystem,
+        pending_glyph_images: Mutex<HashSet<RenderGlyphParams>>,
+    }
+
+    impl TrackingTextSystem {
+        fn new() -> Self {
+            Self {
+                noop: NoopTextSystem::new(),
+                pending_glyph_images: Mutex::default(),
+            }
+        }
+
+        fn pending_glyph_images_len(&self) -> usize {
+            self.pending_glyph_images.lock().len()
+        }
+    }
+
+    impl PlatformTextSystem for TrackingTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+            self.noop.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.noop.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> Result<FontId> {
+            self.noop.font_id(descriptor)
+        }
+
+        fn clear_glyph_raster_cache(&self) {
+            self.pending_glyph_images.lock().clear();
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.noop.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
+            self.noop.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+            self.noop.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.noop.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+            self.pending_glyph_images.lock().insert(params.clone());
+            Ok(Bounds {
+                origin: point(DevicePixels(0), DevicePixels(0)),
+                size: size(DevicePixels(1), DevicePixels(1)),
+            })
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.pending_glyph_images.lock().remove(params);
+            Ok((raster_bounds.size, vec![0]))
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.noop.layout_line(text, font_size, runs)
+        }
+    }
+
+    fn glyph_params(glyph_id: u32) -> RenderGlyphParams {
+        RenderGlyphParams {
+            font_id: FontId(0),
+            glyph_id: GlyphId(glyph_id),
+            font_size: px(16.),
+            subpixel_variant: point(0, 0),
+            scale_factor: 1.0,
+            is_emoji: false,
+            dilation: 0,
+        }
+    }
 
     #[test]
     fn all_font_names_lists_only_platform_families() {
@@ -1046,5 +1135,31 @@ mod tests {
             &AppResourceProfile::desktop().text,
         );
         assert!(text_system.all_font_names().is_empty());
+    }
+
+    #[test]
+    fn clearing_layout_cache_also_clears_platform_pending_glyph_images() {
+        let platform = Arc::new(TrackingTextSystem::new());
+        let text_system = TextSystem::new(platform.clone(), &AppResourceProfile::desktop().text);
+
+        text_system.raster_bounds(&glyph_params(1)).unwrap();
+        assert_eq!(platform.pending_glyph_images_len(), 1);
+
+        text_system.clear_layout_cache();
+
+        assert_eq!(platform.pending_glyph_images_len(), 0);
+    }
+
+    #[test]
+    fn evicting_raster_bounds_also_clears_platform_pending_glyph_images() {
+        let platform = Arc::new(TrackingTextSystem::new());
+        let mut budget = AppResourceProfile::desktop().text;
+        budget.raster_bounds_cache_max_entries = Some(1);
+        let text_system = TextSystem::new(platform.clone(), &budget);
+
+        text_system.raster_bounds(&glyph_params(1)).unwrap();
+        text_system.raster_bounds(&glyph_params(2)).unwrap();
+
+        assert_eq!(platform.pending_glyph_images_len(), 1);
     }
 }
