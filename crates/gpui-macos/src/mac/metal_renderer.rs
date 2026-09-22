@@ -2,7 +2,7 @@ use super::metal_atlas::MetalAtlas;
 use crate::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
     Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    Surface, Underline, size,
 };
 use anyhow::Result;
 use block2::RcBlock;
@@ -54,6 +54,49 @@ const PATH_SAMPLE_COUNT: u32 = 4;
 const MIN_INSTANCE_BUFFER_SIZE: usize = 256 * 1024;
 const DEFAULT_INSTANCE_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+
+fn select_device() -> MetalDevice {
+    // Prefer low‐power integrated GPUs on Intel Mac. On Apple Silicon, there is
+    // only ever one GPU, so this is equivalent to `MTLCreateSystemDefaultDevice()`.
+    let all_devices = MTLCopyAllDevices();
+    let mut devices: Vec<MetalDevice> = (0..all_devices.count())
+        .map(|index| all_devices.objectAtIndex(index))
+        .collect();
+    devices.sort_by_key(|device| (device.isRemovable(), device.isLowPower()));
+    let Some(device) = devices.pop() else {
+        log::error!("unable to access a compatible graphics device");
+        std::process::exit(1);
+    };
+    device
+}
+
+fn unit_vertex_data() -> [u64; 6] {
+    fn to_float2_bits(point: PointF) -> u64 {
+        (u64::from(point.y.to_bits()) << 32) | u64::from(point.x.to_bits())
+    }
+
+    [
+        to_float2_bits(PointF { x: 0., y: 0. }),
+        to_float2_bits(PointF { x: 1., y: 0. }),
+        to_float2_bits(PointF { x: 0., y: 1. }),
+        to_float2_bits(PointF { x: 0., y: 1. }),
+        to_float2_bits(PointF { x: 1., y: 0. }),
+        to_float2_bits(PointF { x: 1., y: 1. }),
+    ]
+}
+
+fn create_unit_vertices(device: &ProtocolObject<dyn MTLDevice>) -> MetalBuffer {
+    let unit_vertices = unit_vertex_data();
+    unsafe {
+        device
+            .newBufferWithBytes_length_options(
+                NonNull::new(unit_vertices.as_ptr() as *mut c_void).unwrap(),
+                mem::size_of_val(&unit_vertices),
+                MTLResourceOptions::StorageModeManaged,
+            )
+            .expect("unit vertices buffer")
+    }
+}
 
 pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
@@ -190,18 +233,7 @@ impl MetalRenderer {
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
         atlas_initial_size: crate::Size<crate::DevicePixels>,
     ) -> Self {
-        // Prefer low‐power integrated GPUs on Intel Mac. On Apple
-        // Silicon, there is only ever one GPU, so this is equivalent to
-        // `MTLCreateSystemDefaultDevice()`.
-        let all_devices = MTLCopyAllDevices();
-        let mut devices: Vec<MetalDevice> = (0..all_devices.count())
-            .map(|index| all_devices.objectAtIndex(index))
-            .collect();
-        devices.sort_by_key(|device| (device.isRemovable(), device.isLowPower()));
-        let Some(device) = devices.pop() else {
-            log::error!("unable to access a compatible graphics device");
-            std::process::exit(1);
-        };
+        let device = select_device();
 
         let layer = CAMetalLayer::layer();
         layer.setDevice(Some(&device));
@@ -226,30 +258,7 @@ impl MetalRenderer {
             .newLibraryWithData_error(&DispatchData::from_static_bytes(SHADERS_METALLIB))
             .expect("error building metal library");
 
-        fn to_float2_bits(point: PointF) -> u64 {
-            let mut output = point.y.to_bits() as u64;
-            output <<= 32;
-            output |= point.x.to_bits() as u64;
-            output
-        }
-
-        let unit_vertices = [
-            to_float2_bits(point(0., 0.)),
-            to_float2_bits(point(1., 0.)),
-            to_float2_bits(point(0., 1.)),
-            to_float2_bits(point(0., 1.)),
-            to_float2_bits(point(1., 0.)),
-            to_float2_bits(point(1., 1.)),
-        ];
-        let unit_vertices = unsafe {
-            device
-                .newBufferWithBytes_length_options(
-                    NonNull::new(unit_vertices.as_ptr() as *mut c_void).unwrap(),
-                    mem::size_of_val(&unit_vertices),
-                    MTLResourceOptions::StorageModeManaged,
-                )
-                .expect("unit vertices buffer")
-        };
+        let unit_vertices = create_unit_vertices(&device);
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
             &device,
@@ -1641,6 +1650,25 @@ unsafe fn set_vertex_bytes<T>(
 // Align to multiples of 256 make Metal happy.
 fn align_offset(offset: &mut usize) {
     *offset = (*offset).div_ceil(256) * 256;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unit_vertex_data;
+
+    #[test]
+    fn unit_vertex_data_contains_two_triangles() {
+        let vertices = unit_vertex_data();
+        let one = u64::from(1.0_f32.to_bits());
+
+        assert_eq!(vertices.len(), 6);
+        assert_eq!(vertices[0], 0);
+        assert_eq!(vertices[1], one);
+        assert_eq!(vertices[2], one << 32);
+        assert_eq!(vertices[3], one << 32);
+        assert_eq!(vertices[4], one);
+        assert_eq!(vertices[5], (one << 32) | one);
+    }
 }
 
 #[repr(C)]
