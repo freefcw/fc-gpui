@@ -235,9 +235,18 @@ impl SanitizedPath {
         #[cfg(not(target_os = "windows"))]
         return unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) };
 
-        // TODO: could avoid allocating here if dunce::simplified results in the same path
         #[cfg(target_os = "windows")]
-        return Self::new(&path).into();
+        {
+            // `dunce` strips `\\?\C:\...` but leaves verbatim UNC (`\\?\UNC\...`).
+            // Rewriting that prefix allocates, so it cannot live in `new`, which
+            // returns a borrow of its input. `new_arc` still goes through `new`.
+            let path = match path.to_str().and_then(rewrite_verbatim_unc_prefix) {
+                Some(rewritten) => PathBuf::from(rewritten).into(),
+                None => path,
+            };
+            // TODO: could avoid allocating here if dunce::simplified results in the same path
+            Self::new(&path).into()
+        }
     }
 
     pub fn new_arc<T: AsRef<Path> + ?Sized>(path: &T) -> Arc<Self> {
@@ -289,6 +298,15 @@ impl SanitizedPath {
     pub fn to_path_buf(&self) -> PathBuf {
         self.0.to_path_buf()
     }
+}
+
+/// Rewrite a verbatim UNC path (`\\?\UNC\server\share\...`) to a normal UNC
+/// path (`\\server\share\...`). `dunce::simplified` only strips verbatim disk
+/// prefixes, so this runs before it. `None` means the path is left unchanged.
+#[cfg(any(test, target_os = "windows"))]
+fn rewrite_verbatim_unc_prefix(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\UNC\")?;
+    Some(format!(r"\\{rest}"))
 }
 
 impl std::fmt::Debug for SanitizedPath {
@@ -1547,6 +1565,37 @@ mod tests {
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
+        );
+    }
+
+    #[perf]
+    fn test_rewrite_verbatim_unc_prefix() {
+        assert_eq!(
+            rewrite_verbatim_unc_prefix(r"\\?\UNC\server\share\file.txt").as_deref(),
+            Some(r"\\server\share\file.txt")
+        );
+        assert_eq!(
+            rewrite_verbatim_unc_prefix(r"\\?\C:\Users\someone\test_file.rs"),
+            None
+        );
+        assert_eq!(
+            rewrite_verbatim_unc_prefix(r"\\server\share\file.txt"),
+            None
+        );
+    }
+
+    #[perf]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path_verbatim_unc() {
+        let path: Arc<Path> = PathBuf::from("\\\\?\\UNC\\server\\share\\file.txt").into();
+        let sanitized_path = SanitizedPath::from_arc(path);
+        assert_eq!(sanitized_path.to_string(), "\\\\server\\share\\file.txt");
+
+        // `new` returns a borrow, so it does not allocate a rewritten path.
+        let path = Path::new("\\\\?\\UNC\\server\\share\\file.txt");
+        assert_eq!(
+            SanitizedPath::new(path).to_string(),
+            "\\\\?\\UNC\\server\\share\\file.txt"
         );
     }
 
