@@ -174,6 +174,17 @@ macro_rules! define_gpui_ns_window {
                     handle_window_will_exit_fullscreen(self);
                 }
 
+                #[unsafe(method(windowDidExitFullScreen:))]
+                fn window_did_exit_full_screen(&self, _notification: &NSNotification) {
+                    handle_window_did_exit_fullscreen(self);
+                }
+
+                // Apple's selector takes the window, not an NSNotification.
+                #[unsafe(method(windowDidFailToExitFullScreen:))]
+                fn window_did_fail_to_exit_full_screen(&self, _window: &NSWindow) {
+                    handle_window_did_fail_to_exit_fullscreen(self);
+                }
+
                 #[unsafe(method(windowDidMove:))]
                 fn window_did_move(&self, _notification: &NSNotification) {
                     handle_window_did_move(self);
@@ -835,6 +846,8 @@ fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
     lock.fullscreen_restore_bounds = lock.bounds();
+    lock.is_exiting_fullscreen = false;
+    lock.fullscreen_exit_traffic_light_frames = None;
 
     if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0)) {
         lock.native_window().setTitlebarAppearsTransparent(false);
@@ -844,11 +857,36 @@ fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {
 fn handle_window_will_exit_fullscreen(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    lock.is_exiting_fullscreen = true;
     if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0))
         && lock.transparent_titlebar
     {
         lock.native_window().setTitlebarAppearsTransparent(true);
     }
+    if lock.fullscreen_exit_traffic_light_frames.is_none() {
+        lock.fullscreen_exit_traffic_light_frames = lock.capture_traffic_light_button_frames();
+    }
+    lock.move_traffic_light();
+}
+
+fn handle_window_did_fail_to_exit_fullscreen(this: &impl HasWindowIvars) {
+    let window_state = window_ivars_state(this.window_ivars());
+    let mut lock = window_state.lock();
+    lock.is_exiting_fullscreen = false;
+    if let Some(frames) = lock.fullscreen_exit_traffic_light_frames.take() {
+        lock.restore_traffic_light_button_frames(frames);
+    }
+}
+
+fn handle_window_did_exit_fullscreen(this: &impl HasWindowIvars) {
+    let window_state = window_ivars_state(this.window_ivars());
+    let mut lock = window_state.lock();
+    lock.is_exiting_fullscreen = false;
+    // The exit move repositions buttons while the style mask is still
+    // fullscreen. Drop that snapshot so the next entry does not treat those
+    // transition frames as the windowed originals.
+    lock.fullscreen_exit_traffic_light_frames = None;
+    lock.move_traffic_light();
 }
 
 fn handle_window_did_move(this: &impl HasWindowIvars) {

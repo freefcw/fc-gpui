@@ -386,6 +386,16 @@ fn apply_simple_fullscreen_plan(
     let _: bool = native_window.makeFirstResponder(Some(native_view));
 }
 
+/// Close / miniaturize / zoom frames. Copied so a failed fullscreen exit can
+/// put the buttons back. Unlike upstream Zed, this fork does not also snapshot
+/// the titlebar container: `move_traffic_light` only sets button frames.
+#[derive(Clone, Copy)]
+struct TrafficLightButtonFrames {
+    close: Objc2NSRect,
+    minimize: Objc2NSRect,
+    zoom: Objc2NSRect,
+}
+
 struct MacWindowState {
     self_ref: Weak<Mutex<MacWindowState>>,
     handle: AnyWindowHandle,
@@ -419,6 +429,15 @@ struct MacWindowState {
     first_mouse: bool,
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    /// True from `windowWillExitFullScreen` until exit finishes or fails.
+    /// AppKit still reports the fullscreen style mask during that animation, but
+    /// traffic lights must already be under GPUI so the handoff is not a snap.
+    is_exiting_fullscreen: bool,
+    /// Button frames captured at the start of a fullscreen exit. A failed exit
+    /// puts these back; a completed exit drops them. This fork does not keep a
+    /// standing `TrafficLightFrames` cache, so there is no pre-fullscreen frame
+    /// to swap in `windowDidExitFullScreen`.
+    fullscreen_exit_traffic_light_frames: Option<TrafficLightButtonFrames>,
     simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -466,9 +485,12 @@ impl MacWindowState {
 
     fn move_traffic_light(&self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
-            if self.is_fullscreen() {
-                // Moving traffic lights while fullscreen doesn't work,
-                // see https://github.com/zed-industries/zed/issues/4712
+            // Moving traffic lights while fullscreen doesn't work,
+            // see https://github.com/zed-industries/zed/issues/4712.
+            // During the exit animation the style mask is still fullscreen, but
+            // GPUI has to place the buttons so AppKit does not animate them
+            // separately and then snap (zed-industries/zed#64050).
+            if self.is_fullscreen() && !self.is_exiting_fullscreen {
                 return;
             }
 
@@ -508,6 +530,31 @@ impl MacWindowState {
 
             zoom_button_frame.origin = NSPoint::new(origin.x.into(), origin.y.into());
             zoom_button.setFrame(to_objc_rect(zoom_button_frame));
+        }
+    }
+
+    fn capture_traffic_light_button_frames(&self) -> Option<TrafficLightButtonFrames> {
+        let window = self.native_window();
+        let close = window.standardWindowButton(NSWindowButton::CloseButton)?;
+        let minimize = window.standardWindowButton(NSWindowButton::MiniaturizeButton)?;
+        let zoom = window.standardWindowButton(NSWindowButton::ZoomButton)?;
+        Some(TrafficLightButtonFrames {
+            close: close.frame(),
+            minimize: minimize.frame(),
+            zoom: zoom.frame(),
+        })
+    }
+
+    fn restore_traffic_light_button_frames(&self, frames: TrafficLightButtonFrames) {
+        let window = self.native_window();
+        if let Some(close) = window.standardWindowButton(NSWindowButton::CloseButton) {
+            close.setFrame(frames.close);
+        }
+        if let Some(minimize) = window.standardWindowButton(NSWindowButton::MiniaturizeButton) {
+            minimize.setFrame(frames.minimize);
+        }
+        if let Some(zoom) = window.standardWindowButton(NSWindowButton::ZoomButton) {
+            zoom.setFrame(frames.zoom);
         }
     }
 
@@ -779,6 +826,8 @@ impl MacWindow {
                         first_mouse: false,
                         app_owns_titlebar_drag,
                         fullscreen_restore_bounds: Bounds::default(),
+                        is_exiting_fullscreen: false,
+                        fullscreen_exit_traffic_light_frames: None,
                         simple_fullscreen_state: None,
                         move_tab_to_new_window_callback: None,
                         merge_all_windows_callback: None,
