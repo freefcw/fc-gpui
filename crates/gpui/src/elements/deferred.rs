@@ -163,6 +163,19 @@ mod tests {
         for _ in 0..2 {
             window.update(cx, |_, _, cx| cx.notify()).unwrap();
             cx.run_until_parked();
+            window
+                .update(cx, |_, window, _| {
+                    assert_eq!(
+                        window
+                            .rendered_frame
+                            .debug_bounds
+                            .get("NESTED_MENU")
+                            .copied(),
+                        Some(menu_bounds),
+                        "cached reuse must keep the debug selector"
+                    );
+                })
+                .unwrap();
         }
 
         window
