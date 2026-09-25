@@ -1,6 +1,7 @@
 use super::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
+use collections::FxHashMap;
 use gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuResourceBudget, GpuSpecs, Path, Point,
     PrimitiveBatch, ScaledPixels, Scene, Size,
@@ -124,6 +125,7 @@ struct WgpuResources {
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
+    atlas_texture_bind_groups: FxHashMap<AtlasTextureId, CachedTextureBindGroup>,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
@@ -132,6 +134,11 @@ struct WgpuResources {
     path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
+}
+
+struct CachedTextureBindGroup {
+    texture_generation: u64,
+    bind_group: wgpu::BindGroup,
 }
 
 impl WgpuResources {
@@ -481,6 +488,7 @@ impl WgpuRenderer {
             pipelines,
             bind_group_layouts,
             atlas_sampler,
+            atlas_texture_bind_groups: FxHashMap::default(),
             globals_buffer,
             globals_bind_group,
             path_globals_bind_group,
@@ -1128,6 +1136,7 @@ impl WgpuRenderer {
 
         let mut instance_offset = 0;
         let instance_bindings = self.write_instances(scene, &mut instance_offset)?;
+        self.prepare_texture_bind_groups(scene);
 
         let mut encoder =
             self.resources()
@@ -1216,7 +1225,7 @@ impl WgpuRenderer {
                         &self.resources().pipelines.mono_sprites,
                         batch_instance_range(&scene.monochrome_sprites, sprites),
                         &mut pass,
-                    ),
+                    )?,
                     PrimitiveBatch::PolychromeSprites {
                         texture_id,
                         sprites,
@@ -1226,7 +1235,7 @@ impl WgpuRenderer {
                         &self.resources().pipelines.poly_sprites,
                         batch_instance_range(&scene.polychrome_sprites, sprites),
                         &mut pass,
-                    ),
+                    )?,
                     // Surfaces are macOS-only for video playback and are not
                     // implemented by the WGPU renderer.
                     PrimitiveBatch::Surfaces(_) => {}
@@ -1503,6 +1512,46 @@ impl WgpuRenderer {
             })
     }
 
+    fn prepare_texture_bind_groups(&mut self, scene: &Scene) {
+        let mut texture_ids = Vec::with_capacity(8);
+        for batch in scene.batches() {
+            let texture_id = match batch {
+                PrimitiveBatch::MonochromeSprites { texture_id, .. }
+                | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
+                _ => continue,
+            };
+            if !texture_ids.contains(&texture_id) {
+                texture_ids.push(texture_id);
+            }
+        }
+
+        self.resources_mut()
+            .atlas_texture_bind_groups
+            .retain(|texture_id, _| texture_ids.contains(texture_id));
+
+        for texture_id in texture_ids {
+            let texture_info = self.atlas.get_texture_info(texture_id);
+            let is_current = self
+                .resources()
+                .atlas_texture_bind_groups
+                .get(&texture_id)
+                .is_some_and(|cached| cached.texture_generation == texture_info.generation);
+            if is_current {
+                continue;
+            }
+
+            let bind_group =
+                self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
+            self.resources_mut().atlas_texture_bind_groups.insert(
+                texture_id,
+                CachedTextureBindGroup {
+                    texture_generation: texture_info.generation,
+                    bind_group,
+                },
+            );
+        }
+    }
+
     fn draw_instances(
         &self,
         bind_group: &wgpu::BindGroup,
@@ -1526,18 +1575,21 @@ impl WgpuRenderer {
         pipeline: &wgpu::RenderPipeline,
         instances: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
-    ) {
+    ) -> Result<()> {
         if instances.is_empty() {
-            return;
+            return Ok(());
         }
-        let texture_info = self.atlas.get_texture_info(texture_id);
-        let texture =
-            self.create_texture_bind_group("atlas_texture_bind_group", &texture_info.view);
+        let resources = self.resources();
+        let texture = resources
+            .atlas_texture_bind_groups
+            .get(&texture_id)
+            .context("missing atlas texture bind group")?;
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
+        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, sprite_instances, &[]);
-        pass.set_bind_group(2, &texture, &[]);
+        pass.set_bind_group(2, &texture.bind_group, &[]);
         pass.draw(0..4, instances);
+        Ok(())
     }
 
     unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
