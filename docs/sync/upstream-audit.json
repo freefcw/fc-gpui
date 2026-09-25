@@ -3,10 +3,10 @@
   "absorb_model": "cherry-pick",
   "baseline": "ec3d887507f272119d9fe146c685f0a941d0e798",
   "audited_upstream": "4bd1993783703e92affb781503916d1f152f599f",
-  "compared_against": "0eda7703f6c88aa08a25c1d2105ff1ca46f775d4",
-  "newest_ported_by_date": "c24e309d935d83f672dff1df64b2331749bcb44c",
-  "newest_ported_by_trailer": "25b5569dd231e740922cfebafa26b1a6c08531e8",
-  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#34 and Ready #48-#54 cherry-picked 41 later SHAs listed in post_audit_backports. PRs #35-#45 are local objc2/lockfile adaptations with no Zed-Origin. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports. 2026-09-20 ranked scan compared_against Zed main 0eda7703; do not advance audited_upstream until remaining mapped commits are classified equivalent / deferred / not-applicable.",
+  "compared_against": "a434bb7ee275cefa348a2bfaf27dc30280bf38f7",
+  "newest_ported_by_date": "a434bb7ee275cefa348a2bfaf27dc30280bf38f7",
+  "newest_ported_by_trailer": "a434bb7ee275cefa348a2bfaf27dc30280bf38f7",
+  "notes": "audited_upstream is the last complete classified range end (2026-08-10), not a fully absorbed Zed ancestor. PRs #15-#34, Ready #48-#54, Care #56/#57/#59/#63/#64, and Ready #60-#62 cherry-picked 50 later SHAs listed in post_audit_backports. PRs #35-#45 are local objc2/lockfile adaptations with no Zed-Origin. Next incremental scan starts at audited_upstream and skips already-traced Zed-Origin / post_audit_backports. 2026-09-20 ranked scan ended at Zed main 0eda7703; compared_against is now a434bb7e so provenance can resolve #60/#61/#64, which are descendants of that scan tip. Do not advance audited_upstream until remaining mapped commits are classified equivalent / deferred / not-applicable. #64 did not take AtlasState rewrite 0ef92145.",
   "paths": [
     "crates/gpui",
     "crates/gpui_platform",
@@ -122,6 +122,15 @@
     {"commit":"cf4deb270f04b75ecf5b1d4990591e1146560ea0","pr":51,"note":"Bounds::centered uses display work area and Size::min"},
     {"commit":"c24e309d935d83f672dff1df64b2331749bcb44c","pr":52,"note":"Windows: resolve gpui.manifest.xml path for xwin / llvm-rc"},
     {"commit":"fc952d52dab0920732b01d031d7324e664e6734f","pr":53,"note":"util: #[track_caller] on standalone log_err"},
-    {"commit":"25b5569dd231e740922cfebafa26b1a6c08531e8","pr":54,"note":"Corner::is_bottom (Zed Anchor::is_bottom portable hunk)"}
+    {"commit":"25b5569dd231e740922cfebafa26b1a6c08531e8","pr":54,"note":"Corner::is_bottom (Zed Anchor::is_bottom portable hunk)"},
+    {"commit":"0eda7703f6c88aa08a25c1d2105ff1ca46f775d4","pr":56,"note":"macos: release accesskit adapter when a window is dropped"},
+    {"commit":"db7f9ceed788ebfcbbcb18e65927172f1dd7dde9","pr":57,"note":"macos: track mouse via view tracking areas on normal windows"},
+    {"commit":"f6838a7c4afecd7c212c43c70165588b92a5a11f","pr":57,"note":"macos: ActiveAlways tracking so hover works while another app is focused"},
+    {"commit":"87a1ea30e819e193f8e3fcb517c6884f91ee7a9c","pr":59,"note":"Linux: discard stale Wayland inbound file-drag URI reads"},
+    {"commit":"bcf6582ce3500df93a8a39366640173e6786cea6","pr":60,"note":"util: find_pwsh_in_scoop honors SCOOP then USERPROFILE/scoop"},
+    {"commit":"a51d23c93d15cf04c5d5cae2ecbf5b71404b71b7","pr":61,"note":"util: strip verbatim UNC prefixes in SanitizedPath::from_arc"},
+    {"commit":"94c997e06faabe6538e608c6d04091914f02f86b","pr":62,"note":"keep debug selectors when cached views skip paint"},
+    {"commit":"613a80b9e9ce55079deb0e5f135f6ed29c88aa58","pr":63,"note":"macos: place traffic lights while exiting fullscreen"},
+    {"commit":"a434bb7ee275cefa348a2bfaf27dc30280bf38f7","pr":64,"note":"wgpu: cache atlas texture bind groups on existing WgpuAtlasState; AtlasState rewrite 0ef92145 not taken"}
   ]
 }

@@ -18,18 +18,18 @@
 
 | 字段 | SHA | 说明 |
 |---|---|---|
-| 当前仓库（含 absorb #15–#34、#48–#54 与本地 #35–#45） | `46f4439c6ef22520279573d7f20738948c46c738` | 2026-09-21；`develop/0.9` 含 #54 `46f4439` |
+| 当前仓库（含 absorb #15–#34、#48–#54、#56/#57/#59–#64 与本地 #35–#45） | `65c45cd9c8976d2bef0fab49323903b3ccc98fb5` | 2026-09-25；`develop/0.9` 含 #64 `65c45cd` |
 | 上一完整分类区间起点（不含） | `ec3d887507f272119d9fe146c685f0a941d0e798` | 2026-07-22；JSON `baseline` |
 | 上一完整分类区间终点 | `4bd1993783703e92affb781503916d1f152f599f` | 2026-08-10；JSON `audited_upstream`；区间内 49 条已分类 |
-| 按 Zed 提交日期最新已吸收 | `c24e309d935d83f672dff1df64b2331749bcb44c` | 2026-09-17；#52 Windows xwin/llvm-rc manifest path |
-| 按本仓库 `Zed-Origin` 最新吸收 | `25b5569dd231e740922cfebafa26b1a6c08531e8` | #54 `Corner::is_bottom`（本地 `46f4439`） |
-| 对照的 Zed `main` | `0eda7703f6c88aa08a25c1d2105ff1ca46f775d4` | 2026-09-20；`gpui_macos: Release the accessibility adapter when a window is dropped (#64143)`；JSON `compared_against` |
+| 按 Zed 提交日期最新已吸收 | `a434bb7ee275cefa348a2bfaf27dc30280bf38f7` | 2026-09-21；#64 wgpu atlas bind groups |
+| 按本仓库 `Zed-Origin` 最新吸收 | `a434bb7ee275cefa348a2bfaf27dc30280bf38f7` | #64 wgpu atlas bind groups（本地 `65c45cd`） |
+| 对照的 Zed `main` | `a434bb7ee275cefa348a2bfaf27dc30280bf38f7` | 2026-09-21；JSON `compared_against`。2026-09-20 扫描终点仍是 `0eda7703`；前移只为 provenance 解析 #60/#61/#64 |
 
 `newest_ported_by_date` 必须是已追踪 backport 中 Zed committer 日期最晚的 SHA（同秒则取更大的 SHA）。`newest_ported_by_trailer` 必须是对应本地 `Zed-Origin` 提交 committer 日期最晚的 SHA（同秒则本地 SHA、再 origin SHA 更大者）。`scripts/verify-upstream-sync.sh` 会强制这两条。
 
-下一轮增量扫描从 `4bd19937` 开始，**不要**从 `c24e309d` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
+下一轮增量扫描从 `4bd19937` 开始，**不要**从 `a434bb7e` 开始，否则会漏掉分类终点之后、但日期早于最新 cherry-pick 的未吸收提交。先排除 JSON 里的 `backport` / `supplemental_backports` / `post_audit_backports` 以及本地已有的 `Zed-Origin` trailer。不要只按日期判断是否已同步。
 
-#15–#34 与 Ready #48–#54 共 cherry-pick 41 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
+#15–#34、Ready #48–#54、Care #56/#57/#59/#63/#64 与 Ready #60–#62 共 cherry-pick 50 个上游 SHA（完整 hash 在 JSON `post_audit_backports`）：
 
 | PR | 主题 | Zed SHA（短） |
 |---|---|---|
@@ -57,10 +57,18 @@
 | #52 | Windows xwin/llvm-rc manifest path | `c24e309d` |
 | #53 | #[track_caller] on standalone log_err | `fc952d52` |
 | #54 | Corner::is_bottom（Zed Anchor::is_bottom 可移植片段） | `25b5569d` |
+| #56 | macOS accesskit Drop | `0eda7703` |
+| #57 | macOS hover tracking | `db7f9cee` `f6838a7c` |
+| #59 | Wayland inbound DnD generation | `87a1ea30` |
+| #60 | Scoop `find_pwsh_in_scoop` | `bcf6582c` |
+| #61 | verbatim UNC in `SanitizedPath` | `a51d23c9` |
+| #62 | debug selectors on cached views | `94c997e0` |
+| #63 | traffic lights while exiting fullscreen | `613a80b9` |
+| #64 | cache wgpu atlas bind groups（未吸收 AtlasState rewrite `0ef92145`） | `a434bb7e` |
 
-#35–#45 是本地 objc2 / lockfile 适配，**没有** `Zed-Origin`（Zed 仍走 ClassDecl / `metal` crate / `native_window: id` / 删除 `crates/media`）。不要把这些 SHA 写进 `post_audit_backports`。`#50` 与 `#51` 之间还有若干本地 macos/core-video 清理提交，同样没有 trailer。
+#35–#45 是本地 objc2 / lockfile 适配，**没有** `Zed-Origin`（Zed 仍走 ClassDecl / `metal` crate / `native_window: id` / 删除 `crates/media`）。不要把这些 SHA 写进 `post_audit_backports`。`#50` 与 `#51` 之间还有若干本地 macos/core-video 清理提交，同样没有 trailer。`#59` 与 `#60` 之间的 macos/http-client 清理提交也没有 trailer。
 
-自 `4bd19937` 到对照 HEAD `0eda7703`，映射路径上有 131 个提交；其中 51 个已有本地 `Zed-Origin`（含 0.9.0 时代与 #15–#34、#48–#54），`post_audit_backports` 现列 41 个主题 cherry-pick。其余约 80 个尚未写入 `entries`。**不要**把 `audited_upstream` 前移到 `0eda7703`，直到这些提交被标成 `equivalent` / `deferred` / `not-applicable`。
+自 `4bd19937` 到 2026-09-20 扫描终点 `0eda7703`，映射路径上有 130 个提交；其中 57 个已有本地 `Zed-Origin`（含 0.9.0 时代与 #15–#34、#48–#54、#56/#57/#59/#62/#63），`post_audit_backports` 现列 50 个主题 cherry-pick。其余约 73 个尚未写入 `entries`。#60/#61/#64 的三个 SHA 晚于该扫描终点，不计入这 130。**不要**把 `audited_upstream` 前移到 `0eda7703` 或 `a434bb7e`，直到这些提交被标成 `equivalent` / `deferred` / `not-applicable`。
 
 2026-08-10 分类里仍成立的延期：外部文件拖放（`f52fd9ac` / `a8491e63` / `c7aea6cb`，外加后续 `72c53bf0` objc2 迁移）、native flags（`e99616cd`）、Windows `path` crate（`26103320`，外加 `fa00dccc42`）、同步动画（`4ed3738c`）。`79cc17c2` sticky-axis 滚动当时标为 deferred，已在独立 PR #5 吸收，不改写那次分类记录。
 
@@ -68,7 +76,7 @@
 
 方法：`git -C ../zed log 4bd19937..0eda7703 --` 映射 crate；排除 JSON backport / `post_audit_backports` / 本地 `Zed-Origin`。上一对照点 `9d272b03`（2026-09-12）之后新增 30 个映射提交。
 
-该扫描当时推荐的 Ready 七项已由 #48–#54 吸收（`a7c7219d` Linux XKB、`b9419ae7` HLSL sRGB、`ac6818fb` DirectWrite ligatures、`cf4deb27` `Bounds::centered`、`c24e309d` xwin manifest、`fc952d52` `log_err` `#[track_caller]`、`25b5569d` `Corner::is_bottom`）。不要再开同主题 PR。同一轮留下的 Care 项仍未吸收。
+该扫描当时推荐的 Ready 七项已由 #48–#54 吸收（`a7c7219d` Linux XKB、`b9419ae7` HLSL sRGB、`ac6818fb` DirectWrite ligatures、`cf4deb27` `Bounds::centered`、`c24e309d` xwin manifest、`fc952d52` `log_err` `#[track_caller]`、`25b5569d` `Corner::is_bottom`）。不要再开同主题 PR。扫描终点上的 Care 项已由 #56（`0eda7703` accesskit Drop）、#57（`db7f9cee` / `f6838a7c` hover）、#59（`87a1ea30` Wayland DnD）、#63（`613a80b9` traffic lights）吸收。#64 只吸收 `a434bb7e` 的 bind-group cache，没有吸收 AtlasState rewrite `0ef92145`。扫描之后的 Ready #60–#62 也已吸收。
 
 不要回吸收 Zed 仍落后的 ClassDecl / `metal` crate / `start_external_drag`。Zed `4b47ceb9` 删除 `crates/media`；本仓库已用 #37–#42 本地 objc2 路径并保留 `fc-gpui-media`。
 
@@ -123,7 +131,7 @@ fc-gpui-linux -> fc-gpui-wgpu -> fc-gpui-core
 
 ## 同步流程
 
-1. 更新 `../zed` 并记录准备对照的上游 HEAD（写入 JSON `compared_against` 时用实际 fetch 到的 SHA；当前对照是 `0eda7703`）。
+1. 更新 `../zed` 并记录准备对照的上游 HEAD（写入 JSON `compared_against` 时用实际 fetch 到的 SHA；当前对照是 `a434bb7e`，2026-09-20 扫描终点仍是 `0eda7703`）。
 2. 只列出上一完整分类终点 `audited_upstream` 之后、影响映射 crate 的提交，并跳过已有 `Zed-Origin` / `post_audit_backports`。
 3. 对每个提交标记：`backport`、`equivalent`、`deferred` 或 `not-applicable`。
 4. 一个上游主题对应一个本地提交；backport 提交正文写完整 `Zed-Origin: <hash>`。
