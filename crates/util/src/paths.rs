@@ -240,8 +240,10 @@ impl SanitizedPath {
             // `dunce` strips `\\?\C:\...` but leaves verbatim UNC (`\\?\UNC\...`).
             // Rewriting that prefix allocates, so it cannot live in `new`, which
             // returns a borrow of its input. `new_arc` still goes through `new`.
-            let path = match path.to_str().and_then(rewrite_verbatim_unc_prefix) {
-                Some(rewritten) => PathBuf::from(rewritten).into(),
+            // Match `Prefix::VerbatimUNC` instead of `Path::to_str` so a filename
+            // with an unpaired UTF-16 surrogate is still rewritten.
+            let path = match rewrite_verbatim_unc_prefix(&path) {
+                Some(rewritten) => rewritten.into(),
                 None => path,
             };
             // TODO: could avoid allocating here if dunce::simplified results in the same path
@@ -300,13 +302,53 @@ impl SanitizedPath {
     }
 }
 
+/// Join `\\server\share` with the remaining path components.
+///
+/// `OsStr` parts keep non-UTF-8 names (unpaired UTF-16 surrogates on Windows).
+#[cfg(any(test, target_os = "windows"))]
+fn assemble_unc_path<'a>(
+    server: &OsStr,
+    share: &OsStr,
+    rest: impl IntoIterator<Item = &'a OsStr>,
+) -> PathBuf {
+    let mut rewritten = std::ffi::OsString::from(r"\\");
+    rewritten.push(server);
+    rewritten.push(r"\");
+    rewritten.push(share);
+    for part in rest {
+        rewritten.push(r"\");
+        rewritten.push(part);
+    }
+    PathBuf::from(rewritten)
+}
+
 /// Rewrite a verbatim UNC path (`\\?\UNC\server\share\...`) to a normal UNC
 /// path (`\\server\share\...`). `dunce::simplified` only strips verbatim disk
 /// prefixes, so this runs before it. `None` means the path is left unchanged.
-#[cfg(any(test, target_os = "windows"))]
-fn rewrite_verbatim_unc_prefix(path: &str) -> Option<String> {
-    let rest = path.strip_prefix(r"\\?\UNC\")?;
-    Some(format!(r"\\{rest}"))
+///
+/// The prefix is classified with [`std::path::Prefix`], so the whole path does
+/// not need to be valid UTF-8. Verbatim disk (`\\?\C:\...`) and ordinary UNC
+/// are left for `dunce::simplified`.
+#[cfg(target_os = "windows")]
+fn rewrite_verbatim_unc_prefix(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let (server, share) = match components.next()? {
+        Component::Prefix(prefix) => match prefix.kind() {
+            Prefix::VerbatimUNC(server, share) => (server, share),
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    let rest = components.filter_map(|component| match component {
+        Component::RootDir | Component::Prefix(_) => None,
+        Component::CurDir => Some(OsStr::new(".")),
+        Component::ParentDir => Some(OsStr::new("..")),
+        Component::Normal(part) => Some(part),
+    });
+    Some(assemble_unc_path(server, share, rest))
 }
 
 impl std::fmt::Debug for SanitizedPath {
@@ -1569,17 +1611,57 @@ mod tests {
     }
 
     #[perf]
+    fn test_assemble_unc_path() {
+        assert_eq!(
+            assemble_unc_path(
+                OsStr::new("server"),
+                OsStr::new("share"),
+                [OsStr::new("file.txt")]
+            )
+            .as_os_str(),
+            OsStr::new(r"\\server\share\file.txt")
+        );
+    }
+
+    /// Host stand-in for the Windows regression: rebuilding a UNC path must
+    /// keep a component that is not valid UTF-8. Prefix stripping itself is
+    /// covered by `test_rewrite_verbatim_unc_prefix` on Windows.
+    #[cfg(unix)]
+    #[perf]
+    fn test_assemble_unc_path_keeps_non_utf8_component() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let non_utf8 = OsStr::from_bytes(&[0xff]);
+        let path = assemble_unc_path(
+            OsStr::new("server"),
+            OsStr::new("share"),
+            [non_utf8, OsStr::new("file.txt")],
+        );
+        assert!(path.to_str().is_none());
+        let bytes = path.as_os_str().as_bytes();
+        assert!(bytes.starts_with(br"\\server\share\"));
+        assert!(bytes.windows(1).any(|window| window == [0xff]));
+        assert_eq!(&bytes[bytes.len() - br"\file.txt".len()..], br"\file.txt");
+        assert!(
+            !bytes
+                .windows(br"\\?\UNC\".len())
+                .any(|window| window == br"\\?\UNC\")
+        );
+    }
+
+    #[perf]
+    #[cfg(target_os = "windows")]
     fn test_rewrite_verbatim_unc_prefix() {
         assert_eq!(
-            rewrite_verbatim_unc_prefix(r"\\?\UNC\server\share\file.txt").as_deref(),
-            Some(r"\\server\share\file.txt")
+            rewrite_verbatim_unc_prefix(Path::new(r"\\?\UNC\server\share\file.txt")).as_deref(),
+            Some(Path::new(r"\\server\share\file.txt"))
         );
         assert_eq!(
-            rewrite_verbatim_unc_prefix(r"\\?\C:\Users\someone\test_file.rs"),
+            rewrite_verbatim_unc_prefix(Path::new(r"\\?\C:\Users\someone\test_file.rs")),
             None
         );
         assert_eq!(
-            rewrite_verbatim_unc_prefix(r"\\server\share\file.txt"),
+            rewrite_verbatim_unc_prefix(Path::new(r"\\server\share\file.txt")),
             None
         );
     }
@@ -1597,6 +1679,51 @@ mod tests {
             SanitizedPath::new(path).to_string(),
             "\\\\?\\UNC\\server\\share\\file.txt"
         );
+    }
+
+    #[perf]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path_verbatim_unc_non_utf8() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        use std::path::{Component, Prefix};
+
+        // Unpaired UTF-16 surrogate: a valid Windows filename that is not UTF-8.
+        let mut wide: Vec<u16> = r"\\?\UNC\server\share\".encode_utf16().collect();
+        wide.push(0xD800);
+        wide.extend(r"\file.txt".encode_utf16());
+        let path = PathBuf::from(std::ffi::OsString::from_wide(&wide));
+        assert!(path.to_str().is_none());
+
+        let sanitized = SanitizedPath::from_arc(Arc::<Path>::from(path.as_path()));
+        let mut components = sanitized.as_path().components();
+        match components.next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::UNC(server, share) => {
+                    assert_eq!(server, "server");
+                    assert_eq!(share, "share");
+                }
+                other => panic!("expected ordinary UNC prefix, got {other:?}"),
+            },
+            other => panic!("expected a UNC prefix, got {other:?}"),
+        }
+        let names: Vec<_> = components
+            .filter_map(|component| match component {
+                Component::Normal(name) => Some(name),
+                Component::RootDir => None,
+                other => panic!("unexpected component {other:?}"),
+            })
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].encode_wide().collect::<Vec<_>>(), vec![0xD800]);
+        assert_eq!(names[1], OsStr::new("file.txt"));
+
+        // `new` still borrows the original path and does not allocate a rewrite.
+        match SanitizedPath::new(&path).as_path().components().next() {
+            Some(Component::Prefix(prefix)) => {
+                assert!(matches!(prefix.kind(), Prefix::VerbatimUNC(_, _)));
+            }
+            other => panic!("expected verbatim UNC from new(), got {other:?}"),
+        }
     }
 
     #[perf]
