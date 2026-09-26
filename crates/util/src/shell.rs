@@ -1,4 +1,6 @@
 #[cfg(any(windows, test))]
+use std::ffi::OsStr;
+#[cfg(any(windows, test))]
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::sync::LazyLock;
@@ -101,6 +103,18 @@ pub fn get_windows_git_bash() -> Option<String> {
     (*GIT_BASH).clone()
 }
 
+/// Scoop root from a non-empty `SCOOP`, otherwise `%USERPROFILE%\scoop`.
+///
+/// An empty `SCOOP` is treated as unset. `PathBuf::from("")` would otherwise
+/// join `shims\pwsh.exe` relative to the current directory.
+#[cfg(any(windows, test))]
+fn scoop_install_root(scoop: Option<&OsStr>, userprofile: Option<&OsStr>) -> Option<PathBuf> {
+    scoop
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| userprofile.map(|home| PathBuf::from(home).join("scoop")))
+}
+
 #[cfg(windows)]
 pub fn get_powershell() -> Option<String> {
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
@@ -164,9 +178,9 @@ pub fn get_powershell() -> Option<String> {
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
         // Scoop can be installed to a custom location; $SCOOP points at the
         // scoop root in that case and defaults to %USERPROFILE%\scoop otherwise.
-        let scoop_dir = std::env::var_os("SCOOP").map(PathBuf::from).or_else(|| {
-            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("scoop"))
-        })?;
+        let scoop = std::env::var_os("SCOOP");
+        let userprofile = std::env::var_os("USERPROFILE");
+        let scoop_dir = scoop_install_root(scoop.as_deref(), userprofile.as_deref())?;
         let pwsh_exe = scoop_dir.join("shims").join("pwsh.exe");
         pwsh_exe.is_file().then_some(pwsh_exe)
     }
@@ -569,6 +583,33 @@ mod tests {
             find_bash_using_git_install(Some(preferred.path().to_path_buf()), Some(&git)).unwrap(),
             preferred.path().join("bin").join("bash.exe")
         );
+    }
+
+    #[test]
+    fn empty_scoop_falls_back_to_userprofile() {
+        assert_eq!(
+            scoop_install_root(Some(OsStr::new("")), Some(OsStr::new(r"C:\Users\someone")))
+                .unwrap(),
+            PathBuf::from(r"C:\Users\someone").join("scoop")
+        );
+    }
+
+    #[test]
+    fn scoop_env_overrides_userprofile_when_non_empty() {
+        assert_eq!(
+            scoop_install_root(
+                Some(OsStr::new(r"D:\Apps\scoop")),
+                Some(OsStr::new(r"C:\Users\someone"))
+            )
+            .unwrap(),
+            PathBuf::from(r"D:\Apps\scoop")
+        );
+    }
+
+    #[test]
+    fn scoop_root_is_none_when_scoop_and_userprofile_are_missing() {
+        assert!(scoop_install_root(None, None).is_none());
+        assert!(scoop_install_root(Some(OsStr::new("")), None).is_none());
     }
 
     #[cfg(not(windows))]
