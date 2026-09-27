@@ -5400,6 +5400,16 @@ impl Window {
         self.platform_window.play_system_bell()
     }
 
+    /// Returns whether accessibility support is enabled for this window.
+    ///
+    /// This is false when the app was created with [`crate::Application::inaccessible`].
+    /// The result does not depend on whether assistive technology is currently
+    /// connected, so it can be used to gate subscriptions that are only needed
+    /// for accessibility.
+    pub fn is_a11y_enabled(&self) -> bool {
+        self.a11y.is_enabled()
+    }
+
     /// Returns a JSON representation of the latest completed accessibility frame.
     ///
     /// Returns `None` until accessibility has produced a tree for this window.
