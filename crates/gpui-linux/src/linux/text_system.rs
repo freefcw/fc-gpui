@@ -1066,6 +1066,54 @@ mod tests {
         }
     }
 
+    /// cosmic-text sums word widths to get a line's width but accumulates glyph
+    /// advances to position glyphs, so a trailing zero-advance glyph (here a
+    /// zero-width space) can land a few ulps past the width. When that glyph is a
+    /// wrap boundary, the row before it extends past the line's width, and hit
+    /// testing in that sliver used to panic (ZED-BW8, ZED-75K, ZED-81Z).
+    #[test]
+    fn index_for_position_past_line_width() -> Result<()> {
+        let platform_text_system = Arc::new(CosmicTextSystem::new_without_system_fonts());
+        platform_text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX_SANS)])?;
+        let app = gpui::TestApp::with_platform_text_system(platform_text_system);
+        let window_text_system = gpui::WindowTextSystem::new(app.text_system().clone());
+        let text: SharedString = "Warning: this will delete files\u{200b}".into();
+        let runs = [gpui::TextRun {
+            len: text.len(),
+            font: font("IBM Plex Sans"),
+            color: Default::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+        let lines = window_text_system.shape_text(text, px(14.), &runs, Some(px(4.)), None)?;
+        let line = &lines[0];
+        let width = line.unwrapped_layout.width;
+        let boundary_glyph = |row: usize| {
+            let boundary = line.wrap_boundaries()[row];
+            &line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix]
+        };
+        let row = (1..line.wrap_boundaries().len())
+            .find(|row| boundary_glyph(*row).position.x > width)
+            .expect("trailing zero-width space should be a wrap boundary past the line width");
+        let row_start_x = f32::from(boundary_glyph(row - 1).position.x);
+        let row_end = boundary_glyph(row);
+
+        let mut x = f32::from(width) - row_start_x;
+        while x + row_start_x < f32::from(width) {
+            x = x.next_up();
+        }
+        assert!(px(x + row_start_x) < row_end.position.x);
+
+        let line_height = px(20.);
+        let position = point(px(x), line_height * row as f32 + px(1.));
+        assert_eq!(
+            line.index_for_position(position, line_height),
+            Err(row_end.index)
+        );
+        Ok(())
+    }
+
     #[test]
     fn paragraph_separator_detection_covers_fast_and_unicode_paths() {
         for separator in [

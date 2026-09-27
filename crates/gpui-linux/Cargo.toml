@@ -108,6 +108,8 @@ xim = { package = "zed-xim", version = "0.4.0-zed", features = ["x11rb-xcb", "x1
 xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.0", default-features = false, features = ["test-support"] }
+gpui_wgpu = { package = "fc-gpui-wgpu", path = "../gpui-wgpu", version = "0.9.0", default-features = false, features = ["test-support"] }
 ttf-parser = "0.25"
 
 [lints.clippy]
