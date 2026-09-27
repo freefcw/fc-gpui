@@ -236,6 +236,11 @@ impl TestAppContext {
         f(&cx)
     }
 
+    /// Disables accessibility for subsequently created test windows.
+    pub fn disable_accessibility(&mut self) {
+        self.update(|cx| cx.accessibility_force_disabled = true);
+    }
+
     /// Adds a new window. The Window will always be backed by a `TestWindow` which
     /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
