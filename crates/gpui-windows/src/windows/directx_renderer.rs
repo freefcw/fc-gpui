@@ -679,7 +679,9 @@ impl DirectXRenderer {
             sprites,
             &mut self.last_pipeline,
         )?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.mono_sprites.draw_with_texture(
             &self.devices.device_context,
             &texture_view,
@@ -705,7 +707,9 @@ impl DirectXRenderer {
             sprites,
             &mut self.last_pipeline,
         )?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.poly_sprites.draw_with_texture(
             &self.devices.device_context,
             &texture_view,
