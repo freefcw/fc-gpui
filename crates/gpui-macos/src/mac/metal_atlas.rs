@@ -30,8 +30,12 @@ impl MetalAtlas {
         }))
     }
 
-    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> MetalTexture {
-        self.0.lock().texture(id).metal_texture.clone()
+    /// Returns the GPU texture backing `id`, or `None` once every tile in it
+    /// has been removed. A scene can still reference such a texture when a
+    /// cached view replays a paint from before the image was dropped, so
+    /// callers must skip those sprites rather than assume the texture exists.
+    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> Option<MetalTexture> {
+        Some(self.0.lock().texture(id)?.metal_texture.clone())
     }
 }
 
@@ -59,7 +63,9 @@ impl PlatformAtlas for MetalAtlas {
             let tile = lock
                 .allocate(size, key.texture_kind())
                 .context("failed to allocate")?;
-            let texture = lock.texture(tile.texture_id);
+            let texture = lock
+                .texture(tile.texture_id)
+                .context("allocated tile refers to a missing texture")?;
             texture.upload(tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
@@ -182,12 +188,12 @@ impl MetalAtlasState {
         .unwrap()
     }
 
-    fn texture(&self, id: AtlasTextureId) -> &MetalAtlasTexture {
+    fn texture(&self, id: AtlasTextureId) -> Option<&MetalAtlasTexture> {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
         };
-        textures[id.index as usize].as_ref().unwrap()
+        textures.textures.get(id.index as usize)?.as_ref()
     }
 }
 
@@ -267,5 +273,64 @@ fn etagere_point_to_device(point: etagere::Point) -> Point<DevicePixels> {
     Point {
         x: DevicePixels::from(point.x),
         y: DevicePixels::from(point.y),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ImageId, PlatformAtlas, RenderImageParams};
+    use objc2_metal::MTLCreateSystemDefaultDevice;
+    use std::borrow::Cow;
+
+    fn create_atlas() -> Option<MetalAtlas> {
+        let device = unsafe { MTLCreateSystemDefaultDevice() }?;
+        Some(MetalAtlas::new(
+            device,
+            Size {
+                width: DevicePixels(1024),
+                height: DevicePixels(1024),
+            },
+        ))
+    }
+
+    fn make_image_key(image_id: usize, frame_index: usize) -> AtlasKey {
+        AtlasKey::Image(RenderImageParams {
+            image_id: ImageId(image_id),
+            frame_index,
+        })
+    }
+
+    fn insert_tile(atlas: &MetalAtlas, key: &AtlasKey, size: Size<DevicePixels>) -> AtlasTile {
+        atlas
+            .get_or_insert_with(key, &mut || {
+                let byte_count = (size.width.0 as usize) * (size.height.0 as usize) * 4;
+                Ok(Some((size, Cow::Owned(vec![0u8; byte_count]))))
+            })
+            .expect("allocation should succeed")
+            .expect("callback returns Some")
+    }
+
+    #[test]
+    fn test_metal_texture_is_none_after_last_tile_removed() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+
+        let key = make_image_key(1, 0);
+        let tile = insert_tile(
+            &atlas,
+            &key,
+            Size {
+                width: DevicePixels(64),
+                height: DevicePixels(64),
+            },
+        );
+        assert!(atlas.metal_texture(tile.texture_id).is_some());
+
+        // A scene built before the removal may still carry `tile`; looking its
+        // texture up must report the gap instead of panicking.
+        atlas.remove(&key);
+        assert!(atlas.metal_texture(tile.texture_id).is_none());
     }
 }

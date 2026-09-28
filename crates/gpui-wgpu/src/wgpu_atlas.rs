@@ -83,13 +83,17 @@ impl WgpuAtlas {
         lock.flush_uploads();
     }
 
-    pub fn get_texture_info(&self, id: AtlasTextureId) -> WgpuTextureInfo {
+    /// Returns the view backing `id`, or `None` once every tile in it has been
+    /// removed. A scene can still reference such a texture when a cached view
+    /// replays a paint from before the image was dropped, so callers must skip
+    /// those sprites rather than assume the texture exists.
+    pub fn get_texture_info(&self, id: AtlasTextureId) -> Option<WgpuTextureInfo> {
         let lock = self.0.lock();
-        let texture = &lock.storage[id];
-        WgpuTextureInfo {
+        let texture = lock.storage.get(id)?;
+        Some(WgpuTextureInfo {
             view: texture.view.clone(),
             generation: texture.generation,
-        }
+        })
     }
 
     /// Clears all cached textures and tiles, forcing them to be recreated.
@@ -335,19 +339,6 @@ impl WgpuAtlasStorage {
     }
 }
 
-impl ops::Index<AtlasTextureId> for WgpuAtlasStorage {
-    type Output = WgpuAtlasTexture;
-    fn index(&self, id: AtlasTextureId) -> &Self::Output {
-        let textures = match id.kind {
-            AtlasTextureKind::Monochrome => &self.monochrome_textures,
-            AtlasTextureKind::Polychrome => &self.polychrome_textures,
-        };
-        textures[id.index as usize]
-            .as_ref()
-            .expect("texture must exist")
-    }
-}
-
 struct WgpuAtlasTexture {
     id: AtlasTextureId,
     generation: u64,
@@ -549,11 +540,18 @@ mod tests {
 
         let first_key = make_image_key(1, 0);
         let first_tile = insert_tile(&atlas, &first_key, size)?;
-        let first_generation = atlas.get_texture_info(first_tile.texture_id).generation;
+        let first_generation = atlas
+            .get_texture_info(first_tile.texture_id)
+            .context("first texture should exist")?
+            .generation;
         atlas.remove(&first_key);
+        assert!(atlas.get_texture_info(first_tile.texture_id).is_none());
 
         let second_tile = insert_tile(&atlas, &make_image_key(2, 0), size)?;
-        let second_generation = atlas.get_texture_info(second_tile.texture_id).generation;
+        let second_generation = atlas
+            .get_texture_info(second_tile.texture_id)
+            .context("second texture should exist")?
+            .generation;
 
         assert_eq!(second_tile.texture_id, first_tile.texture_id);
         assert_ne!(second_generation, first_generation);

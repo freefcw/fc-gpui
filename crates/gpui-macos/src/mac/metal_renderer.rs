@@ -1226,6 +1226,11 @@ impl MetalRenderer {
         if sprites.is_empty() {
             return true;
         }
+        // A released atlas texture belongs to a stale paint. Skip the batch
+        // instead of failing the frame (`false` means the instance buffer is full).
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            return true;
+        };
         align_offset(instance_offset);
 
         let sprite_bytes_len = mem::size_of_val(sprites);
@@ -1235,8 +1240,6 @@ impl MetalRenderer {
         if next_offset > instance_buffer.size {
             return false;
         }
-
-        let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1300,9 +1303,12 @@ impl MetalRenderer {
         if sprites.is_empty() {
             return true;
         }
+        // A released atlas texture belongs to a stale paint. Skip the batch
+        // instead of failing the frame (`false` means the instance buffer is full).
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            return true;
+        };
         align_offset(instance_offset);
-
-        let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),

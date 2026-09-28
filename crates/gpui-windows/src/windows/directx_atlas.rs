@@ -50,13 +50,17 @@ impl DirectXAtlas {
         }))
     }
 
+    /// Returns the view backing `id`, or `None` once every tile in it has been
+    /// removed. A scene can still reference such a texture when a cached view
+    /// replays a paint from before the image was dropped, so callers must skip
+    /// those sprites rather than assume the texture exists.
     pub(crate) fn get_texture_view(
         &self,
         id: AtlasTextureId,
-    ) -> [Option<ID3D11ShaderResourceView>; 1] {
+    ) -> Option<[Option<ID3D11ShaderResourceView>; 1]> {
         let lock = self.0.lock();
-        let tex = lock.texture(id);
-        tex.view.clone()
+        let texture = lock.texture(id)?;
+        Some(texture.view.clone())
     }
 
     pub(crate) fn handle_device_lost(
@@ -91,7 +95,9 @@ impl PlatformAtlas for DirectXAtlas {
             let tile = lock
                 .allocate(size, key.texture_kind())
                 .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_id);
+            let texture = lock
+                .texture(tile.texture_id)
+                .ok_or_else(|| anyhow::anyhow!("allocated tile refers to a missing texture"))?;
             texture.upload(&lock.device_context, tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
@@ -236,12 +242,12 @@ impl DirectXAtlasState {
         }
     }
 
-    fn texture(&self, id: AtlasTextureId) -> &DirectXAtlasTexture {
+    fn texture(&self, id: AtlasTextureId) -> Option<&DirectXAtlasTexture> {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
         };
-        textures[id.index as usize].as_ref().unwrap()
+        textures.textures.get(id.index as usize)?.as_ref()
     }
 }
 
