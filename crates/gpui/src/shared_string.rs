@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::{
     borrow::{Borrow, Cow},
+    iter,
     ops::Deref,
     sync::Arc,
 };
@@ -118,6 +119,13 @@ impl From<&str> for SharedString {
     }
 }
 
+impl From<char> for SharedString {
+    #[inline]
+    fn from(c: char) -> SharedString {
+        SharedString(SmolStr::from_iter(iter::once(c)))
+    }
+}
+
 impl From<String> for SharedString {
     fn from(value: String) -> Self {
         Self(SmolStr::from(value))
@@ -160,5 +168,18 @@ impl<'de> Deserialize<'de> for SharedString {
     {
         let s = String::deserialize(deserializer)?;
         Ok(SharedString::from(s))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SharedString;
+
+    #[test]
+    fn from_char_builds_a_one_character_string() {
+        assert_eq!(SharedString::from('a').as_str(), "a");
+        assert_eq!(SharedString::from('字').as_str(), "字");
+        let emoji: SharedString = '😀'.into();
+        assert_eq!(emoji.as_str(), "😀");
     }
 }
