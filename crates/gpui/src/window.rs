@@ -639,6 +639,12 @@ impl Hitbox {
 
     /// Checks whether this hitbox would be hovered at `position`, regardless of the current input
     /// modality or mouse position.
+    ///
+    /// Unlike [`Hitbox::is_hovered`], this is a position-based hit test against the rendered
+    /// frame. It does not consider pointer capture or the current input modality, but it still
+    /// respects content masks and hitbox occlusion. During a drag that captured this hitbox,
+    /// `is_hovered` reports the hitbox as hovered even outside its bounds, while `is_hovered_at`
+    /// only tests the supplied `position`.
     pub fn is_hovered_at(&self, position: Point<Pixels>, window: &Window) -> bool {
         let hit_test = window.rendered_frame.hit_test(position);
         hit_test
@@ -6565,8 +6571,8 @@ pub fn outline(
 mod tests {
     use super::*;
     use crate::{
-        Context, ExternalPaths, InputEvent as _, QuitMode, Render, TestAppContext, WindowOptions,
-        canvas, div, hsla, px, size,
+        ContentMask, Context, ExternalPaths, HitboxBehavior, InputEvent as _, QuitMode, Render,
+        TestAppContext, WindowOptions, bounds, canvas, div, hsla, point, px, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -6604,6 +6610,89 @@ mod tests {
             None,
             "None disables inactive-window throttling"
         );
+    }
+
+    #[test]
+    fn hovered_at_ignores_pointer_capture() {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(|_, _| EmptyView);
+        let window: AnyWindowHandle = window.into();
+
+        cx.update_window(window, |_, window, _| {
+            let bounds = bounds(point(px(0.), px(0.)), size(px(10.), px(10.)));
+            let hitbox = Hitbox {
+                id: HitboxId(1),
+                bounds,
+                content_mask: ContentMask { bounds },
+                behavior: HitboxBehavior::Normal,
+            };
+            window.rendered_frame.hitboxes.push(hitbox.clone());
+            window.capture_pointer(hitbox.id);
+
+            assert!(hitbox.is_hovered(window));
+            assert!(hitbox.is_hovered_at(point(px(5.), px(5.)), window));
+            assert!(!hitbox.is_hovered_at(point(px(20.), px(20.)), window));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn hovered_at_respects_content_masks_and_occlusion() {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(|_, _| EmptyView);
+        let window: AnyWindowHandle = window.into();
+
+        cx.update_window(window, |_, window, _| {
+            let target_bounds = bounds(point(px(0.), px(0.)), size(px(20.), px(20.)));
+            let target = Hitbox {
+                id: HitboxId(1),
+                bounds: target_bounds,
+                content_mask: ContentMask {
+                    bounds: bounds(point(px(0.), px(0.)), size(px(10.), px(20.))),
+                },
+                behavior: HitboxBehavior::Normal,
+            };
+            let blocker = Hitbox {
+                id: HitboxId(2),
+                bounds: target_bounds,
+                content_mask: ContentMask {
+                    bounds: target_bounds,
+                },
+                behavior: HitboxBehavior::BlockMouse,
+            };
+            window.rendered_frame.hitboxes.push(target.clone());
+            assert!(target.is_hovered_at(point(px(5.), px(5.)), window));
+            assert!(!target.is_hovered_at(point(px(15.), px(5.)), window));
+
+            window.rendered_frame.hitboxes.push(blocker.clone());
+
+            assert!(!target.is_hovered_at(point(px(5.), px(5.)), window));
+            assert!(blocker.is_hovered_at(point(px(15.), px(5.)), window));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn hovered_at_ignores_keyboard_input_modality() {
+        let mut cx = TestAppContext::single();
+        let window = cx.add_window(|_, _| EmptyView);
+        let window: AnyWindowHandle = window.into();
+
+        cx.update_window(window, |_, window, _| {
+            let bounds = bounds(point(px(0.), px(0.)), size(px(10.), px(10.)));
+            let hitbox = Hitbox {
+                id: HitboxId(1),
+                bounds,
+                content_mask: ContentMask { bounds },
+                behavior: HitboxBehavior::Normal,
+            };
+            window.rendered_frame.hitboxes.push(hitbox.clone());
+            window.last_input_was_keyboard.set(true);
+
+            assert!(!hitbox.is_hovered(window));
+            assert!(hitbox.is_hovered_at(point(px(5.), px(5.)), window));
+        })
+        .unwrap();
     }
 
     /// A re-entrant frame request must be deferred while a draw is on the
