@@ -2,7 +2,7 @@ use super::metal_atlas::MetalAtlas;
 use crate::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
     Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, size,
+    Underline, size,
 };
 use anyhow::Result;
 use block2::RcBlock;
@@ -1429,8 +1429,7 @@ impl MetalRenderer {
                     .unwrap()
             };
 
-            align_offset(instance_offset);
-            let next_offset = *instance_offset + mem::size_of::<Surface>();
+            let next_offset = next_surface_instance_offset(instance_offset);
             if next_offset > instance_buffer.size {
                 return false;
             }
@@ -1658,9 +1657,16 @@ fn align_offset(offset: &mut usize) {
     *offset = (*offset).div_ceil(256) * 256;
 }
 
+fn next_surface_instance_offset(offset: &mut usize) -> usize {
+    align_offset(offset);
+    *offset + mem::size_of::<SurfaceBounds>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::unit_vertex_data;
+    use super::{SurfaceBounds, next_surface_instance_offset};
+    use std::mem::size_of;
 
     #[test]
     fn unit_vertex_data_contains_two_triangles() {
@@ -1674,6 +1680,22 @@ mod tests {
         assert_eq!(vertices[3], one << 32);
         assert_eq!(vertices[4], one);
         assert_eq!(vertices[5], (one << 32) | one);
+    }
+
+    #[test]
+    fn surface_instance_offsets_use_surface_bounds_stride() {
+        let surface_size = size_of::<SurfaceBounds>();
+
+        let mut offset = 0;
+        assert_eq!(next_surface_instance_offset(&mut offset), surface_size);
+        assert_eq!(
+            next_surface_instance_offset(&mut offset),
+            256 + surface_size
+        );
+        assert_eq!(
+            next_surface_instance_offset(&mut offset),
+            512 + surface_size
+        );
     }
 }
 
