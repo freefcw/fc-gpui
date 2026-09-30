@@ -1143,6 +1143,7 @@ impl X11Client {
                 window.handle_input(PlatformInput::KeyDown(gpui::KeyDownEvent {
                     keystroke,
                     is_held: false,
+                    prefer_character_input: false,
                 }));
             }
             Event::KeyRelease(event) => {

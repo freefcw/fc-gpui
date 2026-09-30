@@ -4296,6 +4296,7 @@ mod tests {
                 KeyDownEvent {
                     keystroke,
                     is_held: false,
+                    prefer_character_input: false,
                 }
                 .to_platform_input(),
                 cx,

@@ -1548,6 +1548,7 @@ fn handle_do_command_by_selector(this: &GPUIView) {
         let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,
+            prefer_character_input: false,
         }));
         state.lock().do_command_handled = Some(!handled.propagate);
     }

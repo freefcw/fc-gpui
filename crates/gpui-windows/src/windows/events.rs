@@ -410,6 +410,7 @@ impl WindowsWindowInner {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
+                prefer_character_input: false,
             })
         })?;
         let mut func = lock.callbacks.input.take()?;
@@ -452,6 +453,7 @@ impl WindowsWindowInner {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
+                prefer_character_input: false,
             })
         }) else {
             return Some(1);
