@@ -50,7 +50,6 @@ x11 = [
     "gpui/x11",
     "dep:open",
     "dep:gpui_wgpu",
-    "dep:x11-clipboard",
     "dep:x11rb",
     "dep:xim",
     "dep:xkbcommon",
@@ -102,7 +101,6 @@ wayland-protocols = { version = "0.32.12", features = ["client", "staging", "uns
 wayland-protocols-plasma = { version = "0.3.12", features = ["client"], optional = true }
 wayland-protocols-wlr = { version = "0.3.9", features = ["client"], optional = true }
 wayland-scanner = { version = "0.31.10", optional = true }
-x11-clipboard = { version = "0.9.3", optional = true }
 x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "xkb", "randr", "xinput", "cursor", "resource_manager", "screensaver", "shape", "sync"], optional = true }
 xim = { package = "zed-xim", version = "0.4.0-zed", features = ["x11rb-xcb", "x11rb-client"], optional = true }
 xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
