@@ -1566,6 +1566,15 @@ impl PlatformWindow for MacWindow {
             .spawn(async move {
                 let (native_window, native_view, plan) = {
                     let mut lock = state.lock();
+                    // Drop runs `begin_close` and takes `native_window` synchronously,
+                    // so a window closed before this task runs would otherwise panic
+                    // in `native_window_ptr`.
+                    if should_skip_deferred_simple_fullscreen(
+                        lock.is_closing,
+                        lock.native_window.is_some(),
+                    ) {
+                        return;
+                    }
                     (
                         lock.native_window_ptr(),
                         lock.native_view,
@@ -1960,6 +1969,10 @@ fn titlebar_move_rect(bounds: NSRect, app_owns_titlebar_drag: bool) -> NSRect {
     }
 }
 
+fn should_skip_deferred_simple_fullscreen(is_closing: bool, native_window_present: bool) -> bool {
+    is_closing || !native_window_present
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1994,5 +2007,12 @@ mod tests {
         assert!(mask.contains(NSWindowStyleMask::Miniaturizable));
         assert!(mask.contains(NSWindowStyleMask::FullSizeContentView));
         assert!(mask.contains(NSWindowStyleMask::NonactivatingPanel));
+    }
+
+    #[test]
+    fn deferred_simple_fullscreen_skips_closed_windows() {
+        assert!(should_skip_deferred_simple_fullscreen(true, true));
+        assert!(should_skip_deferred_simple_fullscreen(false, false));
+        assert!(!should_skip_deferred_simple_fullscreen(false, true));
     }
 }
