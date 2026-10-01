@@ -895,6 +895,13 @@ impl App {
         self.platform.thermal_state()
     }
 
+    /// Prevents idle sleep while the returned guard is held.
+    ///
+    /// Dropping the guard restores the previous sleep policy.
+    pub fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<crate::ActivityGuard>> {
+        self.platform.prevent_idle_sleep(reason)
+    }
+
     /// Invokes a handler when the thermal state changes.
     pub fn on_thermal_state_change<F>(&self, mut callback: F) -> Subscription
     where

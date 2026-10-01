@@ -98,6 +98,31 @@ pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 
+/// Keeps an operating system activity, such as an idle sleep inhibitor, alive until dropped.
+pub struct ActivityGuard {
+    _release: util::Deferred<Box<dyn FnOnce() + Send>>,
+}
+
+impl std::fmt::Debug for ActivityGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActivityGuard").finish_non_exhaustive()
+    }
+}
+
+impl ActivityGuard {
+    /// Runs `release` when the guard is dropped.
+    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            _release: util::defer(Box::new(release)),
+        }
+    }
+
+    /// A guard for platforms without a corresponding activity.
+    pub fn noop() -> Self {
+        Self::new(|| {})
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{
     TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream, VisualRenderArtifact,
@@ -295,6 +320,11 @@ pub trait Platform: 'static {
         ThermalState::Nominal
     }
     fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    /// Prevents idle sleep while the returned guard is held.
+    ///
+    /// Dropping the guard restores the previous sleep policy.
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -907,6 +937,13 @@ pub trait PlatformDispatcher: Send + Sync {
     fn unparker(&self) -> Unparker;
     fn now(&self) -> Instant {
         Instant::now()
+    }
+
+    /// Prevents App Nap-style throttling while the returned guard is held.
+    ///
+    /// This does not prevent the system from entering idle sleep.
+    fn prevent_app_nap(&self, _reason: &str) -> ActivityGuard {
+        ActivityGuard::noop()
     }
 
     #[cfg(any(test, feature = "test-support"))]

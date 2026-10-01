@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, profiler};
+use crate::{ActivityGuard, App, PlatformDispatcher, profiler};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -223,6 +223,13 @@ impl BackgroundExecutor {
     #[doc(hidden)]
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
+    }
+
+    /// Prevents App Nap-style throttling while the returned guard is held.
+    ///
+    /// This does not prevent the system from entering idle sleep.
+    pub fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        self.dispatcher.prevent_app_nap(reason)
     }
 
     /// Enqueues the given future to be run to completion on a background thread.

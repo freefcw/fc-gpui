@@ -1,9 +1,9 @@
 #[cfg(feature = "screen-capture")]
 use crate::ScreenCaptureSource;
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    GpuResourceBudget, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
+    ForegroundExecutor, GpuResourceBudget, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, RendererCacheStats, Task, TestDispatcher, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
@@ -263,5 +263,11 @@ impl Platform for VisualTestPlatform {
 
     fn authenticate_biometric(&self, reason: &str, callback: Box<dyn FnOnce(bool) + Send>) {
         self.platform.authenticate_biometric(reason, callback);
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in visual tests"
+        )))
     }
 }

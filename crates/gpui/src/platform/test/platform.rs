@@ -1,5 +1,5 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, GpuResourceBudget, Keymap, NoopTextSystem, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PromptButton, QuitMode, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
@@ -12,10 +12,14 @@ use collections::VecDeque;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::{
@@ -47,6 +51,9 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     appearance_override: Mutex<Option<WindowAppearance>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
+    idle_sleep_prevention_count: Arc<AtomicUsize>,
+    idle_sleep_prevention_delay: Cell<Duration>,
+    idle_sleep_prevention_fails: Cell<bool>,
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
@@ -188,6 +195,9 @@ impl TestPlatform {
             tray_icon_click_event_callback: Default::default(),
             opened_url: Default::default(),
             appearance_override: Mutex::new(None),
+            idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
+            idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
+            idle_sleep_prevention_fails: Cell::new(false),
             #[cfg(target_os = "windows")]
             bitmap_factory,
             text_system,
@@ -296,6 +306,18 @@ impl TestPlatform {
         !self.prompts.borrow().new_path.is_empty()
     }
 
+    pub(crate) fn active_idle_sleep_preventions(&self) -> usize {
+        self.idle_sleep_prevention_count.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.idle_sleep_prevention_delay.set(delay);
+    }
+
+    pub(crate) fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.idle_sleep_prevention_fails.set(fails);
+    }
+
     pub(crate) fn tray_icon(&self) -> Option<Vec<u8>> {
         self.tray_icon.lock().clone()
     }
@@ -348,6 +370,32 @@ impl Platform for TestPlatform {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.text_system.clone()
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        let count = self.idle_sleep_prevention_count.clone();
+        let fails = self.idle_sleep_prevention_fails.get();
+        let reason = reason.to_owned();
+        let acquire = move || {
+            if fails {
+                anyhow::bail!("Idle sleep prevention for {reason:?} is set to fail in this test");
+            }
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(ActivityGuard::new(move || {
+                count.fetch_sub(1, Ordering::SeqCst);
+            }))
+        };
+
+        let delay = self.idle_sleep_prevention_delay.get();
+        if delay.is_zero() {
+            Task::ready(acquire())
+        } else {
+            let delay = self.background_executor.timer(delay);
+            self.foreground_executor.spawn(async move {
+                delay.await;
+                acquire()
+            })
+        }
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

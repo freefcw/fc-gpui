@@ -178,6 +178,21 @@ impl TestAppContext {
         self.test_platform.did_prompt_for_new_path()
     }
 
+    /// Returns the number of active idle sleep prevention tokens.
+    pub fn active_idle_sleep_preventions(&self) -> usize {
+        self.test_platform.active_idle_sleep_preventions()
+    }
+
+    /// Sets the delay for subsequent idle sleep prevention acquisitions.
+    pub fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.test_platform.set_idle_sleep_prevention_delay(delay);
+    }
+
+    /// Makes subsequent idle sleep prevention acquisitions fail or succeed.
+    pub fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.test_platform.set_idle_sleep_prevention_fails(fails);
+    }
+
     /// Access the test platform for crate-internal assertions.
     #[cfg(test)]
     pub(crate) fn test_platform(&self) -> Rc<TestPlatform> {
@@ -1870,6 +1885,43 @@ mod test_app_tests {
         assert!(capabilities.real_renderer);
         assert!(capabilities.screenshot_capture);
         assert!(capabilities.offscreen_positioned_window);
+    }
+
+    #[gpui::test]
+    async fn prevent_idle_sleep_guard_releases_on_drop(cx: &mut TestAppContext) {
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        let guard = cx
+            .update(|app| app.prevent_idle_sleep("streaming"))
+            .await
+            .expect("acquisition should succeed");
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        drop(guard);
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn prevent_idle_sleep_can_fail(cx: &mut TestAppContext) {
+        cx.set_idle_sleep_prevention_fails(true);
+        let error = cx
+            .update(|app| app.prevent_idle_sleep("streaming"))
+            .await
+            .expect_err("acquisition should fail");
+        assert!(error.to_string().contains("streaming"));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn prevent_idle_sleep_delay_waits_for_the_clock(cx: &mut TestAppContext) {
+        cx.set_idle_sleep_prevention_delay(std::time::Duration::from_secs(2));
+        let task = cx.update(|app| app.prevent_idle_sleep("streaming"));
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        let guard = task.await.expect("acquisition should succeed");
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+        drop(guard);
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
     }
 
     #[cfg(target_os = "windows")]

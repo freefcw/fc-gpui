@@ -830,6 +830,13 @@ impl Platform for WindowsPlatform {
         super::power::system_idle_time()
     }
 
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(
+            super::power::PowerRequest::prevent_idle_sleep(reason)
+                .map(|request| ActivityGuard::new(move || drop(request))),
+        )
+    }
+
     fn network_status(&self) -> NetworkStatus {
         super::network::query_network_status()
     }
