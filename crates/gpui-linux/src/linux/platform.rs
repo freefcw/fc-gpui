@@ -476,7 +476,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.compositor_name()
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         use std::os::unix::process::CommandExt as _;
 
         // get the process id of the current process
@@ -497,17 +497,17 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        let script = format!(
-            r#"
-            while kill -0 {pid} 2>/dev/null; do
+        // `$0` is the current pid, `$1` is the executable, and the remaining
+        // arguments are forwarded without shell splitting.
+        let script = r#"
+            while kill -0 $0 2>/dev/null; do
                 sleep 0.1
             done
 
-            {app_path}
-            "#,
-            pid = app_pid,
-            app_path = app_path.display()
-        );
+            app_path="$1"
+            shift
+            "$app_path" "$@"
+            "#;
 
         #[allow(
             clippy::disallowed_methods,
@@ -517,6 +517,9 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .arg("bash")
             .arg("-c")
             .arg(script)
+            .arg(&app_pid)
+            .arg(&app_path)
+            .args(arguments)
             .process_group(0)
             .spawn();
 

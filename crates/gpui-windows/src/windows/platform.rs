@@ -1,8 +1,9 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     mem::ManuallyDrop,
+    os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
@@ -310,6 +311,39 @@ impl WindowsPlatform {
     }
 }
 
+fn encode_restart_arguments(arguments: &[OsString]) -> OsString {
+    // `Start-Process` accepts a single native command line, so quote each argument according to
+    // the Windows argv parsing rules before passing the complete string through the environment.
+    let mut encoded = Vec::new();
+
+    for (index, argument) in arguments.iter().enumerate() {
+        if index > 0 {
+            encoded.push(b' ' as u16);
+        }
+        encoded.push(b'"' as u16);
+
+        let mut backslash_count = 0;
+        for code_unit in argument.encode_wide() {
+            if code_unit == b'\\' as u16 {
+                backslash_count += 1;
+            } else {
+                if code_unit == b'"' as u16 {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2 + 1));
+                } else {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count));
+                }
+                backslash_count = 0;
+                encoded.push(code_unit);
+            }
+        }
+
+        encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2));
+        encoded.push(b'"' as u16);
+    }
+
+    OsString::from_wide(&encoded)
+}
+
 impl Platform for WindowsPlatform {
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         self.inner.state.borrow_mut().atlas_initial_size = gpu.atlas_size();
@@ -369,33 +403,39 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let script = format!(
-            r#"
-            $pidToWaitFor = {}
-            $exePath = "{}"
+        let script = r#"
+            $pidToWaitFor = $env:ZED_RESTART_PID
+            $exePath = $env:ZED_RESTART_EXECUTABLE
+            $argumentList = $env:ZED_RESTART_ARGUMENTS
 
-            while ($true) {{
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_PID", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_EXECUTABLE", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENTS", $null)
+
+            while ($true) {
                 $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
-                if (-not $process) {{
-                    Start-Process -FilePath $exePath
+                if (-not $process) {
+                    if ([string]::IsNullOrEmpty($argumentList)) {
+                        Start-Process -FilePath $exePath
+                    } else {
+                        Start-Process -FilePath $exePath -ArgumentList $argumentList
+                    }
                     break
-                }}
+                }
                 Start-Sleep -Seconds 0.1
-            }}
-            "#,
-            pid,
-            app_path.display(),
-        );
+            }
+            "#;
 
         let Some(powershell) = get_powershell() else {
             log::error!("failed to restart: PowerShell is unavailable");
             return;
         };
+        let arguments = encode_restart_arguments(&arguments);
 
         #[allow(
             clippy::disallowed_methods,
@@ -404,6 +444,9 @@ impl Platform for WindowsPlatform {
         let restart_process = util::command::new_std_command(powershell)
             .arg("-command")
             .arg(script)
+            .env("ZED_RESTART_PID", pid.to_string())
+            .env("ZED_RESTART_EXECUTABLE", &app_path)
+            .env("ZED_RESTART_ARGUMENTS", arguments)
             .spawn();
 
         match restart_process {
@@ -1765,6 +1808,8 @@ unsafe fn username_and_password(credential: &CREDENTIALW) -> Result<(String, Vec
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
+
     use windows::{
         Win32::Security::Credentials::{
             CRED_PERSIST_SESSION, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
@@ -1773,8 +1818,24 @@ mod tests {
         core::{PCWSTR, PWSTR},
     };
 
-    use super::username_and_password;
+    use super::{encode_restart_arguments, username_and_password};
     use crate::{ClipboardItem, read_from_clipboard, write_to_clipboard};
+
+    #[test]
+    fn test_encode_restart_arguments() {
+        assert_eq!(encode_restart_arguments(&[]), OsStr::new(""));
+        assert_eq!(
+            encode_restart_arguments(&[
+                OsString::from("--user-data-dir"),
+                OsString::from(r"C:\Zed Data"),
+            ]),
+            OsStr::new(r#""--user-data-dir" "C:\Zed Data""#)
+        );
+        assert_eq!(
+            encode_restart_arguments(&[OsString::from(r"C:\")]),
+            OsStr::new(r#""C:\\""#)
+        );
+    }
 
     #[test]
     fn test_read_credential_with_username() {

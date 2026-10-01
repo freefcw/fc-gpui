@@ -11,6 +11,7 @@ use futures::channel::oneshot;
 use parking_lot::Mutex;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
+    ffi::OsString,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -68,7 +69,7 @@ impl Platform for VisualTestPlatform {
         self.platform.quit();
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {}
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<OsString>) {}
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
