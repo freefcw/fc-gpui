@@ -4,13 +4,14 @@ use super::{
     global_point_to_native_screen_point, renderer,
 };
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
-    DevicePixels, ForegroundExecutor, GpuResourceBudget, Image, ImageFormat, KeyContext, Keymap,
-    MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, QuitMode, RendererCacheStats, Result, SemanticVersion, SharedString, Size,
-    SystemMenuType, Task, ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent,
-    TrayIconRenderingMode, TrayMenuItem, WindowAppearance, WindowParams,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString,
+    CursorStyle, DevicePixels, ForegroundExecutor, GpuResourceBudget, Image, ImageFormat,
+    KeyContext, Keymap, MacActivity, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu,
+    OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, QuitMode, RendererCacheStats,
+    Result, SemanticVersion, SharedString, Size, SystemMenuType, Task, ThermalState, TrayAnchor,
+    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
+    WindowParams,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -47,9 +48,9 @@ use objc2_app_kit::{
     NSWorkspaceWillPowerOffNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
-    NSArray, NSAttributedString as Objc2NSAttributedString, NSBundle as Objc2NSBundle,
-    NSData as Objc2NSData, NSDictionary, NSMutableAttributedString, NSNotification,
-    NSNotificationCenter, NSObjectProtocol, NSProcessInfo as Objc2NSProcessInfo,
+    NSActivityOptions, NSArray, NSAttributedString as Objc2NSAttributedString,
+    NSBundle as Objc2NSBundle, NSData as Objc2NSData, NSDictionary, NSMutableAttributedString,
+    NSNotification, NSNotificationCenter, NSObjectProtocol, NSProcessInfo as Objc2NSProcessInfo,
     NSProcessInfoThermalState as Objc2NSProcessInfoThermalState,
     NSProcessInfoThermalStateDidChangeNotification, NSRange as Objc2NSRange, NSSize as Objc2NSSize,
     NSString as Objc2NSString, NSURL as Objc2NSURL, NSUserDefaults,
@@ -1446,6 +1447,13 @@ impl Platform for MacPlatform {
             Objc2NSProcessInfoThermalState::Critical => ThermalState::Critical,
             _ => ThermalState::Nominal,
         }
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Ok(MacActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiated,
+        )))
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {

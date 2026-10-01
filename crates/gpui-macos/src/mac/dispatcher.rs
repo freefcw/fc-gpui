@@ -2,9 +2,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::{PlatformDispatcher, TaskLabel};
+use crate::{ActivityGuard, PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
-use objc2_foundation::NSThread;
+use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
+use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString, NSThread};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use std::{
@@ -93,6 +95,36 @@ impl PlatformDispatcher for MacDispatcher {
 
     fn unparker(&self) -> Unparker {
         self.parker.lock().unparker()
+    }
+
+    fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        MacActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        )
+    }
+}
+
+pub(crate) struct MacActivity {
+    activity: Retained<ProtocolObject<dyn NSObjectProtocol>>,
+}
+
+// The activity token returned by NSProcessInfo is thread-safe.
+unsafe impl Send for MacActivity {}
+
+impl MacActivity {
+    pub(crate) fn begin(reason: &str, options: NSActivityOptions) -> ActivityGuard {
+        let activity = Self {
+            activity: NSProcessInfo::processInfo()
+                .beginActivityWithOptions_reason(options, &NSString::from_str(reason)),
+        };
+        ActivityGuard::new(move || drop(activity))
+    }
+}
+
+impl Drop for MacActivity {
+    fn drop(&mut self) {
+        unsafe { NSProcessInfo::processInfo().endActivity(&self.activity) };
     }
 }
 
