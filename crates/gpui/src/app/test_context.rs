@@ -178,6 +178,18 @@ impl TestAppContext {
         self.test_platform.did_prompt_for_new_path()
     }
 
+    /// Returns a receiver for the next restart request.
+    ///
+    /// The receiver resolves to the optional restart executable path and the
+    /// arguments configured for that restart.
+    pub fn expect_restart(
+        &self,
+    ) -> oneshot::Receiver<(Option<std::path::PathBuf>, Vec<std::ffi::OsString>)> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.test_platform.expect_restart.borrow_mut().replace(tx);
+        rx
+    }
+
     /// Returns the number of active idle sleep prevention tokens.
     pub fn active_idle_sleep_preventions(&self) -> usize {
         self.test_platform.active_idle_sleep_preventions()

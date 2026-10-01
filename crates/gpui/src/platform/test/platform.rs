@@ -49,6 +49,8 @@ pub(crate) struct TestPlatform {
     tray_icon_event_callback: RefCell<Option<Box<dyn FnMut(TrayIconEvent)>>>,
     tray_icon_click_event_callback: RefCell<Option<Box<dyn FnMut(TrayIconClickEvent)>>>,
     pub opened_url: RefCell<Option<String>>,
+    pub(crate) expect_restart:
+        RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<std::ffi::OsString>)>>>,
     appearance_override: Mutex<Option<WindowAppearance>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     idle_sleep_prevention_count: Arc<AtomicUsize>,
@@ -194,6 +196,7 @@ impl TestPlatform {
             tray_icon_event_callback: Default::default(),
             tray_icon_click_event_callback: Default::default(),
             opened_url: Default::default(),
+            expect_restart: RefCell::new(None),
             appearance_override: Mutex::new(None),
             idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
             idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
@@ -416,8 +419,10 @@ impl Platform for TestPlatform {
         *self.did_quit.lock() = true;
     }
 
-    fn restart(&self, _: Option<PathBuf>) {
-        //
+    fn restart(&self, path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
+        if let Some(tx) = self.expect_restart.take() {
+            tx.send((path, arguments)).unwrap();
+        }
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {

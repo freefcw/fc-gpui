@@ -1,6 +1,7 @@
 use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Ref, RefCell, RefMut},
+    ffi::OsString,
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -182,6 +183,12 @@ impl Application {
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
         drop(context_lock);
+        self
+    }
+
+    /// Configures arguments to pass when restarting the application.
+    pub fn with_restart_arguments(self, arguments: Vec<OsString>) -> Self {
+        self.0.borrow_mut().restart_arguments = arguments;
         self
     }
 
@@ -686,6 +693,7 @@ pub struct App {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) restart_observers: SubscriberSet<(), Handler>,
     pub(crate) restart_path: Option<PathBuf>,
+    pub(crate) restart_arguments: Vec<OsString>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
@@ -771,6 +779,7 @@ impl App {
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
+                restart_arguments: Vec::new(),
                 window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
@@ -1704,7 +1713,10 @@ impl App {
         self.restart_observers
             .clone()
             .retain(&(), |observer| observer(self));
-        self.platform.restart(self.restart_path.take())
+        self.platform.restart(
+            self.restart_path.take(),
+            mem::take(&mut self.restart_arguments),
+        )
     }
 
     /// Sets the path to use when restarting the application.
@@ -3019,9 +3031,14 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 mod test {
     use std::{
         cell::{Cell, RefCell},
+        ffi::OsString,
+        path::PathBuf,
         rc::Rc,
         sync::Arc,
     };
+
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
 
     use rand::{SeedableRng, rngs::StdRng};
 
@@ -3454,5 +3471,27 @@ mod test {
 
         assert_eq!(anchor.display_id.0, 1);
         assert_eq!(anchor.bounds.origin, point(px(-32.0), px(-2.0)));
+    }
+
+    #[crate::test]
+    async fn test_restart_preserves_path_and_arguments(cx: &mut TestAppContext) {
+        #[cfg(unix)]
+        let user_data_dir = OsString::from_vec(b"/tmp/zed data/\xff".to_vec());
+        #[cfg(not(unix))]
+        let user_data_dir = OsString::from("C:\\zed data");
+        let arguments = vec![OsString::from("--user-data-dir"), user_data_dir];
+        let restart_path = PathBuf::from("updated-zed");
+        let _application =
+            super::Application(cx.app.clone()).with_restart_arguments(arguments.clone());
+        let restart = cx.expect_restart();
+
+        cx.update(|cx| {
+            cx.set_restart_path(restart_path.clone());
+            cx.restart();
+        });
+
+        let (path, restart_arguments) = restart.await.expect("restart was not requested");
+        assert_eq!(path, Some(restart_path));
+        assert_eq!(restart_arguments, arguments);
     }
 }

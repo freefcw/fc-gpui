@@ -62,7 +62,7 @@ use parking_lot::Mutex;
 use std::{
     cell::Cell,
     convert::TryInto,
-    ffi::{CStr, OsStr, c_void},
+    ffi::{CStr, OsStr, OsString, c_void},
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::Command,
@@ -1063,7 +1063,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, _binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
@@ -1081,7 +1081,13 @@ impl Platform for MacPlatform {
             while kill -0 $0 2> /dev/null; do
                 sleep 0.1
             done
-            open "$1"
+            app_path="$1"
+            shift
+            if (($# > 0)); then
+                open "$app_path" --args "$@"
+            else
+                open "$app_path"
+            fi
         "#;
 
         #[allow(
@@ -1093,6 +1099,7 @@ impl Platform for MacPlatform {
             .arg(script)
             .arg(app_pid)
             .arg(app_path)
+            .args(arguments)
             .process_group(0)
             .spawn();
 
