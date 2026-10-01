@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.1 (2026-10-01)
+
 ### Breaking changes
 
 - **Published package names moved to the `fc-gpui*` family** — the 18 release crates are renamed
