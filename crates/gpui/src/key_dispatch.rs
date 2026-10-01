@@ -617,18 +617,15 @@ mod tests {
         cell::{Cell, RefCell},
         ops::Range,
         rc::Rc,
-        time::Duration,
     };
 
+    use crate::window::PENDING_INPUT_TIMEOUT;
     use crate::{
         Action, ActionRegistry, App, AppContext, Bounds, Context, DispatchEventResult,
         DispatchPhase, DispatchTree, Entity, FocusHandle, InputHandler, InputPreference,
         IntoElement, KeyBinding, KeyContext, KeyDownEvent, Keymap, Keystroke, Modifiers, Pixels,
         PlatformInput, Point, Render, Subscription, TestAppContext, UTF16Selection, Window,
     };
-
-    /// Matches the pending-input timer in `Window::dispatch_key_event`.
-    const PENDING_INPUT_TIMEOUT: Duration = Duration::from_secs(1);
 
     #[derive(PartialEq, Eq)]
     struct TestAction;
@@ -910,6 +907,31 @@ mod tests {
 
         (cx, action_count, secondary_action_count)
     }
+
+    fn setup_pending_input_timeout_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        &mut crate::VisualTestContext,
+        Rc<Cell<usize>>,
+        Rc<Cell<usize>>,
+    ) {
+        setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h j", TestAction, Some("Terminal")),
+            ],
+        )
+    }
+
+    fn simulate_pending_binding(cx: &mut crate::VisualTestContext) {
+        cx.simulate_modifiers_change(Modifiers::control());
+        cx.simulate_keystrokes("ctrl-b");
+        cx.simulate_modifiers_change(Modifiers::none());
+    }
+
+    struct PendingInputTimeoutPauseOwner;
 
     #[derive(Debug, PartialEq)]
     struct ObservedKeystroke {
@@ -1806,5 +1828,336 @@ mod tests {
                 assert_eq!(test.text.borrow().as_str(), "j");
             });
         }
+    }
+
+    #[crate::test]
+    fn test_printable_pending_input_replays_on_timeout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("j k", TestAction, Some("Terminal"))]);
+        });
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, _| {
+            window.focus(&focus_handle);
+            window.activate_window();
+        });
+
+        cx.simulate_keystrokes("j");
+
+        cx.update(|window, _| {
+            let pending_input = window.pending_input().expect("pending input");
+            assert_eq!(pending_input.keystrokes().len(), 1);
+            assert!(pending_input.timeout().is_some());
+        });
+        test.update(cx, |test, _| {
+            assert_eq!(test.action_count.get(), 0);
+            assert_eq!(test.text.borrow().as_str(), "");
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        test.update(cx, |test, _| {
+            assert_eq!(test.action_count.get(), 0);
+            assert_eq!(test.text.borrow().as_str(), "j");
+        });
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_dispatches_shorter_binding(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+        cx.update(|window, _| {
+            assert_eq!(
+                window
+                    .pending_input()
+                    .map(|pending_input| pending_input.keystrokes().len()),
+                Some(1)
+            );
+            assert_eq!(
+                window
+                    .pending_input()
+                    .and_then(|pending_input| pending_input.timeout())
+                    .map(|timeout| timeout.duration()),
+                Some(PENDING_INPUT_TIMEOUT)
+            );
+        });
+        assert_eq!(action_count.get(), 0);
+
+        // Emulate a countdown indicator re-rendering the window while waiting for the timeout.
+        for _ in 0..10 {
+            cx.executor().advance_clock(PENDING_INPUT_TIMEOUT / 10);
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+    }
+
+    #[crate::test]
+    fn test_running_pending_input_timeout_resets_when_binding_advances(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 4 / 5);
+        cx.run_until_parked();
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 2);
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT);
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT / 5);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 0);
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 4 / 5);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_pending_prefix_timeout_resets_when_sequence_advances(cx: &mut TestAppContext) {
+        // `ctrl-b` is not itself a binding. Pending input still times out here; advancing the
+        // sequence restarts that timeout at the full duration.
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h j", TestAction, Some("Terminal")),
+            ],
+        );
+        simulate_pending_binding(cx);
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 4 / 5);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 1);
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT / 5);
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 2);
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT);
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT / 5);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 4 / 5);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_invalid_continuation_while_timeout_paused_replays_pending_input(
+        cx: &mut TestAppContext,
+    ) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("x", SecondaryTestAction, Some("Terminal")),
+            ],
+        );
+        simulate_pending_binding(cx);
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(window.pending_input_is_none()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_pauses_and_resumes(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 7 / 10);
+        cx.run_until_parked();
+
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        let other_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            assert!(!window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            assert!(!window.set_pending_input_timeout_paused(&other_owner, false, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT * 3 / 10);
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 2);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, false, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT * 3 / 10);
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 3 / 10);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_resumes_when_owner_is_released(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 7 / 10);
+        cx.run_until_parked();
+
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+        });
+        cx.run_until_parked();
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT * 3 / 10);
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 3 / 10);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_resets_when_binding_advances(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT / 2);
+        cx.run_until_parked();
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT / 2);
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 2);
+            assert!(timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), PENDING_INPUT_TIMEOUT);
+        });
+
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT * 2);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 0);
+
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, false, cx));
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_clearing_pending_input_invalidates_timeout_pause(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            window.focus(&cx.focus_handle());
+            assert!(!window.has_pending_keystrokes());
+        });
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.executor().advance_clock(PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(window.pending_input_is_none()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 0);
     }
 }
