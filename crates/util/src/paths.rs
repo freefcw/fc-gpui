@@ -823,6 +823,39 @@ impl PathMatcher {
             .into_iter()
             .map(|as_str| Glob::new(as_str.as_ref()))
             .collect::<Result<Vec<_>, _>>()?;
+        Self::from_globs(globs, path_style)
+    }
+
+    /// Skips invalid globs, reporting each error to `on_error`.
+    /// If the combined set cannot be built, reports the error and matches nothing.
+    pub fn new_lenient(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+        mut on_error: impl FnMut(globset::Error),
+    ) -> Self {
+        let globs = globs
+            .into_iter()
+            .filter_map(|pattern| match Glob::new(pattern.as_ref()) {
+                Ok(glob) => Some(glob),
+                Err(error) => {
+                    on_error(error);
+                    None
+                }
+            })
+            .collect();
+        match Self::from_globs(globs, path_style) {
+            Ok(matcher) => matcher,
+            Err(error) => {
+                on_error(error);
+                Self {
+                    path_style,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn from_globs(globs: Vec<Glob>, path_style: PathStyle) -> Result<Self, globset::Error> {
         let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
         let mut glob_builder = GlobSetBuilder::new();
         for single_glob in globs {
@@ -1568,6 +1601,66 @@ mod tests {
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
         assert_eq!(path.extension_or_hidden_file_name(), Some("eslintrc.js"));
+    }
+
+    #[test]
+    fn test_lenient_path_matcher() {
+        for path_style in [PathStyle::Posix, PathStyle::Windows] {
+            let patterns = ["**/.git", "[", "target/**", "{"];
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(patterns, path_style, |error| errors.push(error));
+            let expected = PathMatcher::new(["**/.git", "target/**"], path_style).unwrap();
+            assert_eq!(matcher, expected);
+            assert_eq!(errors.len(), 2);
+            assert_eq!(errors[0].glob(), Some("["));
+            assert_eq!(errors[1].glob(), Some("{"));
+            for path in ["nested/.git", "src/file.rs", "target/file.rs"] {
+                let path = Path::new(path);
+                assert_eq!(matcher.is_match(path), expected.is_match(path));
+            }
+            if path_style == PathStyle::local() {
+                assert!(matcher.is_match(Path::new("nested/.git")));
+                assert!(matcher.is_match(Path::new("target/file.rs")));
+            }
+            assert!(PathMatcher::new(patterns, path_style).is_err());
+
+            let mut errors = Vec::new();
+            let matcher =
+                PathMatcher::new_lenient(["[", "{"], path_style, |error| errors.push(error));
+            assert_eq!(errors.len(), 2);
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().len(), 0);
+            assert!(!matcher.is_match(Path::new("file.rs")));
+
+            let matcher = PathMatcher::new_lenient([] as [&str; 0], path_style, |_| {
+                panic!("empty patterns are valid")
+            });
+            assert_eq!(matcher.path_style, path_style);
+            assert_eq!(matcher.sources().len(), 0);
+            assert!(!matcher.is_match(Path::new("file.rs")));
+        }
+    }
+
+    #[test]
+    fn test_lenient_path_matcher_preserves_escaping() {
+        for path_style in [PathStyle::Posix, PathStyle::Windows] {
+            let patterns = [r"directory\file.rs", r"literal\*", r"literal\[name]"];
+            let strict = PathMatcher::new(patterns, path_style).unwrap();
+            let lenient = PathMatcher::new_lenient(patterns, path_style, |_| {
+                panic!("valid patterns are preserved")
+            });
+            assert_eq!(lenient, strict);
+            for path in [
+                "directory/file.rs",
+                "literal*",
+                "literal/file.rs",
+                "literal[name]",
+            ] {
+                let path = Path::new(path);
+                assert_eq!(lenient.is_match(path), strict.is_match(path));
+            }
+        }
     }
 
     #[perf]
