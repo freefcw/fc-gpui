@@ -259,7 +259,11 @@ impl WindowsWindowInner {
         if this.state.borrow().last_visibility.is_none() {
             return;
         }
-        this.executor
+        // Clone the executor before moving `this` into the task. Calling
+        // `this.executor.spawn` borrows `this` for the call while the future
+        // also moves it.
+        let executor = this.executor.clone();
+        executor
             .spawn(async move {
                 let visibility = this.visibility();
                 let mut lock = this.state.borrow_mut();
