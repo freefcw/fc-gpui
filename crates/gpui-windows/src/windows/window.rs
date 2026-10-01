@@ -50,6 +50,9 @@ pub struct WindowsWindowState {
     pub last_reported_capslock: Option<Capslock>,
     pub system_key_handled: bool,
     pub hovered: bool,
+    /// `None` until a callback is registered, so messages during construction
+    /// are not queued for delivery to a callback registered later.
+    pub last_visibility: Option<WindowVisibility>,
     pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: DirectXRenderer,
@@ -133,6 +136,7 @@ impl WindowsWindowState {
         let last_reported_capslock = None;
         let system_key_handled = false;
         let hovered = false;
+        let last_visibility = None;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
@@ -157,6 +161,7 @@ impl WindowsWindowState {
             last_reported_capslock,
             system_key_handled,
             hovered,
+            last_visibility,
             direct_manipulation,
             renderer,
             click_state,
@@ -230,6 +235,47 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
+    /// Whether the window is being presented: shown and not minimized. Windows
+    /// has no notification for a window fully covered by other windows, so
+    /// that case reports `Visible`.
+    pub(crate) fn visibility(&self) -> WindowVisibility {
+        let is_visible =
+            unsafe { IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool() };
+        if is_visible {
+            WindowVisibility::Visible
+        } else {
+            WindowVisibility::Hidden
+        }
+    }
+
+    // The window procedure can run while GPUI is updating this window (e.g.
+    // `ShowWindow` from an action handler), so deliver observers after that
+    // update completes, as activation does. The state is read at delivery so
+    // a burst of messages collapses to the final value.
+    pub(crate) fn report_visibility(&self) {
+        let Some(this) = self.this.upgrade() else {
+            return;
+        };
+        if this.state.borrow().last_visibility.is_none() {
+            return;
+        }
+        this.executor
+            .spawn(async move {
+                let visibility = this.visibility();
+                let mut lock = this.state.borrow_mut();
+                if lock.last_visibility == Some(visibility) {
+                    return;
+                }
+                lock.last_visibility = Some(visibility);
+                if let Some(mut callback) = lock.callbacks.visibility_change.take() {
+                    drop(lock);
+                    callback(visibility);
+                    this.state.borrow_mut().callbacks.visibility_change = Some(callback);
+                }
+            })
+            .detach();
+    }
+
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
@@ -351,6 +397,7 @@ pub(crate) struct Callbacks {
     pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     pub(crate) hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
@@ -538,6 +585,9 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        // `DestroyWindow` below sends `WM_SHOWWINDOW`; without a callback the
+        // resulting visibility report has nothing to notify.
+        self.0.state.borrow_mut().callbacks.visibility_change.take();
         // clone this `Rc` to prevent early release of the pointer
         let this = self.0.clone();
         self.0
@@ -802,6 +852,10 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.visibility()
+    }
+
     fn is_hovered(&self) -> bool {
         self.0.state.borrow().hovered
     }
@@ -868,6 +922,11 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.state.borrow_mut().last_visibility = Some(self.0.visibility());
+        self.0.state.borrow_mut().callbacks.visibility_change = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {

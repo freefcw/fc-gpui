@@ -241,7 +241,10 @@ impl Globals {
             primary_selection_manager: globals.bind(&qh, 1..=1, ()).ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             seat,
-            wm_base: globals.bind(&qh, 2..=5, ()).unwrap(),
+            // Accept xdg_wm_base up to version 6, which added the `suspended`
+            // toplevel state. This tree still requires version 2. Older
+            // compositors bind at their own version and never report Hidden.
+            wm_base: globals.bind(&qh, 2..=6, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),

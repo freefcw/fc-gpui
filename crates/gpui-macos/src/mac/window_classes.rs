@@ -829,7 +829,7 @@ fn invoke_toggle_tab_bar(this: &impl HasWindowIvars) {
 
 fn handle_window_did_change_occlusion_state(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.lock();
     if lock
         .native_window()
         .occlusionState()
@@ -840,6 +840,10 @@ fn handle_window_did_change_occlusion_state(this: &impl HasWindowIvars) {
     } else {
         lock.stop_display_link();
     }
+    drop(lock);
+    // The only visibility source: AppKit posts this for covering, minimizing,
+    // hiding, Space switches, and display sleep alike.
+    super::report_visibility(&window_state);
 }
 
 fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {

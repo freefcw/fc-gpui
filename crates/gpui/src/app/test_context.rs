@@ -5,7 +5,7 @@ use crate::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, PlatformTextSystem, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    WindowHandle, WindowOptions, WindowVisibility,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -375,6 +375,16 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+    }
+
+    /// Simulates a change in whether the platform is presenting the window.
+    pub fn simulate_window_visibility_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        visibility: WindowVisibility,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visibility_change(visibility);
     }
 
     /// Simulates the window moving to a display with a different scale factor.
@@ -1351,6 +1361,11 @@ impl VisualTestContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
         self.simulate_window_resize(self.window, size)
+    }
+
+    /// Simulates a change in whether the platform is presenting this window.
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        self.simulate_window_visibility_change(self.window, visibility);
     }
 
     /// Simulates the window moving to a display with a different scale factor.
