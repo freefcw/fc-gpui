@@ -295,6 +295,10 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    /// Encode `scene` into `render_target` without presenting.
+    ///
+    /// `draw` presents afterwards. Headless capture reads the target back
+    /// instead, so the encoded frame cannot drift between the two.
     fn render_scene(&mut self, scene: &Scene, render_target: &DirectXRenderTarget) -> Result<()> {
         self.pre_draw(render_target)?;
         for batch in scene.batches() {
@@ -336,6 +340,16 @@ impl DirectXRenderer {
         self.present()
     }
 
+    /// Render `scene` to a CPU image **without presenting**, so a hidden
+    /// window can be captured without flashing it on screen.
+    ///
+    /// Encodes through [`render_scene`](Self::render_scene) — the same path
+    /// [`draw`](Self::draw) uses before it presents — into an offscreen
+    /// target created at the window's current size. The window's own render
+    /// target is restored before the copy, so capture does not depend on a
+    /// swap chain that has never presented and does not clobber the displayed
+    /// frame. The copy is a `D3D11_USAGE_STAGING` texture; `Map` row pitch is
+    /// honored and BGRA is converted to RGBA.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn render_scene_to_image(&mut self, scene: &Scene) -> Result<image::RgbaImage> {
         let width = self.resources.width;
@@ -346,6 +360,8 @@ impl DirectXRenderer {
 
         let render_target = create_offscreen_render_target(&self.devices.device, width, height)?;
         let render_result = self.render_scene(scene, &render_target);
+        // Unbind before `CopyResource`. D3D11 does not allow copying a
+        // texture that is still the current render target.
         unsafe {
             self.devices
                 .device_context
@@ -353,66 +369,54 @@ impl DirectXRenderer {
         }
         render_result?;
 
-        let staging_texture = {
-            let descriptor = D3D11_TEXTURE2D_DESC {
-                Width: width,
-                Height: height,
-                MipLevels: 1,
-                ArraySize: 1,
-                Format: RENDER_TARGET_FORMAT,
-                SampleDesc: DXGI_SAMPLE_DESC {
-                    Count: 1,
-                    Quality: 0,
-                },
-                Usage: D3D11_USAGE_STAGING,
-                BindFlags: 0,
-                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-                MiscFlags: 0,
-            };
-            let mut texture = None;
-            unsafe {
-                self.devices
-                    .device
-                    .CreateTexture2D(&descriptor, None, Some(&mut texture))
-            }
-            .context("creating DirectX render readback texture")?;
-            texture.context("DirectX did not return a readback texture")?
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { render_target.texture.GetDesc(&mut desc) };
+        let width = desc.Width;
+        let height = desc.Height;
+        if width == 0 || height == 0 {
+            anyhow::bail!("invalid DirectX render_to_image size: {width}x{height}");
+        }
+        let staging_desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: desc.Format,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+            MiscFlags: 0,
         };
+        let mut staging = None;
+        unsafe {
+            self.devices
+                .device
+                .CreateTexture2D(&staging_desc, None, Some(&mut staging))
+        }
+        .context("creating DirectX render readback texture")?;
+        let staging = staging.context("DirectX did not return a readback texture")?;
 
         unsafe {
             self.devices
                 .device_context
-                .CopyResource(&staging_texture, &render_target.texture);
+                .CopyResource(&staging, &render_target.texture);
         }
 
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         unsafe {
-            self.devices.device_context.Map(
-                &staging_texture,
-                0,
-                D3D11_MAP_READ,
-                0,
-                Some(&mut mapped),
-            )
+            self.devices
+                .device_context
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
         }
         .context("mapping DirectX render readback texture")?;
 
-        let Some(readback_len) = (mapped.RowPitch as usize).checked_mul(height as usize) else {
-            unsafe {
-                self.devices.device_context.Unmap(&staging_texture, 0);
-            }
-            anyhow::bail!("DirectX readback buffer size overflow");
-        };
-        let readback =
-            unsafe { std::slice::from_raw_parts(mapped.pData.cast::<u8>(), readback_len) };
-        let image = gpui::render_image::rgba_image_from_bgra_rows(
-            width,
-            height,
-            mapped.RowPitch as usize,
-            readback,
-        );
+        let image = read_mapped_bgra_texture(&mapped, width, height);
         unsafe {
-            self.devices.device_context.Unmap(&staging_texture, 0);
+            self.devices.device_context.Unmap(&staging, 0);
         }
         image
     }
@@ -1291,6 +1295,26 @@ fn create_resources(
         framebuffer_copy_srv,
         viewport,
     ))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn read_mapped_bgra_texture(
+    mapped: &D3D11_MAPPED_SUBRESOURCE,
+    width: u32,
+    height: u32,
+) -> Result<image::RgbaImage> {
+    if mapped.pData.is_null() {
+        anyhow::bail!("DirectX readback mapping returned a null pointer");
+    }
+    let Some(readback_len) = (mapped.RowPitch as usize).checked_mul(height as usize) else {
+        anyhow::bail!("DirectX readback buffer size overflow");
+    };
+    // SAFETY: `Map` succeeded and `pData` is non-null, so it addresses
+    // `RowPitch * height` readable bytes until the caller unmaps.
+    // `readback_len` is that product. The slice is copied into a new buffer
+    // before the unmap; the regions cannot overlap.
+    let readback = unsafe { std::slice::from_raw_parts(mapped.pData.cast::<u8>(), readback_len) };
+    gpui::render_image::rgba_image_from_bgra_rows(width, height, mapped.RowPitch as usize, readback)
 }
 
 #[cfg(any(test, feature = "test-support"))]
