@@ -282,8 +282,8 @@ jobs:
           GPUI_REQUIRE_REAL_VISUAL: ${{ matrix.require_real_visual && '1' || '0' }}
           LIBGL_ALWAYS_SOFTWARE: ${{ matrix.software_gl && '1' || '' }}
           WGPU_BACKEND: ${{ matrix.software_gl && 'gl' || '' }}
-        run: ${{ matrix.command }}
+        run: bash scripts/ci-retry-registry.sh "${{ matrix.command }}"
 
       - name: Check public examples
         if: matrix.examples
-        run: cargo check -p fc-gpui --examples --locked
+        run: bash scripts/ci-retry-registry.sh "cargo check -p fc-gpui --examples --locked"
