@@ -1,6 +1,6 @@
 [package]
 name = "fc-gpui-windows"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 authors = ["Adabraka Team"]
 build = "build.rs"
@@ -32,7 +32,7 @@ collections = { package = "fc-gpui-collections", path = "../collections", versio
 etagere = "0.2"
 flume = "0.11"
 futures = "0.3"
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.0", default-features = false }
+gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.1", default-features = false }
 image = { version = "0.25.1", default-features = false }
 itertools = "0.14.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
@@ -55,7 +55,7 @@ windows-registry = "0.5"
 embed-resource = { version = "3.0", optional = true }
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.0", default-features = false, features = ["test-support"] }
+gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.1", default-features = false, features = ["test-support"] }
 
 [lints.clippy]
 dbg_macro = "deny"
