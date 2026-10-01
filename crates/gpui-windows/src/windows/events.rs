@@ -231,6 +231,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        // Minimizing and restoring both arrive as `WM_SIZE`; the deferred report
+        // reads `IsIconic` at delivery, so one call covers both directions.
+        self.report_visibility();
+
         let mut lock = self.state.borrow_mut();
 
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
@@ -1358,6 +1362,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+        self.report_visibility();
         if wparam.0 == 1 {
             self.draw_window(handle, false);
         }

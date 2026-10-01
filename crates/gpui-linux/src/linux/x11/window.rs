@@ -7,7 +7,8 @@ use gpui::{
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, px, size,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, WindowVisibility,
+    px, size,
 };
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -275,6 +276,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
@@ -304,6 +306,9 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    /// Owned by the client's `WindowRef`, which combines the mapped state with
+    /// `VisibilityNotify`; this is the last value it reported.
+    visibility: WindowVisibility,
     hovered: bool,
     force_render_after_recovery: bool,
     fullscreen: bool,
@@ -836,6 +841,8 @@ impl X11WindowState {
                 atoms: *atoms,
                 input_handler: None,
                 active: false,
+                // The window is not mapped until the client sees `MapNotify`.
+                visibility: WindowVisibility::Hidden,
                 hovered: false,
                 force_render_after_recovery: false,
                 fullscreen: false,
@@ -1310,6 +1317,17 @@ impl X11WindowStatePtr {
         Ok(())
     }
 
+    pub fn set_visibility(&self, visibility: WindowVisibility) {
+        if std::mem::replace(&mut self.state.borrow_mut().visibility, visibility) == visibility {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().visibility_change.take();
+        if let Some(mut fun) = callback {
+            fun(visibility);
+            self.callbacks.borrow_mut().visibility_change = Some(fun);
+        }
+    }
+
     pub fn set_active(&self, focus: bool) {
         if focus {
             // FocusIn is the ICCCM-level focus signal. Do not rely only on
@@ -1524,6 +1542,10 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().active
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.state.borrow().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         self.0.state.borrow().hovered
     }
@@ -1647,6 +1669,10 @@ impl PlatformWindow for X11Window {
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.callbacks.borrow_mut().visibility_change = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {

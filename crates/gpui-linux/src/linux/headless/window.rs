@@ -19,7 +19,7 @@ use gpui::{
     DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     Result, Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams, px,
+    WindowControlArea, WindowParams, WindowVisibility, px,
 };
 
 #[derive(Debug)]
@@ -152,6 +152,11 @@ impl PlatformWindow for HeadlessWindow {
         false
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        // There is no display server: `draw` discards every scene.
+        WindowVisibility::Hidden
+    }
+
     fn is_hovered(&self) -> bool {
         false
     }
@@ -184,6 +189,8 @@ impl PlatformWindow for HeadlessWindow {
     fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
 
     fn on_active_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
+
+    fn on_visibility_change(&self, _callback: Box<dyn FnMut(WindowVisibility)>) {}
 
     fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 

@@ -3,7 +3,7 @@ use crate::{
     DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Size,
     TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams,
+    WindowControlArea, WindowParams, WindowVisibility,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -25,7 +25,10 @@ pub(crate) struct TestWindowState {
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    visibility: WindowVisibility,
+    visibility_callback: Option<Box<dyn FnMut(WindowVisibility)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    frame_wake_count: usize,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
@@ -130,7 +133,10 @@ impl TestWindow {
             hit_test_window_control_callback: None,
             input_callback: None,
             active_status_change_callback: None,
+            visibility: WindowVisibility::Visible,
+            visibility_callback: None,
             hover_status_change_callback: None,
+            frame_wake_count: 0,
             resize_callback: None,
             moved_callback: None,
             appearance_change_callback: None,
@@ -166,6 +172,23 @@ impl TestWindow {
             lock.bounds.size
         };
         self.simulate_resize(size);
+    }
+
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.visibility = visibility;
+            state.visibility_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            self.0.lock().visibility_callback = Some(callback);
+        }
+    }
+
+    /// How many times [`PlatformWindow::schedule_frame`] has run for this window.
+    pub fn frame_wake_count(&self) -> usize {
+        self.0.lock().frame_wake_count
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
@@ -311,6 +334,10 @@ impl PlatformWindow for TestWindow {
         false
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.lock().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         false
     }
@@ -350,12 +377,20 @@ impl PlatformWindow for TestWindow {
 
     fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
 
+    fn schedule_frame(&self) {
+        self.0.lock().frame_wake_count += 1;
+    }
+
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.lock().active_status_change_callback = Some(callback)
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.0.lock().visibility_callback = Some(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
