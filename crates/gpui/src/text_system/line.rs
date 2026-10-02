@@ -39,19 +39,21 @@ pub struct ShapedLine {
 
 impl ShapedLine {
     /// Returns a forward-only cursor for this shaped line.
-    pub fn cursor(&self) -> ShapedLineCursor<'_> {
-        assert_eq!(
-            self.len(),
-            self.text.len(),
-            "cannot split a shaped line with an adjusted length"
-        );
+    ///
+    /// Returns `None` for a line whose length was adjusted with
+    /// [`ShapedLine::with_len`] (e.g. when rendering invisibles): its glyph
+    /// indices no longer correspond to its text, so it cannot be split.
+    pub fn cursor(&self) -> Option<ShapedLineCursor<'_>> {
+        if self.len() != self.text.len() {
+            return None;
+        }
         let byte_ordered = self
             .layout
             .runs
             .iter()
             .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
             .is_sorted();
-        ShapedLineCursor {
+        Some(ShapedLineCursor {
             line: self,
             unordered_remainder: (!byte_ordered).then(|| self.clone()),
             byte_index: 0,
@@ -60,7 +62,7 @@ impl ShapedLine {
             decoration_index: 0,
             decoration_offset: 0,
             x_offset: px(0.),
-        }
+        })
     }
 
     /// The length of the line in utf-8 bytes.
@@ -1160,7 +1162,7 @@ mod tests {
             text: "a😀bcdef".into(),
             decoration_runs: SmallVec::new(),
         };
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         let first = cursor.take_until(5);
         assert_eq!(first.text.as_ref(), "a😀");
         assert_eq!(first.runs[0].font_id, FontId(3));
@@ -1195,7 +1197,7 @@ mod tests {
     #[test]
     fn test_cursor_preserves_existing_visual_order_splitting() {
         let line = make_shaped_line("abc", &[(0, 0.0), (2, 10.0), (1, 20.0)], 30.0, &[]);
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         let mut remainder = line.clone();
         let mut previous_boundary = 0;
         for boundary in [0, 1, 2, 3] {
@@ -1245,7 +1247,7 @@ mod tests {
                 strikethrough: None,
             }],
         );
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         assert_eq!(cursor.take_until(2).decoration_runs[0].len, 2);
         assert_eq!(cursor.take_until(4).decoration_runs[0].len, 2);
         assert_eq!(cursor.take_until(6).decoration_runs[0].len, 2);
@@ -1276,7 +1278,7 @@ mod tests {
         );
         for first in 0..=line.len() {
             for second in first..=line.len() {
-                let mut cursor = line.cursor();
+                let mut cursor = line.cursor().unwrap();
                 let mut remainder = line.clone();
                 let mut previous_boundary = 0;
                 let mut total_width = px(0.0);
@@ -1319,30 +1321,39 @@ mod tests {
     #[test]
     fn test_cursor_empty_chunks_and_repeated_boundaries() {
         let line = make_shaped_line("ab", &[(0, 5.0), (1, 15.0)], 20.0, &[]);
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         assert_eq!(cursor.take_until(0).text.as_ref(), "");
         assert_eq!(cursor.take_until(0).text.as_ref(), "");
         assert_eq!(cursor.take_until(1).text.as_ref(), "a");
         assert_eq!(cursor.take_until(2).text.as_ref(), "b");
         assert_eq!(cursor.take_until(2).text.as_ref(), "");
         let empty = make_shaped_line("", &[], 0.0, &[]);
-        let piece = empty.cursor().take_until(0);
+        let piece = empty.cursor().unwrap().take_until(0);
         assert!(piece.text.is_empty());
         assert!(piece.runs.is_empty());
         assert_eq!(piece.width, px(0.0));
     }
 
     #[test]
+    fn cursor_rejects_lines_with_adjusted_length() {
+        let line = make_shaped_line("ab", &[(0, 5.0), (1, 15.0)], 20.0, &[]);
+        assert!(line.clone().cursor().is_some());
+        // `with_len` desynchronizes glyph indices from the text, so the line
+        // cannot be split and `cursor` declines instead of panicking.
+        assert!(line.with_len(4).cursor().is_none());
+    }
+
+    #[test]
     fn test_cursor_rejects_invalid_boundaries() {
         let line = make_shaped_line("é", &[(0, 0.0)], 10.0, &[]);
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 cursor.take_until(1);
             }))
             .is_err()
         );
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         cursor.take_until(2);
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1350,7 +1361,7 @@ mod tests {
             }))
             .is_err()
         );
-        let mut cursor = line.cursor();
+        let mut cursor = line.cursor().unwrap();
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 cursor.take_until(3);
