@@ -41,11 +41,13 @@ impl Svg {
     /// Set the raw SVG data for this element.
     /// The SVG will be rendered directly from the provided bytes.
     pub fn data(mut self, data: &[u8]) -> Self {
-        // Generate a unique deterministic path based on the data hash for caching
+        // Generate a unique deterministic path based on the data hash for caching.
+        // The length is included so that a hash collision between two distinct
+        // documents of different sizes cannot alias the same cache entry.
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         data.hash(&mut hasher);
         let hash = hasher.finish();
-        let path = SharedString::from(format!("__binary_svg__{}", hash));
+        let path = SharedString::from(format!("__binary_svg__{}_{}", data.len(), hash));
         self.data = Some(Arc::from(data));
         self.data_path = Some(path);
         self
