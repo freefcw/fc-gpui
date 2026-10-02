@@ -5,8 +5,8 @@
 ## 当前基线
 
 - 当前开发分支：`develop/0.9`
-- 已发布：GPUI 八个发布包 `0.9.1`；`fc-gpui-media` `0.5.2`；utility crates `0.6.0/0.5.1`
-- 当前版本：`0.9.2`（已 bump，待打 tag `v0.9.2`；crates.io 尚未 publish）
+- 已发布：GPUI 八个发布包 `0.9.2`；`fc-gpui-media` `0.5.2`；utility crates `0.6.0/0.5.1`
+- 当前版本：`0.9.2`（已 bump、已打 tag `v0.9.2`；crates.io 已 publish）
 - 兼容基线：GPUI `0.8.1`、utility crates `0.5.1`；breaking API/feature 变化必须在 `CHANGELOG.md` 提供迁移映射
 - 永久兼容入口：`Application::new/headless`；不在任何版本安排弃用或删除
 - 已发布依赖：utility crates 0.6.0/0.5.1，`fc-gpui-media` 0.5.2；本次顺序：`fc-gpui-macros 0.9.2` → core/wgpu/backends → platform → public facade
