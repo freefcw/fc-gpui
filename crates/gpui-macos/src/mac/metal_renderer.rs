@@ -1686,16 +1686,15 @@ mod tests {
     fn surface_instance_offsets_use_surface_bounds_stride() {
         let surface_size = size_of::<SurfaceBounds>();
 
+        // The helper aligns in place and returns the end offset; the caller
+        // advances `offset` to that end after writing each instance.
         let mut offset = 0;
-        assert_eq!(next_surface_instance_offset(&mut offset), surface_size);
-        assert_eq!(
-            next_surface_instance_offset(&mut offset),
-            256 + surface_size
-        );
-        assert_eq!(
-            next_surface_instance_offset(&mut offset),
-            512 + surface_size
-        );
+        offset = next_surface_instance_offset(&mut offset);
+        assert_eq!(offset, surface_size);
+        offset = next_surface_instance_offset(&mut offset);
+        assert_eq!(offset, 256 + surface_size);
+        offset = next_surface_instance_offset(&mut offset);
+        assert_eq!(offset, 512 + surface_size);
     }
 }
 
