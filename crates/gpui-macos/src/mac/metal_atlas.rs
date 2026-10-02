@@ -284,7 +284,7 @@ mod tests {
     use std::borrow::Cow;
 
     fn create_atlas() -> Option<MetalAtlas> {
-        let device = unsafe { MTLCreateSystemDefaultDevice() }?;
+        let device = MTLCreateSystemDefaultDevice()?;
         Some(MetalAtlas::new(
             device,
             Size {
