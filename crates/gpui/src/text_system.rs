@@ -110,9 +110,8 @@ impl MissingGlyphState {
     }
 }
 
-// Read by `MissingGlyphReceiver::recv`, which runs after an application subscribes.
-// Subscription registration lives on `App` and was left out of this change.
-#[allow(dead_code)]
+// Read by `MissingGlyphReceiver::recv`, which runs after an application
+// subscribes via `App::on_missing_glyphs`.
 struct QueuedMissingGlyph {
     generation: usize,
     missing_glyph: MissingGlyph,
@@ -164,7 +163,6 @@ impl MissingGlyphReceiver {
     /// # Errors
     ///
     /// Returns [`async_channel::RecvError`] if the reporting channel is closed.
-    #[allow(dead_code)]
     pub(crate) async fn recv(
         &mut self,
     ) -> std::result::Result<Vec<MissingGlyph>, async_channel::RecvError> {
@@ -252,7 +250,6 @@ pub struct TextSystem {
     font_generation: Arc<AtomicUsize>,
     missing_glyph_reporter: Arc<MissingGlyphReporter>,
     // Held so the reporting channel stays open. Taken when a callback is registered.
-    #[allow(dead_code)]
     missing_glyph_receiver: Mutex<Option<MissingGlyphReceiver>>,
 }
 
@@ -263,6 +260,12 @@ impl TextSystem {
     ) -> Self {
         let (sender, receiver) = async_channel::bounded(MAX_REPORTED_MISSING_GLYPHS);
         let missing_glyph_generation = Arc::<AtomicUsize>::default();
+        let missing_glyph_reporter = Arc::new(MissingGlyphReporter {
+            generation: missing_glyph_generation.clone(),
+            sender,
+        });
+        // Platforms that detect exhausted font fallback report through this sink.
+        platform_text_system.set_missing_glyph_sink(missing_glyph_reporter.clone());
         TextSystem {
             platform_text_system,
             global_line_layout_cache: Arc::new(GlobalLineLayoutCache::new(
@@ -287,10 +290,7 @@ impl TextSystem {
                 font("DejaVu Sans")
             ],
             font_generation: Arc::default(),
-            missing_glyph_reporter: Arc::new(MissingGlyphReporter {
-                generation: missing_glyph_generation.clone(),
-                sender,
-            }),
+            missing_glyph_reporter,
             missing_glyph_receiver: Mutex::new(Some(MissingGlyphReceiver {
                 state: MissingGlyphState::default(),
                 generation: missing_glyph_generation,
@@ -360,7 +360,6 @@ impl TextSystem {
     ///
     /// Only one receiver is available for each text system. Returns `None` when
     /// the receiver was already taken or another caller is taking it.
-    #[allow(dead_code)]
     pub(crate) fn take_missing_glyph_receiver(&self) -> Option<MissingGlyphReceiver> {
         self.missing_glyph_receiver
             .try_lock()
@@ -1257,10 +1256,12 @@ mod tests {
     use crate::{AppResourceProfile, NoopTextSystem, point, size};
     use parking_lot::Mutex;
     use std::collections::HashSet;
+    use std::sync::atomic::AtomicBool;
 
     struct TrackingTextSystem {
         noop: NoopTextSystem,
         pending_glyph_images: Mutex<HashSet<RenderGlyphParams>>,
+        missing_glyph_sink_installed: AtomicBool,
     }
 
     impl TrackingTextSystem {
@@ -1268,6 +1269,7 @@ mod tests {
             Self {
                 noop: NoopTextSystem::new(),
                 pending_glyph_images: Mutex::default(),
+                missing_glyph_sink_installed: AtomicBool::new(false),
             }
         }
 
@@ -1277,6 +1279,11 @@ mod tests {
     }
 
     impl PlatformTextSystem for TrackingTextSystem {
+        fn set_missing_glyph_sink(&self, _sink: Arc<dyn MissingGlyphSink>) {
+            self.missing_glyph_sink_installed
+                .store(true, Ordering::SeqCst);
+        }
+
         fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
             self.noop.add_fonts(fonts)
         }
@@ -1350,6 +1357,14 @@ mod tests {
             &AppResourceProfile::desktop().text,
         );
         assert!(text_system.all_font_names().is_empty());
+    }
+
+    #[test]
+    fn text_system_installs_missing_glyph_sink_on_platform() {
+        let platform = Arc::new(TrackingTextSystem::new());
+        assert!(!platform.missing_glyph_sink_installed.load(Ordering::SeqCst));
+        let _text_system = TextSystem::new(platform.clone(), &AppResourceProfile::desktop().text);
+        assert!(platform.missing_glyph_sink_installed.load(Ordering::SeqCst));
     }
 
     #[test]

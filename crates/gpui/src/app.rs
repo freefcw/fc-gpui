@@ -36,13 +36,13 @@ use crate::{
     AppResourceProfile, Asset, AssetSource, AttentionType, BackgroundExecutor, BiometricStatus,
     Bounds, ClipboardItem, CrashReport, CursorStyle, DialogOptions, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, FocusedWindowInfo, ForegroundExecutor, Global, KeyBinding,
-    KeyContext, Keymap, Keystroke, LayoutId, MediaKeyEvent, Menu, MenuItem, NetworkStatus, OsInfo,
-    OwnedMenu, PathPromptOptions, PermissionRequestStatus, PermissionStatus, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PowerSaveBlockerKind,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, Size, SubscriberSet,
-    Subscription, SvgRenderer, SystemPowerEvent, Task, TextSystem, ThermalState, TrayAnchor,
-    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, Window,
+    KeyContext, Keymap, Keystroke, LayoutId, MediaKeyEvent, Menu, MenuItem, MissingGlyph,
+    NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, PermissionRequestStatus, PermissionStatus,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    PowerSaveBlockerKind, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
+    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, Size,
+    SubscriberSet, Subscription, SvgRenderer, SystemPowerEvent, Task, TextSystem, ThermalState,
+    TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, Window,
     WindowAppearance, WindowHandle, WindowId, WindowInvalidator, WindowPosition,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, point, px, size,
@@ -2229,6 +2229,32 @@ impl App {
         )
     }
 
+    /// Registers a callback to be invoked with grapheme clusters that exhausted
+    /// font fallback, as observed by the platform text system. Intended for
+    /// dynamic font installation: the callback can register a font covering the
+    /// reported graphemes with [`TextSystem::add_fonts`], which invalidates
+    /// cached layouts so the text is shaped again.
+    ///
+    /// Reports are deduplicated and bounded (see `MAX_REPORTED_MISSING_GLYPHS`).
+    /// Only one registration is available per application; later calls log a
+    /// warning and are ignored. The callback runs on the main thread until the
+    /// application quits.
+    pub fn on_missing_glyphs(&self, mut callback: impl FnMut(&[MissingGlyph], &mut App) + 'static) {
+        let Some(mut receiver) = self.text_system.take_missing_glyph_receiver() else {
+            log::warn!("App::on_missing_glyphs called more than once; ignoring registration");
+            return;
+        };
+        self.spawn(async move |cx| {
+            while let Ok(missing_glyphs) = receiver.recv().await {
+                if cx.update(|cx| callback(&missing_glyphs, cx)).is_err() {
+                    // The application is shutting down.
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Register a callback to be invoked when a keystroke is received by the application
     /// in any window. Note that this fires _before_ all other action and event mechanisms have resolved
     /// unlike [`App::observe_keystrokes`] which fires after. This means that `cx.stop_propagation` calls
@@ -3471,6 +3497,34 @@ mod test {
 
         assert_eq!(anchor.display_id.0, 1);
         assert_eq!(anchor.bounds.origin, point(px(-32.0), px(-2.0)));
+    }
+
+    #[crate::test]
+    async fn test_on_missing_glyphs_delivers_reports(cx: &mut TestAppContext) {
+        use crate::{FallbackFontClass, MissingGlyph};
+
+        let reported = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            cx.on_missing_glyphs({
+                let reported = reported.clone();
+                move |glyphs, _| reported.borrow_mut().extend(glyphs.iter().cloned())
+            });
+            cx.text_system().report_missing_glyphs_in_test(vec![
+                MissingGlyph::new("\u{1F980}".into(), FallbackFontClass::Monospace),
+                MissingGlyph::new("\u{1F980}".into(), FallbackFontClass::Monospace),
+            ]);
+        });
+
+        cx.run_until_parked();
+
+        // Duplicate reports within one batch are delivered once.
+        assert_eq!(
+            reported.borrow().as_slice(),
+            &[MissingGlyph::new(
+                "\u{1F980}".into(),
+                FallbackFontClass::Monospace
+            )]
+        );
     }
 
     #[crate::test]

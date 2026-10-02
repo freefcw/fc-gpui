@@ -133,6 +133,10 @@ impl Default for CosmicTextSystem {
 }
 
 impl PlatformTextSystem for CosmicTextSystem {
+    fn set_missing_glyph_sink(&self, sink: Arc<dyn MissingGlyphSink>) {
+        self.0.write().missing_glyph_sink = Some(sink);
+    }
+
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
@@ -1380,7 +1384,7 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts();
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX_SANS)])?;
         let reports = Arc::new(Collect(Mutex::new(Vec::new())));
-        text_system.0.write().missing_glyph_sink = Some(reports.clone());
+        text_system.set_missing_glyph_sink(reports.clone());
         let font_id = text_system.font_id(&font("IBM Plex Sans"))?;
         let text = "界";
         let _layout = text_system.layout_line(

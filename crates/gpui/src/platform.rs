@@ -56,10 +56,10 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuResourceBudget, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, Pixels, PlatformInput, Point, QuitMode, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
-    SvgRenderer, SystemWindowTab, Task, TaskLabel, Window, WindowControlArea, hash, point, px,
-    size,
+    LineLayout, MissingGlyphSink, Pixels, PlatformInput, Point, QuitMode, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
+    Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window, WindowControlArea, hash, point,
+    px, size,
 };
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
@@ -978,6 +978,11 @@ pub trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+
+    /// Installs the sink for grapheme clusters that exhaust font fallback during
+    /// [`Self::layout_line`]. The core text system installs its reporter when it is
+    /// created. Platforms that do not detect missing glyphs keep the default no-op.
+    fn set_missing_glyph_sink(&self, _sink: Arc<dyn MissingGlyphSink>) {}
 
     fn glyph_dilation_for_color(&self, _color: Hsla) -> u8 {
         0
