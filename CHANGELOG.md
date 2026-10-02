@@ -2,44 +2,13 @@
 
 ## Unreleased
 
+## 0.9.1 (2026-10-02)
+
 ### Breaking changes
 
 - **`ShapedLine::cursor` returns `Option<ShapedLineCursor>`** — lines whose length was adjusted
   with `ShapedLine::with_len` (e.g. invisible-character rendering) cannot be split, so `cursor`
   now returns `None` for them instead of panicking.
-
-### Fixes
-
-- **Windows character input preference is actually computed** — `KeyDownEvent::prefer_character_input`
-  was hardcoded `false` on every platform, so the `InputPreference::CharacterInput` dispatch path
-  never engaged for real keyboard input. Windows now ports upstream zed-industries/zed#41259's
-  `should_prefer_character_input` heuristic (ToUnicode with/without Ctrl/Alt/Win): keystrokes whose
-  modifiers change the produced character, such as AltGr or Ctrl+Alt combinations on international
-  layouts, prefer text input over key bindings when the focused input accepts text.
-- **macOS deferred simple-fullscreen toggle after window close** — a window closed before the
-  deferred toggle task ran no longer panics in `native_window_ptr`.
-- **macOS surface instance stride** — surface instances in the Metal instance buffer are strided by
-  `SurfaceBounds`, matching what the shader reads and what the CPU writes; multiple surfaces in one
-  frame no longer overlap.
-- **Pending-input timeout resume checks focus** — resuming a paused timeout no longer applies to
-  pending input left over from a previous focus, matching the pause path.
-- **Line paint layer bounds tolerate stale wrap boundaries** — a wrap boundary that indexes
-  outside its layout no longer panics paint; it is skipped, merging the row with its neighbor.
-
-### Improvements
-
-- **`App::on_missing_glyphs`** — subscribe to grapheme clusters that exhausted font fallback.
-  The core text system installs its reporter into the platform text system at construction; the
-  Linux (cosmic-text) backend reports glyphs that shape to glyph id 0, while macOS and Windows do
-  not detect missing glyphs yet. Intended for dynamic font installation: register a covering font
-  with `TextSystem::add_fonts`, which invalidates cached layouts so the text is shaped again. One
-  registration per application; reports are deduplicated and bounded.
-- **`Svg::data` cache key includes the byte length** — two distinct SVG documents must collide on
-  both the 64-bit hash and the length before they alias the same sprite cache entry.
-
-## 0.9.1 (2026-10-01)
-
-### Breaking changes
 
 - **Published package names moved to the `fc-gpui*` family** — the 18 release crates are renamed
   on crates.io. Cargo target names are untouched, so `use gpui::*`, `use gpui_core::*`, and the
@@ -88,11 +57,36 @@
 
 ### Fixes
 
+- **Windows character input preference is actually computed** — `KeyDownEvent::prefer_character_input`
+  was hardcoded `false` on every platform, so the `InputPreference::CharacterInput` dispatch path
+  never engaged for real keyboard input. Windows now ports upstream zed-industries/zed#41259's
+  `should_prefer_character_input` heuristic (ToUnicode with/without Ctrl/Alt/Win): keystrokes whose
+  modifiers change the produced character, such as AltGr or Ctrl+Alt combinations on international
+  layouts, prefer text input over key bindings when the focused input accepts text.
+- **macOS deferred simple-fullscreen toggle after window close** — a window closed before the
+  deferred toggle task ran no longer panics in `native_window_ptr`.
+- **macOS surface instance stride** — surface instances in the Metal instance buffer are strided by
+  `SurfaceBounds`, matching what the shader reads and what the CPU writes; multiple surfaces in one
+  frame no longer overlap.
+- **Pending-input timeout resume checks focus** — resuming a paused timeout no longer applies to
+  pending input left over from a previous focus, matching the pause path.
+- **Line paint layer bounds tolerate stale wrap boundaries** — a wrap boundary that indexes
+  outside its layout no longer panics paint; it is skipped, merging the row with its neighbor.
+
 - **macOS clipboard tests under cargo's worker-thread harness** — `test_clipboard` no longer
   constructs `MacPlatform` on a libtest worker, where `MainThreadMarker::new` is `None`. Production
   `MacPlatform::new` still panics off the AppKit main thread.
 
 ### Improvements
+
+- **`App::on_missing_glyphs`** — subscribe to grapheme clusters that exhausted font fallback.
+  The core text system installs its reporter into the platform text system at construction; the
+  Linux (cosmic-text) backend reports glyphs that shape to glyph id 0, while macOS and Windows do
+  not detect missing glyphs yet. Intended for dynamic font installation: register a covering font
+  with `TextSystem::add_fonts`, which invalidates cached layouts so the text is shaped again. One
+  registration per application; reports are deduplicated and bounded.
+- **`Svg::data` cache key includes the byte length** — two distinct SVG documents must collide on
+  both the 64-bit hash and the length before they alias the same sprite cache entry.
 
 - **Window visibility** — `Window::visibility` / `Window::is_visible` and
   `Window::observe_window_visibility` / `Context::observe_window_visibility` report whether the
@@ -114,8 +108,8 @@
   resolution and bumps a font generation that invalidates per-window and cross-window line-layout
   caches, so newly installed fonts shape existing text. The core also grows a bounded,
   deduplicated missing-glyph reporting channel and the Linux (cosmic-text) text system learns to
-  detect graphemes that exhaust fallback; the application-facing subscription arrives later (see
-  `App::on_missing_glyphs` in Unreleased).
+  detect graphemes that exhaust fallback; the application-facing subscription is available through
+  `App::on_missing_glyphs`.
 - **`ShapedLine::split_at` / `ShapedLineCursor`** — split a shaped line at a UTF-8 byte boundary
   preserving glyphs, decorations, and shaping metadata; the cursor splits increasing boundaries
   incrementally in linear time for byte-ordered lines and falls back to `split_at` for visually

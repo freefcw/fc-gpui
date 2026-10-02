@@ -4,13 +4,12 @@ A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github
 
 ## Getting Started
 
-`fc-gpui` 0.9.0 is published on crates.io. This 0.9.1 release is not published yet. The
-unrelated `adabraka-gpui` registry crate is the upstream
-[Augani](https://github.com/Augani/adabraka-gpui) crate at `0.5.1` and does not carry this
-fork's releases. Depend on the `v0.9.1` tag:
+`fc-gpui` 0.9.1 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
+the upstream [Augani](https://github.com/Augani/adabraka-gpui) crate at `0.5.1` and does not
+carry this fork's releases. Depend on the crates.io package:
 
 ```toml
-fc-gpui = { git = "https://github.com/freefcw/fc-gpui.git", tag = "v0.9.1" }
+fc-gpui = "0.9.1"
 ```
 
 Building requires the toolchain pinned in
@@ -20,7 +19,7 @@ Rust `1.97.1` with edition 2024.
 To keep the build small, disable default features and opt into only the image formats you need:
 
 ```toml
-fc-gpui = { git = "https://github.com/freefcw/fc-gpui.git", tag = "v0.9.1", default-features = false, features = [
+fc-gpui = { version = "0.9.1", default-features = false, features = [
     "font-kit",
     "wayland",
     "x11",
