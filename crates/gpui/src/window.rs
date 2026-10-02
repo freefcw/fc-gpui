@@ -5155,6 +5155,7 @@ impl Window {
         let Some(remaining) = self
             .pending_input
             .as_ref()
+            .filter(|pending_input| pending_input.focus == self.focus)
             .and_then(|pending_input| pending_input.timeout.as_ref())
             .filter(|timeout| timeout.pause_owner_id() == Some(owner_id))
             .map(|timeout| timeout.remaining)
@@ -5166,6 +5167,7 @@ impl Window {
         let changed = self
             .pending_input
             .as_mut()
+            .filter(|pending_input| pending_input.focus == self.focus)
             .and_then(|pending_input| pending_input.timeout.as_mut())
             .is_some_and(|timeout| timeout.resume(owner_id, started_at, task));
 
