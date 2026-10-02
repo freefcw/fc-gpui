@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.2 (2026-10-02)
+
+### Fixes
+
+- **Clippy-clean shaped-line tests** — remove a redundant clone from the adjusted-length cursor regression test.
+
 ## 0.9.1 (2026-10-02)
 
 ### Breaking changes

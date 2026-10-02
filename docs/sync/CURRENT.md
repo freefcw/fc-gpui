@@ -5,11 +5,11 @@
 ## 当前基线
 
 - 当前开发分支：`develop/0.9`
-- 已发布：GPUI 八个发布包 `0.9.0`；`fc-gpui-util` 和 `fc-gpui-util-macros` `0.6.0`
-- 当前版本：`0.9.1`（已 bump 并打 tag `v0.9.1`；crates.io 已 publish，版本与 `v0.9.1` tag 对齐）
+- 已发布：GPUI 八个发布包 `0.9.1`；`fc-gpui-media` `0.5.2`；utility crates `0.6.0/0.5.1`
+- 当前版本：`0.9.2`（已 bump，待打 tag `v0.9.2`；crates.io 尚未 publish）
 - 兼容基线：GPUI `0.8.1`、utility crates `0.5.1`；breaking API/feature 变化必须在 `CHANGELOG.md` 提供迁移映射
 - 永久兼容入口：`Application::new/headless`；不在任何版本安排弃用或删除
-- Registry 发布顺序：`fc-gpui-util-macros 0.6.0` → `fc-gpui-util 0.6.0` → `fc-gpui-macros 0.9.1` → core/renderer/backends → platform → public facade
+- 已发布依赖：utility crates 0.6.0/0.5.1，`fc-gpui-media` 0.5.2；本次顺序：`fc-gpui-macros 0.9.2` → core/wgpu/backends → platform → public facade
 - 上游仓库默认位置：`../zed`
 - 公共包：`fc-gpui`，lib 名仍为 `gpui`
 - 核心实现包：`fc-gpui-core`，lib 名为 `gpui_core`
@@ -18,7 +18,7 @@
 
 | 字段 | SHA | 说明 |
 |---|---|---|
-| 当前仓库（含 0.9.1 发布前的本地功能与修复） | `057569a88afe85158b596a95f62ec6cab5224afe` | 2026-10-02；最终 release 代码提交（`057569a`），含 #64 `65c45cd` 之后的本地功能与修复 |
+| 当前仓库（含 0.9.2 发布前的本地功能与修复） | `a6c75e5ad6a8a8113d8bfd6f880416ed3ec736c0` | 2026-10-02；发布提交前最后代码提交（`a6c75e5`），含 #64 `65c45cd` 之后的本地功能与修复 |
 | 上一完整分类区间起点（不含） | `ec3d887507f272119d9fe146c685f0a941d0e798` | 2026-07-22；JSON `baseline` |
 | 上一完整分类区间终点 | `4bd1993783703e92affb781503916d1f152f599f` | 2026-08-10；JSON `audited_upstream`；区间内 49 条已分类 |
 | 按 Zed 提交日期最新已吸收 | `a434bb7ee275cefa348a2bfaf27dc30280bf38f7` | 2026-09-21；#64 wgpu atlas bind groups |

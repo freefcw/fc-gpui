@@ -3,18 +3,18 @@
 [![Crates.io](https://img.shields.io/crates/v/fc-gpui.svg)](https://crates.io/crates/fc-gpui)
 [![License](https://img.shields.io/crates/l/fc-gpui.svg)](LICENSE-APACHE)
 
-> `fc-gpui` 0.9.1 is published on crates.io.
+> `fc-gpui` 0.9.2 is published on crates.io.
 
 A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github.com/zed-industries/zed). Adabraka GPUI extends the original framework with daemon-mode capabilities, system tray integration, global hotkeys, native notifications, and more — making it suitable for background apps, menu bar utilities, and overlay tools.
 
 ## Getting Started
 
-`fc-gpui` 0.9.1 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
+`fc-gpui` 0.9.2 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
 the upstream [Augani](https://github.com/Augani/adabraka-gpui) crate at `0.5.1` and does not
 carry this fork's releases. Depend on the crates.io package:
 
 ```toml
-fc-gpui = "0.9.1"
+fc-gpui = "0.9.2"
 ```
 
 Building requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml): Rust
@@ -24,7 +24,7 @@ To trim image decoder footprint, disable default features and list only the plat
 formats you need:
 
 ```toml
-fc-gpui = { version = "0.9.1", default-features = false, features = [
+fc-gpui = { version = "0.9.2", default-features = false, features = [
     "font-kit",
     "wayland",
     "x11",
