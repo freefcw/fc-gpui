@@ -1343,7 +1343,7 @@ mod tests {
     #[test]
     fn cursor_rejects_lines_with_adjusted_length() {
         let line = make_shaped_line("ab", &[(0, 5.0), (1, 15.0)], 20.0, &[]);
-        assert!(line.clone().cursor().is_some());
+        assert!(line.cursor().is_some());
         // `with_len` desynchronizes glyph indices from the text, so the line
         // cannot be split and `cursor` declines instead of panicking.
         assert!(line.with_len(4).cursor().is_none());
