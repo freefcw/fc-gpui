@@ -410,13 +410,19 @@ impl WindowsWindowInner {
 
     fn handle_syskeydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
-            PlatformInput::KeyDown(KeyDownEvent {
-                keystroke,
-                is_held: lparam.0 & (0x1 << 30) > 0,
-                prefer_character_input: false,
-            })
-        })?;
+        let input = handle_key_event(
+            handle,
+            wparam,
+            lparam,
+            &mut lock,
+            |keystroke, prefer_character_input| {
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: lparam.0 & (0x1 << 30) > 0,
+                    prefer_character_input,
+                })
+            },
+        )?;
         let mut func = lock.callbacks.input.take()?;
         drop(lock);
 
@@ -437,7 +443,7 @@ impl WindowsWindowInner {
 
     fn handle_syskeyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke, _| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
         let mut func = lock.callbacks.input.take()?;
@@ -453,13 +459,19 @@ impl WindowsWindowInner {
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
     fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
-            PlatformInput::KeyDown(KeyDownEvent {
-                keystroke,
-                is_held: lparam.0 & (0x1 << 30) > 0,
-                prefer_character_input: false,
-            })
-        }) else {
+        let Some(input) = handle_key_event(
+            handle,
+            wparam,
+            lparam,
+            &mut lock,
+            |keystroke, prefer_character_input| {
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: lparam.0 & (0x1 << 30) > 0,
+                    prefer_character_input,
+                })
+            },
+        ) else {
             return Some(1);
         };
         drop(lock);
@@ -491,7 +503,7 @@ impl WindowsWindowInner {
 
     fn handle_keyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke, _| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         }) else {
             return Some(1);
@@ -1531,7 +1543,7 @@ fn handle_key_event<F>(
     f: F,
 ) -> Option<PlatformInput>
 where
-    F: FnOnce(Keystroke) -> PlatformInput,
+    F: FnOnce(Keystroke, bool) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
@@ -1574,8 +1586,8 @@ where
             } else {
                 vkey
             };
-            let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
-            Some(f(keystroke))
+            let (keystroke, prefer_character_input) = parse_normal_key(vkey, lparam, modifiers)?;
+            Some(f(keystroke, prefer_character_input))
         }
     }
 }
@@ -1635,7 +1647,7 @@ fn parse_normal_key(
     vkey: VIRTUAL_KEY,
     lparam: LPARAM,
     mut modifiers: Modifiers,
-) -> Option<Keystroke> {
+) -> Option<(Keystroke, bool)> {
     let mut key_char = None;
     let key = parse_immutable(vkey).or_else(|| {
         let scan_code = lparam.hiword() & 0xFF;
@@ -1648,11 +1660,100 @@ fn parse_normal_key(
         );
         get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
-    Some(Keystroke {
-        modifiers,
-        key,
-        key_char,
-    })
+    let prefer_character_input = should_prefer_character_input(vkey, lparam.hiword() & 0xFF);
+    Some((
+        Keystroke {
+            modifiers,
+            key,
+            key_char,
+        },
+        prefer_character_input,
+    ))
+}
+
+/// Whether the keystroke should prefer character input over key bindings.
+///
+/// Character input via the AltGr shift state has priority over key bindings,
+/// whether AltGr or Ctrl+Alt entered the shift state. The heuristic: a dead key
+/// always starts a composed character; if no Ctrl/Alt/Win is down, bindings go
+/// first; otherwise compare the character the keystroke produces against the
+/// same key without those modifiers — a difference means the modifiers are
+/// significant for the character (e.g. `Ctrl+Alt+Q` producing `@`), so text
+/// input goes first. Ported from zed-industries/zed#41259 and its follow-ups.
+fn should_prefer_character_input(vkey: VIRTUAL_KEY, scan_code: u16) -> bool {
+    let mut keyboard_state = [0u8; 256];
+    unsafe {
+        if GetKeyboardState(&mut keyboard_state).is_err() {
+            return false;
+        }
+    }
+
+    let mut buffer_c = [0u16; 8];
+    let result_c = unsafe {
+        ToUnicode(
+            vkey.0 as u32,
+            scan_code as u32,
+            Some(&keyboard_state),
+            &mut buffer_c,
+            0x4,
+        )
+    };
+    if result_c == 0 {
+        return false;
+    }
+    // A dead key starts a composed character, so character input goes first.
+    if result_c < 0 {
+        return true;
+    }
+
+    let c = &buffer_c[..result_c as usize];
+    if char::decode_utf16(c.iter().copied())
+        .next()
+        .and_then(|ch| ch.ok())
+        .map(|ch| ch.is_control())
+        .unwrap_or(true)
+    {
+        return false;
+    }
+
+    // Workaround for a compiler bug that can treat keyboard_state as still zeroed.
+    let keyboard_state = std::hint::black_box(keyboard_state);
+    let ctrl_down = (keyboard_state[VK_CONTROL.0 as usize] & 0x80) != 0;
+    let alt_down = (keyboard_state[VK_MENU.0 as usize] & 0x80) != 0;
+    let win_down = (keyboard_state[VK_LWIN.0 as usize] & 0x80) != 0
+        || (keyboard_state[VK_RWIN.0 as usize] & 0x80) != 0;
+    let has_modifiers = ctrl_down || alt_down || win_down;
+    if !has_modifiers {
+        return false;
+    }
+
+    let mut state_no_modifiers = keyboard_state;
+    state_no_modifiers[VK_CONTROL.0 as usize] = 0;
+    state_no_modifiers[VK_LCONTROL.0 as usize] = 0;
+    state_no_modifiers[VK_RCONTROL.0 as usize] = 0;
+    state_no_modifiers[VK_MENU.0 as usize] = 0;
+    state_no_modifiers[VK_LMENU.0 as usize] = 0;
+    state_no_modifiers[VK_RMENU.0 as usize] = 0;
+    state_no_modifiers[VK_LWIN.0 as usize] = 0;
+    state_no_modifiers[VK_RWIN.0 as usize] = 0;
+
+    let mut buffer_c_no_modifiers = [0u16; 8];
+    let result_c_no_modifiers = unsafe {
+        ToUnicode(
+            vkey.0 as u32,
+            scan_code as u32,
+            Some(&state_no_modifiers),
+            &mut buffer_c_no_modifiers,
+            0x4,
+        )
+    };
+    if result_c_no_modifiers == 0 {
+        // The key only produces text with the modifiers held (e.g. AltGr).
+        return true;
+    }
+
+    let c_no_modifiers = &buffer_c_no_modifiers[..result_c_no_modifiers.unsigned_abs() as usize];
+    result_c != result_c_no_modifiers || c != c_no_modifiers
 }
 
 fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {
