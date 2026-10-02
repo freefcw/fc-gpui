@@ -755,10 +755,11 @@ fn paint_line(
         }
 
         let mut last_line_end_x = first_glyph_x + layout.width;
-        if let Some(boundary) = wrap_boundaries.last() {
-            let run = &layout.runs[boundary.run_ix];
-            let glyph = &run.glyphs[boundary.glyph_ix];
-            last_line_end_x -= glyph.position.x;
+        if let Some(boundary_x) = wrap_boundaries
+            .last()
+            .and_then(|boundary| wrap_boundary_x(layout, boundary))
+        {
+            last_line_end_x -= boundary_x;
         }
 
         if let Some((mut underline_start, underline_style)) = current_underline.take() {
@@ -914,10 +915,11 @@ fn paint_line_background(
         }
 
         let mut last_line_end_x = origin.x + layout.width;
-        if let Some(boundary) = wrap_boundaries.last() {
-            let run = &layout.runs[boundary.run_ix];
-            let glyph = &run.glyphs[boundary.glyph_ix];
-            last_line_end_x -= glyph.position.x;
+        if let Some(boundary_x) = wrap_boundaries
+            .last()
+            .and_then(|boundary| wrap_boundary_x(layout, boundary))
+        {
+            last_line_end_x -= boundary_x;
         }
 
         if let Some((mut background_origin, background_color)) = current_background.take() {
@@ -960,11 +962,7 @@ fn line_paint_bounds(
     let mut row_start = Pixels::ZERO;
     let row_ends = wrap_boundaries
         .iter()
-        .map(|boundary| {
-            layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
-                .position
-                .x
-        })
+        .filter_map(|boundary| wrap_boundary_x(layout, boundary))
         .chain([layout.width]);
     for (row, row_end) in row_ends.enumerate() {
         let width = row_end - row_start;
@@ -982,6 +980,16 @@ fn line_paint_bounds(
     bounds
 }
 
+/// The x position of a wrap boundary's glyph, or `None` for a boundary that
+/// indexes outside the layout (e.g. a stale boundary); paint must not panic.
+fn wrap_boundary_x(layout: &LineLayout, boundary: &WrapBoundary) -> Option<Pixels> {
+    layout
+        .runs
+        .get(boundary.run_ix)
+        .and_then(|run| run.glyphs.get(boundary.glyph_ix))
+        .map(|glyph| glyph.position.x)
+}
+
 fn aligned_origin_x(
     origin: Point<Pixels>,
     align_width: Pixels,
@@ -990,11 +998,9 @@ fn aligned_origin_x(
     layout: &LineLayout,
     wrap_boundary: Option<&&WrapBoundary>,
 ) -> Pixels {
-    let end_of_line = if let Some(WrapBoundary { run_ix, glyph_ix }) = wrap_boundary {
-        layout.runs[*run_ix].glyphs[*glyph_ix].position.x
-    } else {
-        layout.width
-    };
+    let end_of_line = wrap_boundary
+        .and_then(|boundary| wrap_boundary_x(layout, boundary))
+        .unwrap_or(layout.width);
 
     let line_width = end_of_line - last_glyph_x;
 
