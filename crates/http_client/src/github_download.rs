@@ -187,3 +187,117 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
         Pin::new(&mut self.writer).poll_close(cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use async_compression::futures::write::GzipEncoder;
+    use async_tar::{EntryType, Header};
+    use futures::{AsyncWriteExt, io::Cursor};
+
+    use super::extract_tar_gz;
+
+    fn append_entry(
+        archive: &mut Vec<u8>,
+        path: &str,
+        entry_type: EntryType,
+        mode: u32,
+        body: &[u8],
+    ) {
+        let mut header = Header::new_gnu();
+        header.set_path(path).unwrap();
+        header.set_entry_type(entry_type);
+        header.set_mode(mode);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_size(body.len() as u64);
+        header.set_cksum();
+        archive.extend_from_slice(header.as_bytes());
+        archive.extend_from_slice(body);
+        let padding = (512 - body.len() % 512) % 512;
+        archive.extend(std::iter::repeat_n(0, padding));
+    }
+
+    async fn gzip_tar(archive: Vec<u8>) -> Cursor<Vec<u8>> {
+        let mut encoder = GzipEncoder::new(Cursor::new(Vec::new()));
+        encoder.write_all(&archive).await.unwrap();
+        encoder.close().await.unwrap();
+        let mut cursor = encoder.into_inner();
+        cursor.set_position(0);
+        cursor
+    }
+
+    #[test]
+    fn test_extract_tar_gz_preserves_content_and_permissions() {
+        futures::executor::block_on(async {
+            let content: Vec<u8> = (0u16..1024).map(|b| (b % 256) as u8).collect();
+            let mut archive = Vec::new();
+            append_entry(
+                &mut archive,
+                "nested/file.txt",
+                EntryType::Regular,
+                0o755,
+                &content,
+            );
+            archive.extend_from_slice(&[0u8; 1024]);
+            let reader = gzip_tar(archive).await;
+
+            let dir = tempfile::tempdir().unwrap();
+            extract_tar_gz(dir.path(), "test://archive.tar.gz", reader)
+                .await
+                .unwrap();
+
+            let extracted = dir.path().join("nested/file.txt");
+            assert_eq!(std::fs::read(&extracted).unwrap(), content);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&extracted).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o755);
+            }
+        });
+    }
+
+    #[test]
+    fn test_extract_tar_gz_pax_size_before_gnu_longname() {
+        futures::executor::block_on(async {
+            let mut archive = Vec::new();
+            append_entry(
+                &mut archive,
+                "PaxHeader",
+                EntryType::XHeader,
+                0o644,
+                b"13 size=1024\n",
+            );
+            append_entry(
+                &mut archive,
+                "././@LongLink",
+                EntryType::GNULongName,
+                0o644,
+                b"nested/pax-size.txt\0",
+            );
+            append_entry(
+                &mut archive,
+                "placeholder",
+                EntryType::Regular,
+                0o644,
+                &vec![b'A'; 1024],
+            );
+            archive.extend_from_slice(&[0u8; 1024]);
+            let reader = gzip_tar(archive).await;
+
+            let dir = tempfile::tempdir().unwrap();
+            extract_tar_gz(dir.path(), "test://archive.tar.gz", reader)
+                .await
+                .unwrap();
+
+            let extracted = dir.path().join("nested/pax-size.txt");
+            assert!(extracted.exists(), "nested/pax-size.txt not extracted");
+            assert_eq!(std::fs::read(&extracted).unwrap(), vec![b'A'; 1024]);
+            assert!(
+                !dir.path().join("placeholder").exists(),
+                "placeholder file must not be created"
+            );
+        });
+    }
+}
