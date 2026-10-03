@@ -3949,4 +3949,52 @@ mod tests {
         assert!(!Corner::TopLeft.is_bottom());
         assert!(!Corner::TopRight.is_bottom());
     }
+
+    #[test]
+    fn test_derived_scalar_arithmetic() {
+        assert_eq!(size(px(12.0), px(8.0)) / 4.0, size(px(3.0), px(2.0)));
+
+        assert_eq!(px(12.0) / 4.0, px(3.0));
+        assert_eq!(px(12.0) / px(4.0), 3.0);
+        let mut pixels = px(12.0);
+        pixels /= 4.0;
+        assert_eq!(pixels, px(3.0));
+        let mut pixels = px(12.0);
+        pixels /= px(4.0);
+        assert_eq!(pixels, px(3.0));
+
+        assert_eq!(ScaledPixels(12.0) / 4.0, ScaledPixels(3.0));
+        assert_eq!(ScaledPixels(12.0) / ScaledPixels(4.0), 3.0);
+        let mut scaled = ScaledPixels(12.0);
+        scaled /= 4.0;
+        assert_eq!(scaled, ScaledPixels(3.0));
+        let mut scaled = ScaledPixels(12.0);
+        scaled /= ScaledPixels(4.0);
+        assert_eq!(scaled, ScaledPixels(3.0));
+
+        assert_eq!((DevicePixels(12) / 4).0, 3);
+        assert_eq!((Radians(12.0) / 4.0).0, 3.0);
+        assert_eq!((Percentage(0.8) / 4.0).0, 0.2);
+
+        assert_eq!((Rems(12.0) / 4.0).0, 3.0);
+        assert_eq!((Rems(12.0) * 2.0).0, 24.0);
+        assert_eq!(Rems(2.0).to_pixels(px(8.0)), px(16.0));
+    }
+
+    #[test]
+    fn test_derived_point_arithmetic() {
+        let mut p = point(px(1.0), px(2.0));
+        p += point(px(3.0), px(4.0));
+        assert_eq!(p, point(px(4.0), px(6.0)));
+        p -= point(px(3.0), px(4.0));
+        assert_eq!(p, point(px(1.0), px(2.0)));
+        assert_eq!(
+            point(px(1.0), px(2.0)) + point(px(3.0), px(4.0)),
+            point(px(4.0), px(6.0))
+        );
+        assert_eq!(
+            point(px(4.0), px(6.0)) - point(px(3.0), px(4.0)),
+            point(px(1.0), px(2.0))
+        );
+    }
 }

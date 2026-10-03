@@ -1427,6 +1427,15 @@ mod tests {
             &**refreshed_layout
         ));
     }
+
+    #[test]
+    fn test_font_weight_from_str() {
+        let weight: FontWeight = "450".parse().unwrap();
+        assert_eq!(weight, FontWeight(450.0));
+        assert!("not-a-number".parse::<FontWeight>().is_err());
+        assert_eq!(weight + FontWeight(50.0), FontWeight(500.0));
+        assert_eq!(weight - FontWeight(50.0), FontWeight(400.0));
+    }
 }
 
 #[cfg(test)]
