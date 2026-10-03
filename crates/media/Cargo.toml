@@ -32,9 +32,6 @@ version = "0.5.2"
 default-features = false
 features = ["link"]
 
-[target.'cfg(target_os = "macos")'.dependencies.ctor]
-version = "0.4.0"
-
 [lints.clippy]
 dbg_macro = "deny"
 declare_interior_mutable_const = "deny"

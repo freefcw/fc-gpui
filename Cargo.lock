@@ -1359,28 +1359,13 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21d960ecacd0a1bf55e73144b72de745e7bf275c7952c50e36e8af0a0cb7ab1f"
-dependencies = [
- "ctor-proc-macro 0.0.4",
-]
-
-[[package]]
-name = "ctor"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec09e802f5081de6157da9a75701d6c713d8dc3ba52571fd4bd25f412644e8a6"
 dependencies = [
- "ctor-proc-macro 0.0.6",
+ "ctor-proc-macro",
  "dtor",
 ]
-
-[[package]]
-name = "ctor-proc-macro"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c426d2ba3e525b39c1f0a9ba41b9fe61878dee11fa4e4a76b6ab440f46c5db5d"
 
 [[package]]
 name = "ctor-proc-macro"
@@ -1787,7 +1772,7 @@ dependencies = [
  "bitflags 2.11.1",
  "core-video",
  "criterion",
- "ctor 0.3.6",
+ "ctor",
  "derive_more",
  "env_logger",
  "etagere",
@@ -2015,7 +2000,6 @@ dependencies = [
  "bindgen",
  "core-foundation 0.10.1",
  "core-video",
- "ctor 0.4.3",
 ]
 
 [[package]]
@@ -2065,7 +2049,7 @@ name = "fc-gpui-sum-tree"
 version = "0.5.1"
 dependencies = [
  "arrayvec",
- "ctor 0.4.3",
+ "ctor",
  "env_logger",
  "log",
  "rand 0.9.4",
