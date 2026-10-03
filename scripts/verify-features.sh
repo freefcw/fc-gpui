@@ -122,6 +122,28 @@ for package in meta["packages"]:
     if removed:
         print(f"  missing features:    {removed}")
 
+for package in meta["packages"]:
+    if package["name"] != "fc-gpui-macos":
+        continue
+    deps = {d["name"]: d for d in package["dependencies"]}
+    screen_capture = package["features"].get("screen-capture", [])
+    violations = []
+    for dep_name in ("objc2-core-media", "objc2-screen-capture-kit"):
+        dep = deps.get(dep_name)
+        if dep is None or not dep["optional"]:
+            violations.append(f"{dep_name} is not an optional dependency")
+        if f"dep:{dep_name}" not in screen_capture:
+            violations.append(f"screen-capture does not enable dep:{dep_name}")
+    for dep_name in ("objc2-app-kit", "objc2-foundation"):
+        dep = deps.get(dep_name)
+        if dep is None or dep["uses_default_features"]:
+            violations.append(f"{dep_name} does not set default-features = false")
+    if violations:
+        failed = True
+        print("FAIL fc-gpui-macos:")
+        for violation in violations:
+            print(f"  {violation}")
+
 if failed:
     print()
     print("Public feature lists changed. If intentional, update EXPECTED in")
