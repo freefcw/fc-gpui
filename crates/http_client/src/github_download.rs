@@ -313,4 +313,48 @@ mod tests {
             );
         });
     }
+
+    fn append_symlink(archive: &mut Vec<u8>, path: &str, target: &str) {
+        let mut header = Header::new_gnu();
+        header.set_path(path).unwrap();
+        header.set_link_name(target).unwrap();
+        header.set_entry_type(EntryType::Symlink);
+        header.set_mode(0o777);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(0);
+        header.set_size(0);
+        header.set_cksum();
+        archive.extend_from_slice(header.as_bytes());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_tar_gz_symlink() {
+        futures::executor::block_on(async {
+            let mut archive = Vec::new();
+            append_entry(
+                &mut archive,
+                "nested/file.txt",
+                EntryType::Regular,
+                0o644,
+                b"target",
+            );
+            append_symlink(&mut archive, "nested/link.txt", "file.txt");
+            archive.extend_from_slice(&[0u8; 1024]);
+            let reader = gzip_tar(archive).await;
+
+            let dir = tempfile::tempdir().unwrap();
+            extract_tar_gz(dir.path(), "test://archive.tar.gz", reader)
+                .await
+                .unwrap();
+
+            let link = dir.path().join("nested/link.txt");
+            assert_eq!(
+                std::fs::read_link(&link).unwrap(),
+                std::path::Path::new("file.txt")
+            );
+            assert_eq!(std::fs::read(&link).unwrap(), b"target");
+        });
+    }
 }
