@@ -222,6 +222,12 @@ async fn concurrent_feature_is_stable(cx: &mut TestAppContext) { ... }
 | `PlatformDispatcher` 接口 | 上游已增加 `Priority` 和 `RunnableMeta` 参数 | 引入 scheduler 时需修改 trait 或增加适配层 |
 | `profiling` crate vs `profiler.rs` | 前者是编译期函数级 tracing（Tracy 等后端），后者是运行时 task-level timing 采集，两者互补共存 | 实施 001 时需在文档中说明两者关系 |
 
+## 已知依赖债务
+
+| 债务 | 说明 | 触发时机 |
+| --- | --- | --- |
+| objc2 双版本 | `accesskit_macos`（截至 0.27.1）仍依赖 objc2 0.5 系，与 `gpui-macos` 的 objc2 0.6 系并存；升级 accesskit 系还需连带迁移 accesskit 0.25 API | 等上游 accesskit 迁移到 objc2 0.6 后统一 |
+
 ## 当前建议
 
 四个首版迁移任务均已完成。后续工作应按“已知迁移债务”和各任务文档中的“后续扩展”单独拆分，例如完整 scheduler crate 引入、跨平台 screenshot readback、golden snapshot 阈值工具或 profiler overlay。

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Improvements
+
+- **Dependency refresh for 0.10** — migrates `derive_more` 0.99 to 2.1 with the minimal
+  feature set and regression coverage for the derived geometry and font-weight arithmetic,
+  unifies `ctor` on 0.4.3, and moves the Linux portal client to `ashpd` 0.12 (`zbus` 5).
+  macOS screen-capture frameworks (`objc2-core-media`, `objc2-screen-capture-kit`) are now
+  optional behind the existing `screen-capture` feature, and `objc2-app-kit` /
+  `objc2-foundation` no longer pull unused default features.
+- **Build and bench tooling** — updates `bindgen` to 0.73.2, `cbindgen` to 0.29.4, and the
+  Criterion benches to 0.8.2.
+- **`stacksafe` 1.0** — drops the transitive `proc-macro-error2` crate, whose code Rust has
+  flagged for rejection in a future version.
+
 ## 0.9.2 (2026-10-02)
 
 ### Fixes
