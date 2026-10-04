@@ -6,7 +6,10 @@
 
 - **Dependency refresh for 0.10** — migrates `derive_more` 0.99 to 2.1 with the minimal
   feature set and regression coverage for the derived geometry and font-weight arithmetic,
-  unifies `ctor` on 0.4.3, and moves the Linux portal client to `ashpd` 0.12 (`zbus` 5).
+  and moves the Linux portal client to `ashpd` 0.12 (`zbus` 5).
+  The public `gpui::ctor` re-export is now `ctor` 0.4.3: annotate startup functions with
+  `unsafe fn`. Existing safe `fn` items still compile because `ctor` silences that deprecation
+  by default.
   macOS screen-capture frameworks (`objc2-core-media`, `objc2-screen-capture-kit`) are now
   optional behind the existing `screen-capture` feature, and `objc2-app-kit` /
   `objc2-foundation` no longer pull unused default features.

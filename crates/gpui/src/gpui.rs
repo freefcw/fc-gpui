@@ -85,6 +85,9 @@ pub(crate) use arena::*;
 pub use asset_cache::*;
 pub use assets::*;
 pub use color::*;
+/// Process startup hook re-exported from `ctor` 0.4.
+///
+/// Annotate an `unsafe fn`. This version runs the function before `main`.
 pub use ctor::ctor;
 pub use element::*;
 pub use elements::*;
