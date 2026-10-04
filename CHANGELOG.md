@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.10.0 (2026-10-05)
+
+### Fixes
+
+- **GitHub archive extraction** — `fc-gpui-http-client` 0.5.2 keeps a PAX size header on
+  the entry it describes. A size header placed before a GNU long name no longer changes the
+  length of the following file. Unix symlink extraction is covered by a test.
+- **Windows archive builds** — `fc-gpui-http-client` depends on `async-std` with the `unstable`
+  feature on Windows only, so `async-tar` 0.6 can call `symlink_file`. This dependency is
+  required for that build. Windows CI does not create links without `SeCreateSymbolicLinkPrivilege`.
+
 ### Improvements
 
 - **Dependency refresh for 0.10** — migrates `derive_more` 0.99 to 2.1 with the minimal

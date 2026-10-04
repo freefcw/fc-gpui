@@ -1,6 +1,6 @@
 [package]
 name = "fc-gpui-wgpu"
-version = "0.9.2"
+version = "0.10.0"
 edition = "2024"
 authors = ["Adabraka Team"]
 publish = true
@@ -24,7 +24,7 @@ anyhow = "1.0.86"
 bytemuck = { version = "1", features = ["derive"] }
 collections = { package = "fc-gpui-collections", path = "../collections", version = "0.5.1" }
 etagere = "0.2.10"
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.2", default-features = false }
+gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
 image = { version = "0.25.1", default-features = false, optional = true }
 log = "0.4.16"
 parking_lot = "0.12.1"
@@ -35,7 +35,7 @@ util = { package = "fc-gpui-util", path = "../util", version = "0.6.0" }
 wgpu = "29.0.4"
 
 [dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.9.2", default-features = false, features = ["test-support"] }
+gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false, features = ["test-support"] }
 image = { version = "0.25.1", default-features = false }
 
 [lints.clippy]
