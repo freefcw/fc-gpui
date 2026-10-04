@@ -283,6 +283,15 @@ mod tests {
                 0o644,
                 &vec![b'A'; 1024],
             );
+            // A later entry with its own size. The pax `size` above must not leak
+            // onto this header or body.
+            append_entry(
+                &mut archive,
+                "nested/after.txt",
+                EntryType::Regular,
+                0o644,
+                b"ok",
+            );
             archive.extend_from_slice(&[0u8; 1024]);
             let reader = gzip_tar(archive).await;
 
@@ -297,6 +306,10 @@ mod tests {
             assert!(
                 !dir.path().join("placeholder").exists(),
                 "placeholder file must not be created"
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join("nested/after.txt")).unwrap(),
+                b"ok"
             );
         });
     }
