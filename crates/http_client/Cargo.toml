@@ -103,6 +103,13 @@ path = "../util"
 package = "fc-gpui-util"
 version = "0.6.0"
 
+# async-tar's async-std backend calls async_std::os::windows::fs::symlink_file,
+# which is gated behind async-std's `unstable` feature (upstream async-tar does
+# not forward it). Declare it here so Windows builds compile the symlink path.
+[target.'cfg(windows)'.dependencies.async-std]
+version = "1.13"
+features = ["unstable"]
+
 
 [lints.clippy]
 dbg_macro = "deny"
