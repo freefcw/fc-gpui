@@ -1,12 +1,15 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     ffi::{OsStr, OsString},
     mem::ManuallyDrop,
     os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -34,6 +37,13 @@ use crate::*;
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
     raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    /// The windowing mode to start in, applied when `run` starts. Windowed when unset.
+    initial_windowing: RefCell<Option<WindowingRequest>>,
+    /// Whether windows may be opened. DirectX devices stay allocated; this fork's text system
+    /// and window creation require them for the process lifetime.
+    windowed: Cell<bool>,
+    /// Set to stop the current `VSyncProvider` thread, which runs while windowed.
+    vsync_stop: RefCell<Option<Arc<AtomicBool>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     background_executor: BackgroundExecutor,
@@ -187,6 +197,9 @@ impl WindowsPlatform {
             inner,
             handle,
             raw_window_handles,
+            initial_windowing: RefCell::new(None),
+            windowed: Cell::new(true),
+            vsync_stop: RefCell::new(None),
             icon,
             background_executor,
             foreground_executor,
@@ -276,7 +289,30 @@ impl WindowsPlatform {
             .map(|hwnd| hwnd.as_raw())
     }
 
+    fn is_windowed(&self) -> bool {
+        self.windowed.get()
+    }
+
+    fn connect_initially(&self) {
+        let request = self
+            .initial_windowing
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| WindowingRequest::Windowed(GraphicalEnvironment::detect()));
+        match request {
+            WindowingRequest::Headless => self.windowed.set(false),
+            WindowingRequest::Windowed(environment) => {
+                if let Err(error) = check_can_show_windows(&environment) {
+                    log::info!("starting headless: {error:#}");
+                    self.windowed.set(false);
+                }
+            }
+        }
+    }
+
     fn begin_vsync_thread(&self) {
+        let stop = Arc::new(AtomicBool::new(false));
+        *self.vsync_stop.borrow_mut() = Some(stop.clone());
         let mut directx_device = (*self.inner.state.borrow().directx_devices).clone();
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
@@ -288,6 +324,9 @@ impl WindowsPlatform {
                 let vsync_provider = VSyncProvider::new();
                 loop {
                     vsync_provider.wait_for_vsync();
+                    if stop.load(Ordering::Acquire) {
+                        break;
+                    }
                     if check_device_lost(&directx_device.device) {
                         handle_gpu_device_lost(
                             &mut directx_device,
@@ -382,8 +421,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        self.connect_initially();
         on_finish_launching();
-        self.begin_vsync_thread();
+        if self.is_windowed() {
+            self.begin_vsync_thread();
+        }
 
         let mut msg = MSG::default();
         unsafe {
@@ -395,6 +437,35 @@ impl Platform for WindowsPlatform {
         if let Some(ref mut callback) = self.inner.state.borrow_mut().callbacks.quit {
             callback();
         }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        *self.initial_windowing.borrow_mut() = Some(request);
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        let windowed = self.is_windowed();
+        Task::ready(match request {
+            WindowingRequest::Headless if !windowed => Err(anyhow!("already headless")),
+            WindowingRequest::Headless => {
+                self.windowed.set(false);
+                if let Some(stop) = self.vsync_stop.borrow_mut().take() {
+                    stop.store(true, Ordering::Release);
+                }
+                Ok(())
+            }
+            WindowingRequest::Windowed(_) if windowed => Err(anyhow!("already windowed")),
+            WindowingRequest::Windowed(environment) => {
+                check_can_show_windows(&environment).map(|()| {
+                    self.windowed.set(true);
+                    self.begin_vsync_thread();
+                })
+            }
+        })
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        self.is_windowed().then(GraphicalEnvironment::detect)
     }
 
     fn quit(&self) {
@@ -500,6 +571,9 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
+        if !self.is_windowed() {
+            return Err(anyhow!("cannot open windows while headless"));
+        }
         let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle.into());
@@ -1420,6 +1494,9 @@ impl WindowsPlatformInner {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
+        if let Some(stop) = self.vsync_stop.borrow_mut().take() {
+            stop.store(true, Ordering::Release);
+        }
         unsafe {
             let _ = windows::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(
                 self.handle,
@@ -1621,6 +1698,48 @@ fn file_save_dialog(
         string
     };
     Ok(Some(PathBuf::from(file_path_string)))
+}
+
+/// Checks that this process can show windows in the session `environment` names.
+fn check_can_show_windows(environment: &GraphicalEnvironment) -> Result<()> {
+    let current = GraphicalEnvironment::detect().session_id;
+    if let (Some(requested), Some(current)) = (environment.session_id, current)
+        && requested != current
+    {
+        return Err(anyhow!(
+            "windows can only be shown in this process's session ({current}), not session \
+             {requested}"
+        ));
+    }
+    if !is_window_station_visible() {
+        return Err(anyhow!(
+            "this process's window station is not interactive, so it can't show windows"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether this process's window station has a visible desktop.
+fn is_window_station_visible() -> bool {
+    use windows::Win32::System::StationsAndDesktops::{
+        GetProcessWindowStation, GetUserObjectInformationW, UOI_FLAGS, USEROBJECTFLAGS, WSF_VISIBLE,
+    };
+
+    let Ok(station) = (unsafe { GetProcessWindowStation() }) else {
+        return false;
+    };
+    let mut flags = USEROBJECTFLAGS::default();
+    // SAFETY: `flags` is valid for writes of the size passed.
+    let result = unsafe {
+        GetUserObjectInformationW(
+            HANDLE(station.0),
+            UOI_FLAGS,
+            Some(&mut flags as *mut USEROBJECTFLAGS as *mut std::ffi::c_void),
+            std::mem::size_of::<USEROBJECTFLAGS>() as u32,
+            None,
+        )
+    };
+    result.is_ok() && flags.dwFlags & WSF_VISIBLE as u32 != 0
 }
 
 fn load_icon() -> Result<HICON> {
