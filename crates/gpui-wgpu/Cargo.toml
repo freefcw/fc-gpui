@@ -32,7 +32,7 @@ profiling.workspace = true
 raw-window-handle.workspace = true
 smol.workspace = true
 util.workspace = true
-wgpu = "29.0.4"
+wgpu = "30.0.1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

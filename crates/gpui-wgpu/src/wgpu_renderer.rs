@@ -343,6 +343,7 @@ impl WgpuRenderer {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: clamped_width.max(1),
             height: clamped_height.max(1),
             present_mode: config
@@ -1323,7 +1324,7 @@ impl WgpuRenderer {
             // Wayland treats a false return as "not presented" and commits instead.
             return false;
         }
-        frame.present();
+        self.resources().queue.present(frame);
         true
     }
 
@@ -1427,7 +1428,9 @@ impl WgpuRenderer {
             .map_err(|error| anyhow::anyhow!("WGPU readback callback was dropped: {error}"))?
             .map_err(|error| anyhow::anyhow!("mapping WGPU readback buffer failed: {error}"))?;
 
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| anyhow::anyhow!("reading WGPU readback buffer failed: {error}"))?;
         let image = match self.surface_config.format {
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
                 gpui::render_image::rgba_image_from_bgra_rows(

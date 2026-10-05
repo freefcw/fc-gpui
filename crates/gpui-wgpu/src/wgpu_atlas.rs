@@ -415,6 +415,9 @@ mod tests {
                     power_preference: wgpu::PowerPreference::LowPower,
                     compatible_surface: None,
                     force_fallback_adapter: false,
+                    // Bucketing is an anti-fingerprinting measure for browsers;
+                    // report the adapter's raw limits like wgpu 29 did.
+                    apply_limit_buckets: false,
                 })
                 .await
                 .map_err(|error| anyhow::anyhow!("failed to request adapter: {error}"))?;
