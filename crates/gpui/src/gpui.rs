@@ -5,6 +5,7 @@
 #![allow(unused_mut)] // False positives in platform specific code
 
 extern crate self as gpui;
+extern crate self as fc_gpui_core;
 
 /// Absolute manifest directory used by backend build scripts for generated bindings.
 #[doc(hidden)]
@@ -24,6 +25,8 @@ pub mod colors;
 mod element;
 mod elements;
 mod executor;
+#[cfg(test)]
+mod executor_timing_probe;
 mod geometry;
 mod global;
 mod input;

@@ -734,6 +734,14 @@ impl Drop for Scope<'_> {
 mod tests {
     use super::*;
     use crate::{TestAppContext, profiler};
+
+    fn is_probe_timing(timing: &profiler::SerializedTaskTiming) -> bool {
+        timing
+            .location
+            .file
+            .as_ref()
+            .contains("executor_timing_probe")
+    }
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -814,11 +822,26 @@ mod tests {
 
         let mut cx = TestAppContext::single();
         let mut collector = profiler::ProfilingCollector::new(Instant::now());
-        cx.executor().spawn(async {}).detach();
-        assert!(profiler::profiler_collect_timings(&mut collector).is_empty());
+        crate::executor_timing_probe::spawn_noop(&cx.executor());
+        // Other tests running in parallel also record timings while the
+        // profiler is enabled, so only assert about this test's own task,
+        // identified by the probe file it was spawned from.
+        let early = profiler::profiler_collect_timings(&mut collector);
+        assert!(
+            early
+                .iter()
+                .flat_map(|delta| &delta.new_timings)
+                .all(|timing| !is_probe_timing(timing))
+        );
 
         cx.run_until_parked();
-        assert!(!profiler::profiler_collect_timings(&mut collector).is_empty());
+        let recorded = profiler::profiler_collect_timings(&mut collector);
+        assert!(
+            recorded
+                .iter()
+                .flat_map(|delta| &delta.new_timings)
+                .any(is_probe_timing)
+        );
 
         reset_profiler();
     }
