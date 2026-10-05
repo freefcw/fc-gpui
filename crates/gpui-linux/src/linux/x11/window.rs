@@ -305,6 +305,9 @@ pub struct X11WindowState {
     maximized_vertical: bool,
     maximized_horizontal: bool,
     hidden: bool,
+    /// `WindowParams::focus` captured at creation; consumed by the first map
+    /// operation, which requests `_NET_ACTIVE_WINDOW` right after mapping.
+    pending_focus: bool,
     active: bool,
     /// Owned by the client's `WindowRef`, which combines the mapped state with
     /// `VisibilityNotify`; this is the last value it reported.
@@ -849,7 +852,11 @@ impl X11WindowState {
                 is_resizable: params.is_resizable,
                 maximized_vertical: false,
                 maximized_horizontal: false,
-                hidden: false,
+                // An X11 window is not mapped until the facade honors
+                // WindowOptions::show. Keep the platform visibility state in
+                // sync with that initial mapping decision.
+                hidden: !params.show,
+                pending_focus: params.focus,
                 appearance,
                 handle,
                 background_appearance: WindowBackgroundAppearance::Opaque,
@@ -1058,6 +1065,13 @@ impl X11Window {
 
         xcb_flush(&self.0.xcb);
         Ok(())
+    }
+
+    fn take_pending_focus(&self) -> bool {
+        let mut state = self.0.state.borrow_mut();
+        let pending = state.pending_focus;
+        state.pending_focus = false;
+        pending
     }
 }
 
@@ -1602,6 +1616,12 @@ impl PlatformWindow for X11Window {
             || "X11 MapWindow failed.",
             self.0.xcb.map_window(self.0.x_window),
         )?;
+        // `WindowParams::focus`: request activation right after mapping, so
+        // the WM processes both with the same flush, mirroring the macOS
+        // `focus && show` → `makeKeyAndOrderFront` behavior.
+        if self.take_pending_focus() {
+            self.activate();
+        }
         Ok(())
     }
 
@@ -1945,6 +1965,9 @@ impl PlatformWindow for X11Window {
         self.0.xcb.map_window(self.0.x_window).log_err();
         xcb_flush(&self.0.xcb);
         self.0.state.borrow_mut().hidden = false;
+        if self.take_pending_focus() {
+            self.activate();
+        }
     }
 
     fn hide(&self) {

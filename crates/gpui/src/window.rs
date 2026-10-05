@@ -1860,7 +1860,13 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
-        platform_window.map_window()?;
+        // Map only after all callbacks above are registered, and only when
+        // the window is meant to be visible: backends that gate visibility on
+        // mapping (X11) honor `WindowOptions::show` this way, matching macOS
+        // where `show`/`focus` are consumed at window creation.
+        if show {
+            platform_window.map_window()?;
+        }
 
         Ok(Window {
             handle,
