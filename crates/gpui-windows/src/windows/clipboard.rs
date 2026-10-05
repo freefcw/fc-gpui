@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::{borrow::Cow, sync::LazyLock};
 
 use anyhow::Result;
 use collections::{FxHashMap, FxHashSet};
@@ -168,12 +168,18 @@ fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
 }
 
 fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
-    let encode_wide = item.text().encode_utf16().chain(Some(0)).collect_vec();
+    // CF_UNICODETEXT is null-terminated, so replace embedded NUL characters with spaces.
+    let text = if item.text().contains('\0') {
+        Cow::Owned(item.text().replace('\0', " "))
+    } else {
+        Cow::Borrowed(item.text().as_str())
+    };
+    let encode_wide = text.encode_utf16().chain(Some(0)).collect_vec();
     set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
 
     if let Some(metadata) = item.metadata() {
         let hash_result = {
-            let hash = ClipboardString::text_hash(item.text());
+            let hash = ClipboardString::text_hash(&text);
             hash.to_ne_bytes()
         };
         let encode_wide =
