@@ -22,8 +22,9 @@
 - `set_tray_icon()` / `set_tray_tooltip()`
 - `set_tray_menu()` - 嵌套菜单支持
 - `on_tray_menu_action()` - 菜单动作回调
-- `on_tray_icon_event()` - 图标点击事件
-- `set_tray_panel_mode()` - 面板模式（v0.4.1）
+- `on_tray_icon_event()` - 图标点击事件（v0.11 起 macOS 区分左/右/双击）
+- `on_tray_icon_click_event()` - 带位置 hint 的点击事件
+- `set_tray_panel_mode()` - 面板模式（v0.4.1；v0.11 起语义收窄，见下）
 - `get_tray_icon_bounds()` / `tray_icon_anchor()` - 位置锚点
 - `set_tray_icon_rendering_mode()` - 渲染模式控制（v0.6.0）
 
@@ -32,10 +33,34 @@
 - Linux: ksni (DBus StatusNotifierItem)
 - Windows: Shell_NotifyIconW
 
+**macOS 点击语义（v0.11 起）**:
+- 点击 handler 在创建 tray 时即 wire 到 status item button，无菜单附着时注册回调即收到点击，
+  不再需要先调 `set_tray_panel_mode(true)` 这个隐性前置条件。
+- `set_tray_panel_mode(true)` 的语义收窄为"detach 已附着的菜单，让点击事件优先"——只在
+  "既要菜单又要点击"的场景需要显式调用。
+- 点击类型按 `NSApp.currentEvent` 区分：左键 `LeftClick`、右键 `RightClick`、左键双击
+  `DoubleClick`；程序化 `performClick:` 回落为 `LeftClick`。
+- "注册了点击回调 + 附着菜单 + 未开 panel mode"是歧义组合（AppKit 中菜单会吞掉点击），
+  两种注册顺序下各触发一次 `log::warn`。
+- 回调在点击后的下一个主队列 turn 派发（非同步），tray 弹窗的首帧在同 turn 内完成。
+- macOS 不提供点击坐标（`TrayIconClickEvent.position` 为 `None`），定位请用
+  `tray_icon_bounds()`。
+
 **Linux 定位限制**:
 - StatusNotifierItem 的 `activate(x, y)` 坐标是托盘宿主提供的屏幕坐标 hint，不是图标真实 bounds。
 - GPUI 会把 Linux 原始坐标按显示器 scale 转换为逻辑 `Pixels`，再用于 `TrayAnchor` 近似定位。
 - Wayland fractional scaling 下，SNI hint 没有关联的 Wayland surface，只能使用 `wl_output.scale` 做近似转换，不能精确使用 per-surface fractional scale。
+- 部分 AppIndicator 扩展宿主不派发 `Activate` 事件（左键点击无回调）。fallback 菜单是
+  必须项而非可选项：下游应在收不到点击事件时保留菜单路径。
+
+**平台行为与限制速查**（tray / 弹窗定位）:
+
+| 能力 | macOS | Linux X11 | Linux Wayland |
+| --- | --- | --- | --- |
+| 图标真实 bounds | ✅ `tray_icon_bounds()` | ❌ 只有 SNI 坐标 hint | ❌ 只有 hint（近似） |
+| 左/右键区分 | ✅ | ✅（SNI activate / secondary_activate） | 取决于宿主 |
+| 双击事件 | ✅ | ❌ | ❌ |
+| 弹窗全局定位 | ✅ | ✅ | ❌（见窗口定位器一节） |
 
 ### 3. 全局热键 (v0.4.0)
 **状态**: ✅ Adabraka 独有
@@ -81,6 +106,21 @@
 
 - `show()` / `hide()` / `is_visible()` - 窗口可见性控制
 - 所有平台实现
+- `WindowOptions::show` / `focus` 三端一致消费（v0.11 起）：macOS 在建窗时
+  `makeKeyAndOrderFront`/`orderFront`；Linux X11 由 facade 按 `show` 决定是否 map、
+  map 后按 `focus` 请求 `_NET_ACTIVE_WINDOW`；Linux Wayland 的 `show` 仍受协议限制
+  （首次 commit 即可见，暂等价于 `show: true`）。
+
+### 6a. 锚定无动画 resize (v0.11)
+**状态**: ✅ Adabraka 独有
+
+- `Window::resize_anchored(size, anchor)` / `PlatformWindow::resize_anchored`
+- `ResizeAnchor` 九宫格枚举（四角 + 四边 + 中心）：resize 时保持锚定的角/边在屏幕上不动。
+- macOS 实现为同步 `setFrame:display:animate:NO`（无系统 resize 动画，调用返回时已生效）；
+  配套修复了 resize/moved 回调在 window update 内同步触发时的重入丢失问题。
+- Linux/Windows 目前回落到 `resize`（不锚定），需要锚定的下游应自行按
+  `tray_icon_bounds()` 计算或等待后续实现。
+- 典型场景：菜单栏 tray 弹窗用 `ResizeAnchor::TopLeft`，向下展开而不脱离图标。
 
 ### 7. 自动启动 (v0.4.0)
 **状态**: ✅ Adabraka 独有
@@ -233,6 +273,12 @@
 
 - `WindowPosition` 枚举：Center, CenterOnScreen, TrayCenter, TrayAnchored, Custom
 - 简化窗口定位逻辑
+
+**Wayland 平台限制（协议层面，短期不改）**:
+- xdg_toplevel 的位置由 compositor 决定，客户端没有全局定位协议；`Custom` /
+  `TrayAnchored` 在 Wayland 上无法精确生效，弹窗常被 compositor 重映射到屏幕中央。
+- 这不是实现缺陷：下游必须把"fallback 到居中/角落 + 透明占位窗口"当作 Wayland 的
+  正常形态来设计，而不是可选优化。X11 与 macOS 不受此限制。
 
 ## 渲染增强（Adabraka 独有）
 

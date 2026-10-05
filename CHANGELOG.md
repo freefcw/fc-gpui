@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Fixes
+
+- **macOS tray clicks report the real button** — `handleTrayPanelClick:` no longer synthesizes
+  `LeftClick` for every interaction. `NSApp.currentEvent` is classified while the click is being
+  delivered, so `TrayIconEvent::{RightClick, DoubleClick}` now reach `on_tray_icon_event` /
+  `on_tray_icon_click_event`. Right-click-to-open-menu works without platform workarounds.
+- **macOS tray clicks no longer require panel mode as a silent prerequisite** — the status item
+  button's click handler is wired at tray creation and re-wired on every state transition, so
+  icon-click callbacks fire whenever no menu is attached. Registering a callback plus attaching a
+  menu without panel mode (the ambiguous combination, either registration order) now logs a
+  one-time warning instead of silently never delivering clicks.
+- **`WindowOptions::show` / `focus` are honored on Linux X11** — the facade now only calls
+  `PlatformWindow::map_window` when `show` is set, so windows created with `show: false` stay
+  hidden until `show_window()`, matching macOS. X11 consumes `focus` by requesting
+  `_NET_ACTIVE_WINDOW` right after mapping, matching the macOS `focus && show` →
+  `makeKeyAndOrderFront` behavior. Downstream no longer needs per-window
+  `show_window()`/`activate_window()` fixups after creation.
+- **Resize notifications are no longer dropped on re-entrancy** — the facade's `on_resize` /
+  `on_moved` callbacks retry on the foreground executor when they fire synchronously while the
+  app is already borrowed (the exact path taken by programmatic `setFrame:`-based resizes), so
+  `bounds_changed` always runs instead of being swallowed by `log_err`.
+
+### Improvements
+
+- **`Window::resize_anchored(size, anchor)`** — new API (also on `PlatformWindow`, with a
+  default fallback to `resize`) that resizes without AppKit animation while keeping the given
+  `ResizeAnchor` corner/edge fixed on screen, e.g. `ResizeAnchor::TopLeft` grows a tray popup
+  down-right under the menu-bar icon. Implemented on macOS via synchronous
+  `setFrame:display:animate:NO`; Linux/Windows fall back to `resize` for now. This is a fork
+  capability Zed upstream does not have.
+- **`trim_gpu_caches` on Linux** — `App::trim_gpu_caches` now trims every open window's renderer
+  in addition to platform-level shared caches. The WGPU renderer shrinks its grown instance
+  buffer back to the profile's initial size (mirroring the Metal idle-pool trim), so tray-class
+  resident apps reclaim GPU memory on Linux too, not just macOS.
+- **Tray callback delivery semantics documented** — `on_tray_icon_event` /
+  `on_tray_icon_click_event` doc comments now state the macOS next-main-queue-turn delivery, the
+  click-kind mapping, and the Linux host caveats.
+
+### Downstream workarounds removable
+
+Standing section: lists upstream fixes that let downstream packages delete their own
+workarounds. Check here before maintaining a local workaround registry.
+
+- **This release**:
+  - Direct AppKit `setFrame:display:animate:NO` calls for anchored, non-animated popup resizes
+    (e.g. BananaTray `src/platform/popup_window.rs`) can be replaced by
+    `window.resize_anchored(size, ResizeAnchor::TopLeft)`; resize/moved events now survive being
+    triggered from inside a window update.
+  - Per-window `show_window()` / `activate_window()` fixups after opening windows on Linux X11
+    can be deleted; pass `show`/`focus` in `WindowOptions` instead.
+  - macOS tray right-click discrimination no longer needs left-click-only UI workarounds;
+    handle `TrayIconEvent::RightClick` directly. The implicit `set_tray_panel_mode(true)`
+    prerequisite call is only needed when a menu is attached.
+
 ## 0.10.0 (2026-10-05)
 
 ### Fixes
