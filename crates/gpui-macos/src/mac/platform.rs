@@ -329,17 +329,31 @@ define_class!(
         #[unsafe(method(handleTrayPanelClick:))]
         fn handle_tray_panel_click(&self, _sender: &AnyObject) {
             let platform_ptr = delegate_platform(self) as *const MacPlatform;
+            // Classify while the triggering mouse event is still current;
+            // `currentEvent` is replaced by the time the async hop below runs.
+            let kind = super::tray::current_tray_click_kind();
 
             use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
 
+            struct TrayClickCtx {
+                platform: *const MacPlatform,
+                kind: TrayIconEvent,
+            }
+
+            let ctx = Box::into_raw(Box::new(TrayClickCtx {
+                platform: platform_ptr,
+                kind,
+            }));
+
             unsafe extern "C" fn invoke(ctx_ptr: *mut c_void) {
-                let platform = unsafe { &*(ctx_ptr as *const MacPlatform) };
+                let ctx = unsafe { Box::from_raw(ctx_ptr as *mut TrayClickCtx) };
+                let platform = unsafe { &*ctx.platform };
                 let mut lock = platform.0.lock();
                 let mut event_callback = lock.tray_icon_callback.take();
                 let mut click_callback = lock.tray_icon_click_callback.take();
                 drop(lock);
 
-                let event = TrayIconClickEvent::new(TrayIconEvent::LeftClick);
+                let event = TrayIconClickEvent::new(ctx.kind);
                 if let Some(ref mut callback) = event_callback {
                     callback(event.kind.clone());
                 }
@@ -359,7 +373,7 @@ define_class!(
             unsafe {
                 dispatch_async_f(
                     dispatch_get_main_queue(),
-                    platform_ptr as *mut c_void,
+                    ctx as *mut c_void,
                     Some(invoke),
                 );
             }
@@ -747,6 +761,16 @@ impl MacPlatform {
         state.tray.get_or_insert_with(MacTray::new)
     }
 
+    /// An attached NSMenu consumes tray clicks, so registered icon-click
+    /// callbacks never fire until panel mode detaches the menu. Warn once
+    /// when the second half of that combination appears, covering both
+    /// registration orders (menu-then-callbacks and callbacks-then-menu).
+    fn warn_tray_click_menu_conflict(tray: &MacTray, has_click_callbacks: bool) {
+        if has_click_callbacks && tray.has_menu() && !tray.panel_mode() {
+            tray.warn_click_menu_conflict();
+        }
+    }
+
     #[allow(unused_unsafe)]
     unsafe fn read_from_pasteboard(
         &self,
@@ -1017,25 +1041,41 @@ impl Platform for MacPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        let mut state = self.0.lock();
-        if state.headless {
-            drop(state);
-            on_finish_launching();
-            unsafe { CFRunLoopRun() };
-        } else {
-            state.finish_launching = Some(on_finish_launching);
-            drop(state);
-        }
+        let mut on_finish_launching = Some(on_finish_launching);
+        let headless = {
+            let mut state = self.0.lock();
+            if state.headless {
+                true
+            } else {
+                state.finish_launching = on_finish_launching.take();
+                false
+            }
+        };
 
         let app = shared_application();
         let platform_ptr = self as *const Self;
         app.set_platform(platform_ptr);
         let app_delegate = GPUIApplicationDelegate::new(self.1, platform_ptr);
         app.setDelegate(Some(ProtocolObject::from_ref(&*app_delegate)));
+        if let Some(tray) = self.0.lock().tray.as_ref() {
+            // A tray may have been created before Platform::run, when no
+            // application delegate existed yet.
+            tray.wire_click_handler();
+        }
 
-        autoreleasepool(|_| {
-            app.run();
-        });
+        if headless {
+            // Install the delegate before the launch callback. Tray objects
+            // may be created from that callback, and their target/action must
+            // be able to resolve the delegate immediately.
+            on_finish_launching
+                .take()
+                .expect("headless launch callback was consumed unexpectedly")();
+            unsafe { CFRunLoopRun() };
+        } else {
+            autoreleasepool(|_| {
+                app.run();
+            });
+        }
 
         // `NSApplication.delegate`, menu delegates, and notification observers
         // are weak. Unhook them before dropping `app_delegate`.
@@ -1766,7 +1806,11 @@ impl Platform for MacPlatform {
 
     fn set_tray_menu(&self, menu: Vec<TrayMenuItem>) {
         let mut state = self.0.lock();
-        Self::ensure_tray(&mut state).set_menu(menu);
+        let has_click_callbacks =
+            state.tray_icon_callback.is_some() || state.tray_icon_click_callback.is_some();
+        let tray = Self::ensure_tray(&mut state);
+        tray.set_menu(menu);
+        Self::warn_tray_click_menu_conflict(tray, has_click_callbacks);
     }
 
     fn set_tray_tooltip(&self, tooltip: &str) {
@@ -1776,7 +1820,11 @@ impl Platform for MacPlatform {
 
     fn set_tray_panel_mode(&self, enabled: bool) {
         let mut state = self.0.lock();
-        Self::ensure_tray(&mut state).set_panel_mode(enabled);
+        let has_click_callbacks =
+            state.tray_icon_callback.is_some() || state.tray_icon_click_callback.is_some();
+        let tray = Self::ensure_tray(&mut state);
+        tray.set_panel_mode(enabled);
+        Self::warn_tray_click_menu_conflict(tray, has_click_callbacks);
     }
 
     fn get_tray_icon_anchor(&self) -> Option<TrayAnchor> {
@@ -1790,11 +1838,21 @@ impl Platform for MacPlatform {
     }
 
     fn on_tray_icon_event(&self, callback: Box<dyn FnMut(TrayIconEvent)>) {
-        self.0.lock().tray_icon_callback = Some(callback);
+        let mut state = self.0.lock();
+        state.tray_icon_callback = Some(callback);
+        if let Some(tray) = state.tray.as_ref() {
+            tray.wire_click_handler();
+            Self::warn_tray_click_menu_conflict(tray, true);
+        }
     }
 
     fn on_tray_icon_click_event(&self, callback: Box<dyn FnMut(TrayIconClickEvent)>) {
-        self.0.lock().tray_icon_click_callback = Some(callback);
+        let mut state = self.0.lock();
+        state.tray_icon_click_callback = Some(callback);
+        if let Some(tray) = state.tray.as_ref() {
+            tray.wire_click_handler();
+            Self::warn_tray_click_menu_conflict(tray, true);
+        }
     }
 
     fn on_tray_menu_action(&self, callback: Box<dyn FnMut(SharedString)>) {

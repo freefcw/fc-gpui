@@ -1226,7 +1226,10 @@ impl App {
     }
 
     /// Enable or disable tray panel mode.
-    /// When enabled, clicking the tray icon fires `TrayIconEvent::LeftClick` instead of showing the NSMenu.
+    ///
+    /// macOS only. When enabled, an attached menu is detached from the tray
+    /// icon so clicks fire [`TrayIconEvent`]s instead of opening the menu.
+    /// With no menu attached, clicks fire events regardless of this setting.
     pub fn set_tray_panel_mode(&self, enabled: bool) {
         self.platform.set_tray_panel_mode(enabled);
     }
@@ -1273,6 +1276,16 @@ impl App {
     }
 
     /// Register a callback for system tray icon events.
+    ///
+    /// Platform notes:
+    /// - macOS: clicks are delivered whenever no menu is attached to the tray
+    ///   icon; call [`Self::set_tray_panel_mode(true)`](Self::set_tray_panel_mode)
+    ///   to detach a menu and receive clicks instead of it. Left, right, and
+    ///   double clicks are distinguished. Callbacks run on the next main
+    ///   queue turn after the click, not synchronously inside it.
+    /// - Linux (StatusNotifierItem): left/secondary activation is mapped to
+    ///   `LeftClick`/`RightClick` with a position hint; not every host (e.g.
+    ///   some AppIndicator extensions) delivers activation events at all.
     pub fn on_tray_icon_event(&self, mut callback: impl FnMut(TrayIconEvent, &mut App) + 'static) {
         let this = self.this.clone();
         self.platform.on_tray_icon_event(Box::new(move |event| {
@@ -1282,7 +1295,13 @@ impl App {
         }));
     }
 
-    /// Register a callback for system tray icon click events with optional position information.
+    /// Register a callback for system tray icon click events with optional
+    /// position information.
+    ///
+    /// See [`Self::on_tray_icon_event`] for delivery semantics. The
+    /// `position` field carries a logical screen-coordinate hint where the
+    /// platform provides one (Linux SNI); it is `None` on macOS, which has
+    /// no click-position equivalent — use [`Self::tray_icon_bounds`] there.
     pub fn on_tray_icon_click_event(
         &self,
         mut callback: impl FnMut(TrayIconClickEvent, &mut App) + 'static,
