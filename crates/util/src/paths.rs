@@ -20,9 +20,12 @@ use crate::rel_path::RelPath;
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the path to the user's home directory.
+///
+/// This crate's own tests see a fixed fake path. Every other build, including
+/// builds with `test-support`, sees the real home directory.
 pub fn home_dir() -> &'static PathBuf {
     HOME_DIR.get_or_init(|| {
-        if cfg!(any(test, feature = "test-support")) {
+        if cfg!(test) {
             if cfg!(target_os = "macos") {
                 PathBuf::from("/Users/zed")
             } else if cfg!(target_os = "windows") {

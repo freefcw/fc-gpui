@@ -22,7 +22,7 @@ use std::{
 
 use super::Context;
 use crate::util::atomic_incr_if_not_zero;
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 use collections::HashMap;
 
 slotmap::new_key_type! {
@@ -63,7 +63,7 @@ pub(crate) struct EntityMap {
 struct EntityRefCounts {
     counts: SlotMap<EntityId, AtomicUsize>,
     dropped_entity_ids: Vec<EntityId>,
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     leak_detector: LeakDetector,
 }
 
@@ -75,7 +75,7 @@ impl EntityMap {
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
-                #[cfg(any(test, feature = "leak-detection"))]
+                #[cfg(any(test, gpui_leak_detection))]
                 leak_detector: LeakDetector {
                     next_handle_id: 0,
                     entity_handles: HashMap::default(),
@@ -222,7 +222,7 @@ pub struct AnyEntity {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
-    #[cfg(any(test, feature = "leak-detection"))]
+    #[cfg(any(test, gpui_leak_detection))]
     handle_id: HandleId,
 }
 
@@ -231,7 +231,7 @@ impl AnyEntity {
         Self {
             entity_id: id,
             entity_type,
-            #[cfg(any(test, feature = "leak-detection"))]
+            #[cfg(any(test, gpui_leak_detection))]
             handle_id: entity_map
                 .clone()
                 .upgrade()
@@ -292,7 +292,7 @@ impl Clone for AnyEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
-            #[cfg(any(test, feature = "leak-detection"))]
+            #[cfg(any(test, gpui_leak_detection))]
             handle_id: self
                 .entity_map
                 .upgrade()
@@ -321,7 +321,7 @@ impl Drop for AnyEntity {
             }
         }
 
-        #[cfg(any(test, feature = "leak-detection"))]
+        #[cfg(any(test, gpui_leak_detection))]
         if let Some(entity_map) = self.entity_map.upgrade() {
             entity_map
                 .write()
@@ -552,7 +552,7 @@ impl AnyWeakEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_ref_counts.clone(),
-            #[cfg(any(test, feature = "leak-detection"))]
+            #[cfg(any(test, gpui_leak_detection))]
             handle_id: self
                 .entity_ref_counts
                 .upgrade()
@@ -563,9 +563,19 @@ impl AnyWeakEntity {
         })
     }
 
-    /// Assert that entity referenced by this weak handle has been released.
-    #[cfg(any(test, feature = "leak-detection"))]
+    /// Assert that the entity referenced by this weak handle has been released.
+    ///
+    /// With leak detection enabled (build with `GPUI_LEAK_DETECTION=1`), a failure
+    /// lists each leaked handle. Also set the `LEAK_BACKTRACE` environment variable
+    /// to see where they were allocated.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any strong handles to the entity are still alive, or if the entity
+    /// was recently dropped but cleanup has not completed yet.
+    #[cfg(any(test, feature = "test-support", gpui_leak_detection))]
     pub fn assert_released(&self) {
+        #[cfg(any(test, gpui_leak_detection))]
         self.entity_ref_counts
             .upgrade()
             .unwrap()
@@ -580,7 +590,9 @@ impl AnyWeakEntity {
             .is_some()
         {
             panic!(
-                "entity was recently dropped but resources are retained until the end of the effect cycle."
+                "entity is still alive, or was recently dropped and its resources are retained \
+                 until the end of the effect cycle. Build with GPUI_LEAK_DETECTION=1 to list \
+                 its live handles."
             )
         }
     }
@@ -785,23 +797,23 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
     }
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub(crate) struct HandleId {
     id: u64, // id of the handle itself, not the pointed at object
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
     entity_handles: HashMap<EntityId, HashMap<HandleId, Option<backtrace::Backtrace>>>,
 }
 
-#[cfg(any(test, feature = "leak-detection"))]
+#[cfg(any(test, gpui_leak_detection))]
 impl LeakDetector {
     #[track_caller]
     pub fn handle_created(&mut self, entity_id: EntityId) -> HandleId {

@@ -550,6 +550,22 @@ impl BackgroundExecutor {
         self.dispatcher.is_main_thread()
     }
 
+    /// Whether this executor runs on the deterministic test dispatcher.
+    ///
+    /// Available in every build. Use it, rather than `cfg(feature =
+    /// "test-support")`, for behavior that must differ under tests, so that
+    /// compiling `test-support` into an application doesn't change it.
+    pub fn is_test(&self) -> bool {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.dispatcher.as_test().is_some()
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            false
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {

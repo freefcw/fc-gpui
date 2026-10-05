@@ -2009,6 +2009,12 @@ impl App {
         &self.background_executor
     }
 
+    /// Whether this app runs on the deterministic test dispatcher. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
+    }
+
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         if self.quitting {
