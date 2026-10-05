@@ -65,8 +65,14 @@ impl LinuxDispatcher {
 
                 let handle = event_loop.handle();
                 let timer_handle = event_loop.handle();
+                let signal = event_loop.get_signal();
                 handle
                     .insert_source(timer_channel, move |e, _, _| {
+                        // The dispatcher owning the sender is gone; timers already
+                        // scheduled would run tasks nothing can observe.
+                        if let channel::Event::Closed = e {
+                            signal.stop();
+                        }
                         if let channel::Event::Msg(timer) = e {
                             // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
                             let mut runnable = Some(timer.runnable);
@@ -144,5 +150,84 @@ impl PlatformDispatcher for LinuxDispatcher {
 
     fn unparker(&self) -> Unparker {
         self.parker.lock().unparker()
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::{
+        collections::BTreeSet,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use super::*;
+
+    fn thread_ids_with_comm_prefix(prefix: &str) -> BTreeSet<i32> {
+        let mut ids = BTreeSet::new();
+        let Ok(entries) = std::fs::read_dir("/proc/self/task") else {
+            return ids;
+        };
+        for entry in entries.flatten() {
+            let Ok(tid) = entry.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) else {
+                continue;
+            };
+            if comm.trim_end().starts_with(prefix) {
+                ids.insert(tid);
+            }
+        }
+        ids
+    }
+
+    fn wait_for_new_threads(prefix: &str, before: &BTreeSet<i32>) -> BTreeSet<i32> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let appeared = thread_ids_with_comm_prefix(prefix)
+                .difference(before)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            if !appeared.is_empty() {
+                return appeared;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "dispatcher did not start a thread named {prefix}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn dispatcher_threads_exit_when_dropped() {
+        let timers_before = thread_ids_with_comm_prefix("Timer");
+        let workers_before = thread_ids_with_comm_prefix("Worker-");
+        let (main_sender, _main_receiver) = calloop::channel::channel::<Runnable>();
+        let dispatcher = LinuxDispatcher::new(main_sender);
+        let timers = wait_for_new_threads("Timer", &timers_before);
+        let workers = wait_for_new_threads("Worker-", &workers_before);
+        assert_eq!(timers.len(), 1, "dispatcher starts one timer thread");
+
+        drop(dispatcher);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let live_timers = thread_ids_with_comm_prefix("Timer");
+            let live_workers = thread_ids_with_comm_prefix("Worker-");
+            let timer_gone = timers.iter().all(|tid| !live_timers.contains(tid));
+            let workers_gone = workers.iter().all(|tid| !live_workers.contains(tid));
+            if timer_gone && workers_gone {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "dispatcher threads stayed alive after drop; timer still alive: {}, workers still alive: {}",
+                !timer_gone,
+                !workers_gone,
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }
