@@ -3,9 +3,10 @@ use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ForegroundExecutor, KeyDownEvent,
     Keystroke, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowFrameSource, WindowKind, WindowParams, WindowVisibility,
-    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, point, px, size,
+    ResizeAnchor, SharedString, Size, SystemWindowTab, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowFrameSource, WindowKind,
+    WindowParams, WindowVisibility, dispatch_get_main_queue, dispatch_sys::dispatch_async_f, point,
+    px, size,
 };
 use block2::RcBlock;
 use futures::channel::oneshot;
@@ -186,6 +187,68 @@ fn to_objc_point(point: NSPoint) -> Objc2NSPoint {
 
 fn from_objc_point(point: Objc2NSPoint) -> NSPoint {
     NSPoint::new(point.x, point.y)
+}
+
+/// Which end of a 1D span stays fixed when the span is resized.
+#[derive(Clone, Copy)]
+enum AnchoredAxis {
+    /// Pin the low end (the AppKit origin side).
+    Start,
+    /// Pin the midpoint.
+    Middle,
+    /// Pin the high end.
+    End,
+}
+
+fn anchored_axis_position(axis: AnchoredAxis, start: f64, length: f64, new_length: f64) -> f64 {
+    match axis {
+        AnchoredAxis::Start => start,
+        AnchoredAxis::Middle => start + (length - new_length) / 2.,
+        AnchoredAxis::End => start + length - new_length,
+    }
+}
+
+/// Computes the AppKit frame rect that resizes a window from `current` to
+/// `new_size` while keeping `anchor` visually fixed.
+///
+/// AppKit rect origins sit at the bottom-left with y growing upward, while
+/// `ResizeAnchor` names edges as seen on screen: its `Top` pins `current`'s
+/// max-y, its `Bottom` pins the origin y.
+fn anchored_frame(
+    current: Objc2NSRect,
+    new_size: Objc2NSSize,
+    anchor: ResizeAnchor,
+) -> Objc2NSRect {
+    use AnchoredAxis::*;
+    use ResizeAnchor::*;
+    let (horizontal, vertical) = match anchor {
+        TopLeft => (Start, End),
+        Top => (Middle, End),
+        TopRight => (End, End),
+        Left => (Start, Middle),
+        Center => (Middle, Middle),
+        Right => (End, Middle),
+        BottomLeft => (Start, Start),
+        Bottom => (Middle, Start),
+        BottomRight => (End, Start),
+    };
+    Objc2NSRect::new(
+        Objc2NSPoint::new(
+            anchored_axis_position(
+                horizontal,
+                current.origin.x,
+                current.size.width,
+                new_size.width,
+            ),
+            anchored_axis_position(
+                vertical,
+                current.origin.y,
+                current.size.height,
+                new_size.height,
+            ),
+        ),
+        new_size,
+    )
 }
 
 fn native_window_ptr(window: &NSWindow) -> *mut NSWindow {
@@ -416,7 +479,11 @@ struct MacWindowState {
     // construction are not queued for delivery to a callback registered later.
     last_visibility: Option<WindowVisibility>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    resize_callback_in_flight: bool,
+    pending_resize: Option<(Size<Pixels>, f32)>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    moved_callback_in_flight: bool,
+    pending_moved: bool,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
@@ -826,7 +893,11 @@ impl MacWindow {
                         visibility_callback: None,
                         last_visibility: None,
                         resize_callback: None,
+                        resize_callback_in_flight: false,
+                        pending_resize: None,
                         moved_callback: None,
+                        moved_callback_in_flight: false,
+                        pending_moved: false,
                         should_close_callback: None,
                         close_callback: None,
                         appearance_changed_callback: None,
@@ -1153,6 +1224,23 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach();
+    }
+
+    fn resize_anchored(&mut self, size: Size<Pixels>, anchor: ResizeAnchor) {
+        // Synchronous `setFrame:display:animate:NO`: no AppKit resize
+        // animation, and the resize lands before this call returns. The
+        // state lock is dropped before setFrame because its synchronous
+        // notifications re-enter window state through other locks.
+        let ptr = self.0.lock().native_window_ptr();
+        let native_window = unsafe { native_window_from_ptr(ptr) };
+        let content_rect = Objc2NSRect::new(
+            Objc2NSPoint::new(0., 0.),
+            Objc2NSSize::new(f64::from(size.width), f64::from(size.height)),
+        );
+        // Content size to frame size, accounting for the style mask.
+        let frame_size = native_window.frameRectForContentRect(content_rect).size;
+        let new_frame = anchored_frame(native_window.frame(), frame_size, anchor);
+        native_window.setFrame_display_animate(new_frame, false, false);
     }
 
     fn merge_all_windows(&self) {
@@ -1976,6 +2064,63 @@ fn should_skip_deferred_simple_fullscreen(is_closing: bool, native_window_presen
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anchored_frame_pins_each_anchor_growing_and_shrinking() {
+        // AppKit coords: origin at bottom-left of the rect, y grows up.
+        let current = Objc2NSRect::new(Objc2NSPoint::new(10., 20.), Objc2NSSize::new(100., 50.));
+        let grown = Objc2NSSize::new(140., 80.);
+        let shrunk = Objc2NSSize::new(60., 30.);
+
+        for new_size in [grown, shrunk] {
+            let frame = anchored_frame(current, new_size, ResizeAnchor::TopLeft);
+            // Visual top-left: x at min_x, visual top at max_y.
+            assert_eq!(frame.origin.x, 10.);
+            assert_eq!(frame.origin.y + frame.size.height, 70.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::TopRight);
+            assert_eq!(frame.origin.x + frame.size.width, 110.);
+            assert_eq!(frame.origin.y + frame.size.height, 70.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::BottomLeft);
+            assert_eq!(frame.origin.x, 10.);
+            assert_eq!(frame.origin.y, 20.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::BottomRight);
+            assert_eq!(frame.origin.x + frame.size.width, 110.);
+            assert_eq!(frame.origin.y, 20.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::Center);
+            assert_eq!(frame.origin.x + frame.size.width / 2., 60.);
+            assert_eq!(frame.origin.y + frame.size.height / 2., 45.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::Top);
+            assert_eq!(frame.origin.x + frame.size.width / 2., 60.);
+            assert_eq!(frame.origin.y + frame.size.height, 70.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::Bottom);
+            assert_eq!(frame.origin.x + frame.size.width / 2., 60.);
+            assert_eq!(frame.origin.y, 20.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::Left);
+            assert_eq!(frame.origin.x, 10.);
+            assert_eq!(frame.origin.y + frame.size.height / 2., 45.);
+
+            let frame = anchored_frame(current, new_size, ResizeAnchor::Right);
+            assert_eq!(frame.origin.x + frame.size.width, 110.);
+            assert_eq!(frame.origin.y + frame.size.height / 2., 45.);
+        }
+    }
+
+    #[test]
+    fn anchored_frame_keeps_size_unchanged_when_anchors_match() {
+        let current = Objc2NSRect::new(Objc2NSPoint::new(5., 6.), Objc2NSSize::new(80., 40.));
+        let frame = anchored_frame(current, current.size, ResizeAnchor::TopRight);
+        assert_eq!(frame.origin.x, current.origin.x);
+        assert_eq!(frame.origin.y, current.origin.y);
+        assert_eq!(frame.size.width, current.size.width);
+        assert_eq!(frame.size.height, current.size.height);
+    }
 
     #[test]
     fn app_owned_titlebar_claims_the_content_view_for_window_moves() {

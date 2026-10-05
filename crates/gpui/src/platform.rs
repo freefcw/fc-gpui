@@ -784,6 +784,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn resize(&mut self, size: Size<Pixels>);
+    /// Resizes the window to the given content size while keeping `anchor`
+    /// fixed on screen.
+    ///
+    /// Unlike [`Self::resize`], which keeps the window origin fixed (growing
+    /// right and down) and may animate the change, implementations must not
+    /// animate and must keep the anchored corner or edge at its on-screen
+    /// position. Useful for popup panels that grow away from the edge they
+    /// are attached to (e.g. a tray popup anchored under the menu bar).
+    ///
+    /// The default falls back to [`Self::resize`], ignoring the anchor.
+    fn resize_anchored(&mut self, size: Size<Pixels>, _anchor: ResizeAnchor) {
+        self.resize(size);
+    }
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -1695,6 +1708,33 @@ pub struct WindowParams {
     /// Optional window icon (primarily for X11)
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub icon: Option<image::RgbaImage>,
+}
+
+/// The window corner or edge that stays fixed on screen when the window is
+/// resized via [`PlatformWindow::resize_anchored`] / [`crate::Window::resize_anchored`].
+///
+/// Named from the viewer's perspective: `TopLeft` pins the visually top-left
+/// corner, so a tray popup below the menu bar grows down and to the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResizeAnchor {
+    /// Keep the visually top-left corner fixed; the window grows down-right.
+    TopLeft,
+    /// Keep the top edge's midpoint fixed; the window grows downward.
+    Top,
+    /// Keep the visually top-right corner fixed; the window grows down-left.
+    TopRight,
+    /// Keep the left edge's midpoint fixed; the window grows rightward.
+    Left,
+    /// Keep the center fixed; the window grows outward.
+    Center,
+    /// Keep the right edge's midpoint fixed; the window grows leftward.
+    Right,
+    /// Keep the visually bottom-left corner fixed; the window grows up-right.
+    BottomLeft,
+    /// Keep the bottom edge's midpoint fixed; the window grows upward.
+    Bottom,
+    /// Keep the visually bottom-right corner fixed; the window grows up-left.
+    BottomRight,
 }
 
 /// Represents the status of how a window should be opened.

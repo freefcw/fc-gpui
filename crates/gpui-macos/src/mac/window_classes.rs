@@ -895,12 +895,7 @@ fn handle_window_did_exit_fullscreen(this: &impl HasWindowIvars) {
 
 fn handle_window_did_move(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
-    let mut lock = window_state.lock();
-    if let Some(mut callback) = lock.moved_callback.take() {
-        drop(lock);
-        callback();
-        window_state.lock().moved_callback = Some(callback);
-    }
+    dispatch_moved_callback(&window_state);
 }
 
 fn handle_window_did_change_key_status(this: &impl HasWindowIvars, became_key: bool) {
@@ -1378,13 +1373,10 @@ fn handle_view_did_change_backing_properties(this: &GPUIView) {
 
     lock.renderer.update_drawable_size(drawable_size);
 
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        window_state.lock().resize_callback = Some(callback);
-    };
+    let content_size = lock.content_size();
+    let scale_factor = lock.scale_factor();
+    drop(lock);
+    dispatch_resize_callback(&window_state, content_size, scale_factor);
 }
 
 fn frame_size_changed(this: &GPUIView, size: Objc2NSSize) -> bool {
@@ -1402,13 +1394,76 @@ fn finish_set_frame_size(this: &GPUIView, size: Objc2NSSize) {
     let drawable_size = new_size.to_device_pixels(scale_factor);
     lock.renderer.update_drawable_size(drawable_size);
 
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
+    let content_size = lock.content_size();
+    let scale_factor = lock.scale_factor();
+    drop(lock);
+    dispatch_resize_callback(&window_state, content_size, scale_factor);
+}
+
+fn dispatch_resize_callback(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    content_size: Size<Pixels>,
+    scale_factor: f32,
+) {
+    let mut next = Some((content_size, scale_factor));
+    loop {
+        let Some((content_size, scale_factor)) = next.take() else {
+            return;
+        };
+        let mut callback = {
+            let mut lock = window_state.lock();
+            if lock.resize_callback_in_flight {
+                lock.pending_resize = Some((content_size, scale_factor));
+                return;
+            }
+            let Some(callback) = lock.resize_callback.take() else {
+                return;
+            };
+            lock.resize_callback_in_flight = true;
+            callback
+        };
+
         callback(content_size, scale_factor);
-        window_state.lock().resize_callback = Some(callback);
-    };
+
+        let pending = {
+            let mut lock = window_state.lock();
+            // Preserve a callback that was registered from inside the old
+            // callback; otherwise restore the original callback.
+            lock.resize_callback.get_or_insert(callback);
+            lock.resize_callback_in_flight = false;
+            lock.pending_resize.take()
+        };
+        next = pending;
+    }
+}
+
+fn dispatch_moved_callback(window_state: &Arc<Mutex<MacWindowState>>) {
+    loop {
+        let mut callback = {
+            let mut lock = window_state.lock();
+            if lock.moved_callback_in_flight {
+                lock.pending_moved = true;
+                return;
+            }
+            let Some(callback) = lock.moved_callback.take() else {
+                return;
+            };
+            lock.moved_callback_in_flight = true;
+            callback
+        };
+
+        callback();
+
+        let pending = {
+            let mut lock = window_state.lock();
+            lock.moved_callback.get_or_insert(callback);
+            lock.moved_callback_in_flight = false;
+            std::mem::take(&mut lock.pending_moved)
+        };
+        if !pending {
+            return;
+        }
+    }
 }
 
 fn from_objc_size(size: Objc2NSSize) -> NSSize {

@@ -11,9 +11,9 @@ use crate::{
     MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, ProgressBarState, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeAnchor, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     ThermalState, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
@@ -1664,18 +1664,47 @@ impl Window {
         }));
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
+            let foreground_executor = cx.foreground_executor().clone();
             move |_, _| {
-                handle
+                // Frame changes issued inside a window update (e.g.
+                // `Window::resize_anchored`) re-enter this callback
+                // synchronously while the app is still borrowed. When that
+                // happens, retry once the current update completes instead
+                // of dropping the resize notification.
+                if handle
                     .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
+                    .is_err()
+                {
+                    let mut cx = cx.clone();
+                    foreground_executor
+                        .spawn(async move {
+                            handle
+                                .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+                                .log_err();
+                        })
+                        .detach();
+                }
             }
         }));
         platform_window.on_moved(Box::new({
             let mut cx = cx.to_async();
+            let foreground_executor = cx.foreground_executor().clone();
             move || {
-                handle
+                // See the `on_resize` registration above: moved notifications
+                // can also fire synchronously while the app is borrowed.
+                if handle
                     .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
+                    .is_err()
+                {
+                    let mut cx = cx.clone();
+                    foreground_executor
+                        .spawn(async move {
+                            handle
+                                .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
+                                .log_err();
+                        })
+                        .detach();
+                }
             }
         }));
         platform_window.on_appearance_changed(Box::new({
@@ -2399,6 +2428,16 @@ impl Window {
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
+    }
+
+    /// Set the content size of the window without animating, keeping
+    /// `anchor` fixed on screen (e.g. `ResizeAnchor::TopLeft` grows the
+    /// window down and to the right, leaving the top-left corner in place).
+    ///
+    /// On platforms without an anchored implementation this falls back to
+    /// [`Self::resize`].
+    pub fn resize_anchored(&mut self, size: Size<Pixels>, anchor: ResizeAnchor) {
+        self.platform_window.resize_anchored(size, anchor);
     }
 
     /// Returns whether or not the window is currently fullscreen
