@@ -1460,7 +1460,7 @@ impl Window {
         if !accessibility_force_disabled {
             let initial_tree = accesskit::TreeUpdate {
                 nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
-                tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+                tree: Some(accesskit::TreeInfo::new(ROOT_NODE_ID)),
                 tree_id: accesskit::TreeId::ROOT,
                 focus: ROOT_NODE_ID,
             };
