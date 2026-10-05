@@ -1,11 +1,11 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-core"
 version = "0.10.0"
-authors = ["Adabraka Team"]
+authors.workspace = true
 publish = true
 description = "GPU-accelerated UI framework with system tray, global hotkeys, notifications, and daemon mode support (fork of Zed's GPUI)"
-homepage = "https://github.com/freefcw/fc-gpui"
+homepage.workspace = true
 readme = "README.md"
 keywords = [
     "gui",
@@ -15,8 +15,8 @@ keywords = [
     "daemon",
 ]
 categories = ["gui"]
-license = "Apache-2.0"
-repository = "https://github.com/freefcw/fc-gpui"
+license.workspace = true
+repository.workspace = true
 
 [features]
 accessibility = []
@@ -87,44 +87,41 @@ path = "benches/async_tasks.rs"
 harness = false
 required-features = ["bench"]
 
+[dependencies]
+anyhow.workspace = true
+async-task.workspace = true
+collections.workspace = true
+derive_more = { workspace = true, features = ["add", "add_assign", "deref", "deref_mut", "from_str", "mul", "mul_assign", "not"] }
+etagere.workspace = true
+futures.workspace = true
+http_client.workspace = true
+image.workspace = true
+itertools.workspace = true
+libc.workspace = true
+log.workspace = true
+parking.workspace = true
+parking_lot.workspace = true
+profiling.workspace = true
+rand = { workspace = true, optional = true }
+raw-window-handle.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smallvec = { workspace = true, features = ["union", "serde"] }
+smol.workspace = true
+strum.workspace = true
+util.workspace = true
+util_macros.workspace = true
+uuid.workspace = true
+
 [dependencies.accesskit]
 version = "0.25.1"
-
-[dependencies.anyhow]
-version = "1.0.86"
 
 [dependencies.async-channel]
 version = "2.5.0"
 
-[dependencies.async-task]
-version = "4.7"
-
-[dependencies.collections]
-path = "../collections"
-package = "fc-gpui-collections"
-version = "0.5.1"
-
 [dependencies.ctor]
 version = "0.4.3"
-
-[dependencies.derive_more]
-version = "2.1.1"
-features = [
-    "add",
-    "add_assign",
-    "deref",
-    "deref_mut",
-    "from_str",
-    "mul",
-    "mul_assign",
-    "not",
-]
-
-[dependencies.etagere]
-version = "0.2"
-
-[dependencies.futures]
-version = "0.3"
 
 [dependencies.hdrhistogram]
 version = "7"
@@ -135,62 +132,21 @@ path = "../gpui-macros"
 package = "fc-gpui-macros"
 version = "0.10.0"
 
-[dependencies.http_client]
-path = "../http_client"
-package = "fc-gpui-http-client"
-version = "0.5.2"
-
-[dependencies.image]
-version = "0.25.1"
-default-features = false
-
 [dependencies.inventory]
 version = "0.3.19"
 
-[dependencies.itertools]
-version = "0.14.0"
-
-[dependencies.libc]
-version = "0.2"
-
-[dependencies.log]
-version = "0.4.16"
-features = [
-    "kv_unstable_serde",
-    "serde",
-]
-
 [dependencies.lyon]
 version = "1.0"
-
-[dependencies.parking]
-version = "2.0.0"
-
-[dependencies.parking_lot]
-version = "0.12.1"
 
 [dependencies.postage]
 version = "0.5"
 features = ["futures-traits"]
 optional = true
 
-[dependencies.profiling]
-version = "1"
-
-[dependencies.rand]
-version = "0.9"
-optional = true
-
-[dependencies.raw-window-handle]
-version = "0.6"
-
 [dependencies.refineable]
 path = "../refineable"
 package = "fc-gpui-refineable"
 version = "0.5.1"
-
-[dependencies.regex]
-version = "1.11.1"
 
 [dependencies.resvg]
 version = "0.47"
@@ -214,39 +170,14 @@ path = "../semantic_version"
 package = "fc-gpui-semantic-version"
 version = "0.5.1"
 
-[dependencies.serde]
-version = "1.0.221"
-features = [
-    "derive",
-    "rc",
-]
-
-[dependencies.serde_json]
-version = "1.0.144"
-features = [
-    "preserve_order",
-    "raw_value",
-]
-
 [dependencies.slotmap]
 version = "1.0.6"
-
-[dependencies.smallvec]
-version = "1.6"
-features = ["union", "serde"]
-
-[dependencies.smol]
-version = "2.0"
 
 [dependencies.smol_str]
 version = "0.3"
 
 [dependencies.stacksafe]
 version = "1.0"
-
-[dependencies.strum]
-version = "0.27.0"
-features = ["derive"]
 
 [dependencies.sum_tree]
 path = "../sum_tree"
@@ -266,61 +197,28 @@ version = "0.25"
 version = "0.47"
 default-features = false
 
-[dependencies.util]
-path = "../util"
-package = "fc-gpui-util"
-version = "0.6.0"
-
-[dependencies.util_macros]
-path = "../util_macros"
-package = "fc-gpui-util-macros"
-version = "0.6.0"
-
-[dependencies.uuid]
-version = "1.1.2"
-features = [
-    "v4",
-    "v5",
-    "v7",
-    "serde",
-]
-
 [dependencies.waker-fn]
 version = "1.2.0"
 
+
+[dev-dependencies]
+collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+http_client = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+rand.workspace = true
+util = { workspace = true, features = ["test-support"] }
 
 [dev-dependencies.postage]
 version = "0.5"
 features = ["futures-traits"]
 
-[dev-dependencies.collections]
-path = "../collections"
-features = ["test-support"]
-package = "fc-gpui-collections"
-version = "0.5.1"
-
 [dev-dependencies.criterion]
 version = "0.8.2"
-
-[dev-dependencies.env_logger]
-version = "0.11"
-
-[dev-dependencies.http_client]
-path = "../http_client"
-features = ["test-support"]
-package = "fc-gpui-http-client"
-version = "0.5.2"
 
 [dev-dependencies.lyon]
 version = "1.0"
 features = ["extra"]
-
-[dev-dependencies.pretty_assertions]
-version = "1.3.0"
-features = ["unstable"]
-
-[dev-dependencies.rand]
-version = "0.9"
 
 [dev-dependencies.reqwest]
 version = "0.12.15-zed"
@@ -333,12 +231,6 @@ package = "zed-reqwest"
 
 [dev-dependencies.unicode-segmentation]
 version = "1.10"
-
-[dev-dependencies.util]
-path = "../util"
-features = ["test-support"]
-package = "fc-gpui-util"
-version = "0.6.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.bitflags]
 version = "2.6"

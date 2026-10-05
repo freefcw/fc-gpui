@@ -1,40 +1,22 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-perf"
 version = "0.5.1"
 publish = true
 description = "A tool for measuring test performance (originally from Zed - github.com/zed-industries/zed)"
-authors = ["Adabraka Team"]
-repository = "https://github.com/freefcw/fc-gpui"
+authors.workspace = true
+repository.workspace = true
 readme = false
-license = "Apache-2.0"
+license.workspace = true
 
 [lib]
 name = "adabraka_perf"
 path = "src/lib.rs"
 
-[[bin]]
-name = "adabraka_perf"
-path = "src/main.rs"
-
-[dependencies.collections]
-path = "../collections"
-package = "fc-gpui-collections"
-version = "0.5.1"
-
-[dependencies.serde]
-version = "1.0.221"
-features = [
-    "derive",
-    "rc",
-]
-
-[dependencies.serde_json]
-version = "1.0.144"
-features = [
-    "preserve_order",
-    "raw_value",
-]
+[dependencies]
+collections.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 
 [lints.clippy]

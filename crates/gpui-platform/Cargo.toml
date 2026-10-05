@@ -1,12 +1,12 @@
 [package]
 name = "fc-gpui-platform"
 version = "0.10.0"
-edition = "2024"
-authors = ["Adabraka Team"]
+edition.workspace = true
+authors.workspace = true
 publish = true
-license = "Apache-2.0"
-homepage = "https://github.com/freefcw/fc-gpui"
-repository = "https://github.com/freefcw/fc-gpui"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 description = "Internal platform composition facade for Adabraka GPUI"
 
 [lib]
@@ -73,7 +73,7 @@ wgpu = []
 x11 = ["gpui/x11", "gpui_linux/x11"]
 
 [dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
+gpui.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gpui_windows = { package = "fc-gpui-windows", path = "../gpui-windows", version = "0.10.0", default-features = false }

@@ -1,13 +1,13 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-macros"
 version = "0.10.0"
 publish = true
 description = "Macros used by Adabraka GPUI (originally from Zed - github.com/zed-industries/zed)"
-authors = ["Adabraka Team"]
-repository = "https://github.com/freefcw/fc-gpui"
+authors.workspace = true
+repository.workspace = true
 readme = false
-license = "Apache-2.0"
+license.workspace = true
 
 [features]
 inspector = []
@@ -57,7 +57,7 @@ features = [
 
 
 [dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", default-features = false }
+gpui = { path = "../gpui", package = "fc-gpui-core" }
 
 [lints.clippy]
 dbg_macro = "deny"

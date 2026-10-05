@@ -1,12 +1,12 @@
 [package]
 name = "fc-gpui-linux"
 version = "0.10.0"
-edition = "2024"
-authors = ["Adabraka Team"]
+edition.workspace = true
+authors.workspace = true
 publish = true
-license = "Apache-2.0"
-homepage = "https://github.com/freefcw/fc-gpui"
-repository = "https://github.com/freefcw/fc-gpui"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 readme = "README.md"
 description = "Linux and FreeBSD platform backend for Adabraka GPUI"
 
@@ -58,42 +58,42 @@ x11 = [
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 accesskit = { version = "0.25.1", optional = true }
 accesskit_unix = { version = "0.24.0", optional = true }
-anyhow = "1.0.86"
+anyhow.workspace = true
 as-raw-xcb-connection = { version = "1", optional = true }
 ashpd = { version = "0.12.3", features = ["async-std"], optional = true, default-features = false }
-async-task = "4.7"
-bytemuck = { version = "1", optional = true }
+async-task.workspace = true
+bytemuck = { workspace = true, optional = true }
 calloop = "0.14"
 calloop-wayland-source = { version = "0.4", optional = true }
-collections = { package = "fc-gpui-collections", path = "../collections", version = "0.5.1" }
+collections.workspace = true
 cosmic-text = { version = "0.19", optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
-flume = "0.11"
+flume.workspace = true
 font-kit = { package = "zed-font-kit", version = "0.14.1-zed", features = ["source-fontconfig-dlopen"], optional = true }
-futures = "0.3"
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
+futures.workspace = true
+gpui.workspace = true
 gpui_wgpu = { package = "fc-gpui-wgpu", path = "../gpui-wgpu", version = "0.10.0", optional = true, default-features = false }
-http_client = { package = "fc-gpui-http-client", path = "../http_client", version = "0.5.2" }
-image = { version = "0.25.1", default-features = false }
-itertools = "0.14.0"
+http_client.workspace = true
+image.workspace = true
+itertools.workspace = true
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
-libc = "0.2"
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+libc.workspace = true
+log.workspace = true
 notify-rust = "4"
 oo7 = { version = "0.5.0", default-features = false, features = ["async-std", "native_crypto"] }
 open = { version = "5.2.0", optional = true }
-parking = "2.0.0"
-parking_lot = "0.12.1"
-pathfinder_geometry = "0.5"
-profiling = "1"
-raw-window-handle = "0.6"
-smallvec = "1.6"
-smol = "2.0"
-strum = { version = "0.27.2", features = ["derive"] }
+parking.workspace = true
+parking_lot.workspace = true
+pathfinder_geometry.workspace = true
+profiling.workspace = true
+raw-window-handle.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+strum.workspace = true
 unicode-segmentation = "1.10"
 unicode-bidi = "0.3"
-util = { package = "fc-gpui-util", path = "../util", version = "0.6.0" }
-uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+util.workspace = true
+uuid.workspace = true
 wayland-backend = { version = "0.3.15", features = ["client_system", "dlopen", "log"], optional = true }
 wayland-client = { version = "0.31.14", optional = true }
 wayland-cursor = { version = "0.31.14", optional = true }
@@ -106,7 +106,7 @@ xim = { package = "zed-xim", version = "0.4.0-zed", features = ["x11rb-xcb", "x1
 xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 gpui_wgpu = { package = "fc-gpui-wgpu", path = "../gpui-wgpu", version = "0.10.0", default-features = false, features = ["test-support"] }
 ttf-parser = "0.25"
 

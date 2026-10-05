@@ -1,13 +1,13 @@
 [package]
 name = "fc-gpui-macos"
 version = "0.10.0"
-edition = "2024"
-authors = ["Adabraka Team"]
+edition.workspace = true
+authors.workspace = true
 build = "build.rs"
 publish = true
-license = "Apache-2.0"
-homepage = "https://github.com/freefcw/fc-gpui"
-repository = "https://github.com/freefcw/fc-gpui"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 readme = "README.md"
 description = "macOS platform and Metal renderer backend for Adabraka GPUI"
 
@@ -27,10 +27,10 @@ test-support = ["gpui/test-support"]
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit = { version = "0.25.1", optional = true }
 accesskit_macos = { version = "0.27.1", optional = true }
-anyhow = "1.0.86"
-async-task = "4.7"
+anyhow.workspace = true
+async-task.workspace = true
 block2 = "0.6"
-collections = { package = "fc-gpui-collections", path = "../collections", version = "0.5.1" }
+collections.workspace = true
 core-foundation = "0.10.1"
 core-foundation-sys = "0.8.7"
 core-graphics = "0.24"
@@ -39,15 +39,15 @@ core-text = "=21.0.0"
 # `display-link` feature (legacy `block`); see vendor/core-video.
 core-video = { version = "0.5.2", default-features = false, features = ["link"] }
 dispatch2 = { version = "0.3.1", features = ["std", "block2"], default-features = false }
-etagere = "0.2"
+etagere.workspace = true
 font-kit = { package = "zed-font-kit", version = "0.14.1-zed", optional = true }
 foreign-types = "0.5"
-futures = "0.3"
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
-image = { version = "0.25.1", default-features = false }
-itertools = "0.14.0"
-libc = "0.2"
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+futures.workspace = true
+gpui.workspace = true
+image.workspace = true
+itertools.workspace = true
+libc.workspace = true
+log.workspace = true
 media = { package = "fc-gpui-media", path = "../media", version = "0.5.2" }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSApplicationScripting", "NSAppearance", "NSAttributedString", "NSButton", "NSCell", "NSColor", "NSControl", "NSCursor", "NSDockTile", "NSDocumentController", "NSDragging", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSProgressIndicator", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSScroller", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSTextInputClient", "NSTextInputContext", "NSTrackingArea", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "NSWindowRestoration", "NSWindowTabGroup", "NSWorkspace", "block2", "libc", "objc2-core-foundation", "objc2-core-graphics", "objc2-quartz-core", "std"] }
@@ -60,23 +60,23 @@ objc2-local-authentication = { version = "0.3", default-features = false, featur
 objc2-screen-capture-kit = { version = "0.3", optional = true, default-features = false, features = ["SCError", "SCShareableContent", "SCStream", "block2", "dispatch2", "objc2-core-graphics", "objc2-core-media", "std"] }
 objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter", "block2"] }
-parking = "2.0.0"
-parking_lot = "0.12.1"
-pathfinder_geometry = "0.5"
-raw-window-handle = "0.6"
-smallvec = "1.6"
-smol = "2.0"
-strum = { version = "0.27.2", features = ["derive"] }
-util = { package = "fc-gpui-util", path = "../util", version = "0.6.0" }
-uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+parking.workspace = true
+parking_lot.workspace = true
+pathfinder_geometry.workspace = true
+raw-window-handle.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+strum.workspace = true
+util.workspace = true
+uuid.workspace = true
 
 [build-dependencies]
-bindgen = "0.73.2"
+bindgen.workspace = true
 cbindgen = { version = "0.29.4", default-features = false }
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
+gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [lints.clippy]
 dbg_macro = "deny"

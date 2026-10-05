@@ -1,27 +1,21 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-semantic-version"
 version = "0.5.1"
 publish = true
 description = "A library for working with semantic versioning (originally from Zed - github.com/zed-industries/zed)"
-authors = ["Adabraka Team"]
-repository = "https://github.com/freefcw/fc-gpui"
+authors.workspace = true
+repository.workspace = true
 readme = false
-license = "Apache-2.0"
+license.workspace = true
 
 [lib]
 name = "adabraka_semantic_version"
 path = "src/semantic_version.rs"
 
-[dependencies.anyhow]
-version = "1.0.86"
-
-[dependencies.serde]
-version = "1.0.221"
-features = [
-    "derive",
-    "rc",
-]
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
 
 
 [lints.clippy]

@@ -1,26 +1,26 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-media"
 version = "0.5.2"
 build = "build.rs"
 publish = true
 description = "Bindings to macOS media handling APIs (originally from Zed - github.com/zed-industries/zed)"
-authors = ["Adabraka Team"]
-repository = "https://github.com/freefcw/fc-gpui"
+authors.workspace = true
+repository.workspace = true
 readme = false
-license = "Apache-2.0"
+license.workspace = true
 
 [lib]
 name = "adabraka_media"
 path = "src/media.rs"
 doctest = false
 
-[dependencies.anyhow]
-version = "1.0.86"
+[dependencies]
+anyhow.workspace = true
 
 
-[build-dependencies.bindgen]
-version = "0.73.2"
+[build-dependencies]
+bindgen.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation]
 version = "0.10.1"

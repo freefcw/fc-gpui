@@ -1,13 +1,13 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-util-macros"
 version = "0.6.0"
 publish = true
 description = "Utility macros for Adabraka GPUI (originally from Zed - github.com/zed-industries/zed)"
-authors = ["Adabraka Team"]
-repository = "https://github.com/freefcw/fc-gpui"
+authors.workspace = true
+repository.workspace = true
 readme = false
-license = "Apache-2.0"
+license.workspace = true
 
 [features]
 perf-enabled = ["dep:perf"]

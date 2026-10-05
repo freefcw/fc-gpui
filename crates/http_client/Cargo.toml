@@ -1,13 +1,13 @@
 [package]
-edition = "2024"
+edition.workspace = true
 name = "fc-gpui-http-client"
 version = "0.5.2"
 publish = true
 description = "A HTTP client library for Adabraka GPUI (originally from Zed - github.com/zed-industries/zed)"
-authors = ["Adabraka Team"]
-repository = "https://github.com/freefcw/fc-gpui"
+authors.workspace = true
+repository.workspace = true
 readme = false
-license = "Apache-2.0"
+license.workspace = true
 
 [features]
 test-support = []
@@ -17,8 +17,15 @@ name = "adabraka_http_client"
 path = "src/http_client.rs"
 doctest = true
 
-[dependencies.anyhow]
-version = "1.0.86"
+[dependencies]
+anyhow.workspace = true
+derive_more = { workspace = true, features = ["deref"] }
+futures.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+util.workspace = true
 
 [dependencies.async-compression]
 version = "0.4"
@@ -36,30 +43,11 @@ version = "0.6.1"
 [dependencies.bytes]
 version = "1.0"
 
-[dependencies.derive_more]
-version = "2.1.1"
-features = [
-    "deref",
-]
-
-[dependencies.futures]
-version = "0.3"
-
 [dependencies.http]
 version = "1.1"
 
 [dependencies.http-body]
 version = "1.0"
-
-[dependencies.log]
-version = "0.4.16"
-features = [
-    "kv_unstable_serde",
-    "serde",
-]
-
-[dependencies.parking_lot]
-version = "0.12.1"
 
 [dependencies.reqwest]
 version = "0.12.15-zed"
@@ -75,20 +63,6 @@ features = [
 default-features = false
 package = "zed-reqwest"
 
-[dependencies.serde]
-version = "1.0.221"
-features = [
-    "derive",
-    "rc",
-]
-
-[dependencies.serde_json]
-version = "1.0.144"
-features = [
-    "preserve_order",
-    "raw_value",
-]
-
 [dependencies.sha2]
 version = "0.10"
 
@@ -97,11 +71,6 @@ version = "3.20.0"
 
 [dependencies.url]
 version = "2.2"
-
-[dependencies.util]
-path = "../util"
-package = "fc-gpui-util"
-version = "0.6.0"
 
 # async-tar's async-std backend calls async_std::os::windows::fs::symlink_file,
 # which is gated behind async-std's `unstable` feature (upstream async-tar does

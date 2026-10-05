@@ -1,12 +1,12 @@
 [package]
 name = "fc-gpui-wgpu"
 version = "0.10.0"
-edition = "2024"
-authors = ["Adabraka Team"]
+edition.workspace = true
+authors.workspace = true
 publish = true
-license = "Apache-2.0"
-homepage = "https://github.com/freefcw/fc-gpui"
-repository = "https://github.com/freefcw/fc-gpui"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 readme = "README.md"
 description = "WGPU renderer backend for Adabraka GPUI"
 
@@ -20,23 +20,23 @@ default = []
 test-support = ["gpui/test-support", "dep:image"]
 
 [dependencies]
-anyhow = "1.0.86"
-bytemuck = { version = "1", features = ["derive"] }
-collections = { package = "fc-gpui-collections", path = "../collections", version = "0.5.1" }
-etagere = "0.2.10"
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
-image = { version = "0.25.1", default-features = false, optional = true }
-log = "0.4.16"
-parking_lot = "0.12.1"
-profiling = "1"
-raw-window-handle = "0.6"
-smol = "2.0"
-util = { package = "fc-gpui-util", path = "../util", version = "0.6.0" }
+anyhow.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+collections.workspace = true
+etagere.workspace = true
+gpui.workspace = true
+image = { workspace = true, optional = true }
+log.workspace = true
+parking_lot.workspace = true
+profiling.workspace = true
+raw-window-handle.workspace = true
+smol.workspace = true
+util.workspace = true
 wgpu = "29.0.4"
 
 [dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false, features = ["test-support"] }
-image = { version = "0.25.1", default-features = false }
+gpui = { workspace = true, features = ["test-support"] }
+image.workspace = true
 
 [lints.clippy]
 dbg_macro = "deny"

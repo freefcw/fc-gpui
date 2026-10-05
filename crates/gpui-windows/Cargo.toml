@@ -1,13 +1,13 @@
 [package]
 name = "fc-gpui-windows"
 version = "0.10.0"
-edition = "2024"
-authors = ["Adabraka Team"]
+edition.workspace = true
+authors.workspace = true
 build = "build.rs"
 publish = true
-license = "Apache-2.0"
-homepage = "https://github.com/freefcw/fc-gpui"
-repository = "https://github.com/freefcw/fc-gpui"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 readme = "README.md"
 description = "Windows platform and DirectX renderer backend for Adabraka GPUI"
 
@@ -26,26 +26,26 @@ windows-manifest = ["dep:embed-resource"]
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit = { version = "0.25.1", optional = true }
 accesskit_windows = { version = "0.35.1", optional = true }
-anyhow = "1.0.86"
-async-task = "4.7"
-collections = { package = "fc-gpui-collections", path = "../collections", version = "0.5.1" }
-etagere = "0.2"
-flume = "0.11"
-futures = "0.3"
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false }
-image = { version = "0.25.1", default-features = false }
-itertools = "0.14.0"
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-parking = "2.0.0"
-parking_lot = "0.12.1"
-rand = "0.9"
-raw-window-handle = "0.6"
+anyhow.workspace = true
+async-task.workspace = true
+collections.workspace = true
+etagere.workspace = true
+flume.workspace = true
+futures.workspace = true
+gpui.workspace = true
+image.workspace = true
+itertools.workspace = true
+log.workspace = true
+parking.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+raw-window-handle.workspace = true
 # Same crates.io zed-scap 0.0.8-zed as fc-gpui-core; workspace [patch.crates-io]
 # strips unused macOS cocoa/objc transitives. See vendor/zed-scap/README.md.
 scap = { package = "zed-scap", version = "0.0.8-zed", optional = true, default-features = false }
-smallvec = "1.6"
-util = { package = "fc-gpui-util", path = "../util", version = "0.6.0" }
-uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+smallvec.workspace = true
+util.workspace = true
+uuid.workspace = true
 windows = { version = "0.62", features = ["Foundation_Numerics", "Storage_Search", "Storage_Streams", "UI_ViewManagement", "Wdk_System_SystemServices", "Win32_Globalization", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_DirectComposition", "Win32_Graphics_DirectWrite", "Win32_Graphics_DirectManipulation", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Graphics_Imaging", "Win32_Graphics_Hlsl", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_RemoteDesktop", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_WindowsProgramming", "Win32_System_WinRT", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging", "Win32_Networking_NetworkListManager"] }
 windows-core = "0.62"
 windows-numerics = "0.3"
@@ -55,7 +55,7 @@ windows-registry = "0.5"
 embed-resource = { version = "3.0", optional = true }
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
-gpui = { package = "fc-gpui-core", path = "../gpui", version = "0.10.0", default-features = false, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [lints.clippy]
 dbg_macro = "deny"
