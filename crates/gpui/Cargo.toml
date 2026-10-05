@@ -58,11 +58,12 @@ image-rayon = ["image/rayon"]
 font-kit = []
 inspector = ["gpui_macros/inspector"]
 input-latency-histogram = ["dep:hdrhistogram"]
-leak-detection = ["dep:backtrace"]
+# Tracks every entity handle so tests can assert nothing leaked. Also enabled
+# by setting `GPUI_LEAK_DETECTION` when building; see `build.rs`.
+leak-detection = []
 runtime_shaders = []
 screen-capture = ["dep:scap", "dep:windows-capture"]
 test-support = [
-    "leak-detection",
     "collections/test-support",
     "dep:rand",
     "util/test-support",
@@ -99,7 +100,6 @@ version = "4.7"
 
 [dependencies.backtrace]
 version = "0.3"
-optional = true
 
 [dependencies.collections]
 path = "../collections"
@@ -292,9 +292,6 @@ features = [
 [dependencies.waker-fn]
 version = "1.2.0"
 
-
-[dev-dependencies.backtrace]
-version = "0.3"
 
 [dev-dependencies.collections]
 path = "../collections"
