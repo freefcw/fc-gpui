@@ -38,6 +38,8 @@ pub mod prelude;
 pub mod profiler;
 mod resource_profile;
 mod scene;
+#[cfg(any(test, feature = "test-support"))]
+mod seeds;
 mod shared_string;
 mod shared_uri;
 mod spring;
@@ -64,6 +66,8 @@ pub mod _ownership_and_data_flow;
 pub mod private {
     pub use anyhow;
     pub use inventory;
+    #[cfg(any(test, feature = "test-support"))]
+    pub use rand;
     pub use schemars;
     pub use serde;
     pub use serde_json;
@@ -106,6 +110,8 @@ pub use platform::*;
 pub use refineable::*;
 pub use resource_profile::*;
 pub use scene::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use seeds::calculate_seeds;
 pub use shared_string::*;
 pub use shared_uri::*;
 pub use smol::Timer;
