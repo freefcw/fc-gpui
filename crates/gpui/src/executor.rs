@@ -542,7 +542,7 @@ impl BackgroundExecutor {
         return 4;
 
         #[cfg(not(any(test, feature = "test-support")))]
-        return num_cpus::get();
+        return std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     }
 
     /// Whether we're on the main thread.

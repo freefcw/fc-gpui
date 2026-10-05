@@ -810,7 +810,7 @@ pub(crate) struct HandleId {
 #[cfg(any(test, gpui_leak_detection))]
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
-    entity_handles: HashMap<EntityId, HashMap<HandleId, Option<backtrace::Backtrace>>>,
+    entity_handles: HashMap<EntityId, HashMap<HandleId, Option<std::backtrace::Backtrace>>>,
 }
 
 #[cfg(any(test, gpui_leak_detection))]
@@ -822,7 +822,7 @@ impl LeakDetector {
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.insert(
             handle_id,
-            LEAK_BACKTRACE.then(backtrace::Backtrace::new_unresolved),
+            LEAK_BACKTRACE.then(std::backtrace::Backtrace::force_capture),
         );
         handle_id
     }
@@ -836,9 +836,8 @@ impl LeakDetector {
         let handles = self.entity_handles.entry(entity_id).or_default();
         if !handles.is_empty() {
             for backtrace in handles.values_mut() {
-                if let Some(mut backtrace) = backtrace.take() {
-                    backtrace.resolve();
-                    eprintln!("Leaked handle: {:#?}", backtrace);
+                if let Some(backtrace) = backtrace.take() {
+                    eprintln!("Leaked handle: {backtrace:#?}");
                 } else {
                     eprintln!("Leaked handle: export LEAK_BACKTRACE to find allocation site");
                 }

@@ -1,11 +1,11 @@
 use crate::{PlatformDispatcher, TaskLabel, TaskPriority};
 use async_task::Runnable;
-use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
+    backtrace::Backtrace,
     future::Future,
     ops::RangeInclusive,
     pin::Pin,
@@ -223,7 +223,7 @@ impl TestDispatcher {
     }
 
     pub fn start_waiting(&self) {
-        self.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
+        self.state.lock().waiting_backtrace = Some(Backtrace::force_capture());
     }
 
     pub fn finish_waiting(&self) {
@@ -231,10 +231,7 @@ impl TestDispatcher {
     }
 
     pub fn waiting_backtrace(&self) -> Option<Backtrace> {
-        self.state.lock().waiting_backtrace.take().map(|mut b| {
-            b.resolve();
-            b
-        })
+        self.state.lock().waiting_backtrace.take()
     }
 
     pub fn rng(&self) -> StdRng {

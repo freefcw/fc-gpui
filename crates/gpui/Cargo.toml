@@ -65,6 +65,7 @@ runtime_shaders = []
 screen-capture = ["dep:scap", "dep:windows-capture"]
 test-support = [
     "collections/test-support",
+    "dep:postage",
     "dep:rand",
     "util/test-support",
     "http_client/test-support",
@@ -97,9 +98,6 @@ version = "2.5.0"
 
 [dependencies.async-task]
 version = "4.7"
-
-[dependencies.backtrace]
-version = "0.3"
 
 [dependencies.collections]
 path = "../collections"
@@ -165,9 +163,6 @@ features = [
 [dependencies.lyon]
 version = "1.0"
 
-[dependencies.num_cpus]
-version = "1.13"
-
 [dependencies.parking]
 version = "2.0.0"
 
@@ -177,6 +172,7 @@ version = "0.12.1"
 [dependencies.postage]
 version = "0.5"
 features = ["futures-traits"]
+optional = true
 
 [dependencies.profiling]
 version = "1"
@@ -292,6 +288,10 @@ features = [
 [dependencies.waker-fn]
 version = "1.2.0"
 
+
+[dev-dependencies.postage]
+version = "0.5"
+features = ["futures-traits"]
 
 [dev-dependencies.collections]
 path = "../collections"
