@@ -1782,6 +1782,10 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().renderer.gpu_specs().into()
     }
 
+    fn trim_renderer_caches(&self) {
+        self.borrow_mut().renderer.trim();
+    }
+
     fn play_system_bell(&self) {
         let state = self.borrow();
         if let Some(bell) = state.globals.system_bell.as_ref() {

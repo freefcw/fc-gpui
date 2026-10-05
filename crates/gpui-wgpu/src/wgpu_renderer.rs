@@ -1783,6 +1783,39 @@ impl WgpuRenderer {
         self.grow_instance_buffer(required)
     }
 
+    /// Shrinks the instance buffer back to the profile's initial size,
+    /// releasing GPU memory the buffer grew to during busy frames.
+    ///
+    /// Mirrors the Metal backend's `trim_renderer_caches`: intended for
+    /// long-running apps whose windows are hidden (e.g. tray apps) that want
+    /// to reclaim GPU memory while idle. Instance bind groups are built
+    /// per frame, so replacing the buffer between frames is safe, and the
+    /// regular grow path re-allocates on the next frame that needs more.
+    pub fn trim(&mut self) {
+        let Some(resources) = self.resources.as_mut() else {
+            return;
+        };
+        let (initial_capacity, _) = GpuResourceBudget::normalize_instance_buffer_limits(
+            self.gpu_resource_budget.instance_buffer_initial_size,
+            self.gpu_resource_budget.instance_buffer_max_size,
+            self.max_buffer_size,
+        );
+        if self.instance_buffer_capacity <= initial_capacity {
+            return;
+        }
+        log::debug!(
+            "instance buffer trimmed from {} to {initial_capacity}",
+            self.instance_buffer_capacity
+        );
+        resources.instance_buffer = resources.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: initial_capacity,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.instance_buffer_capacity = initial_capacity;
+    }
+
     fn grow_instance_buffer(&mut self, required: u64) -> Result<()> {
         let capacity = GpuResourceBudget::next_instance_buffer_capacity(
             self.instance_buffer_capacity,

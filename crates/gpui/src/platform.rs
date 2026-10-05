@@ -908,6 +908,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
+    /// Drops idle pooled GPU resources owned by this window's renderer,
+    /// where supported. Called by [`crate::App::trim_gpu_caches`] in
+    /// addition to [`Platform::trim_renderer_caches`], which covers
+    /// renderers whose caches are shared across windows.
+    fn trim_renderer_caches(&self) {}
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     fn play_system_bell(&self) {}

@@ -1605,6 +1605,10 @@ impl PlatformWindow for X11Window {
         Ok(())
     }
 
+    fn trim_renderer_caches(&self) {
+        self.0.state.borrow_mut().renderer.trim();
+    }
+
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut state = self.0.state.borrow_mut();
         state.background_appearance = background_appearance;

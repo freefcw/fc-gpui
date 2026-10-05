@@ -937,10 +937,16 @@ impl App {
     /// after the last visible window is hidden. The renderer will re-allocate
     /// resources on demand on the next frame.
     ///
-    /// This is a best-effort operation. Platforms that do not maintain
-    /// trimmable GPU pools may no-op, and active renderer resources are kept
-    /// alive until they can be safely released.
+    /// This is a best-effort operation. Every open window's renderer is
+    /// trimmed first, then the platform-level shared caches; platforms that
+    /// do not maintain trimmable GPU pools may no-op, and active renderer
+    /// resources are kept alive until they can be safely released.
     pub fn trim_gpu_caches(&self) {
+        for (_, window) in self.windows.iter() {
+            if let Some(window) = window {
+                window.platform_window.trim_renderer_caches();
+            }
+        }
         self.platform.trim_renderer_caches();
     }
 
