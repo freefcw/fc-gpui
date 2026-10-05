@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
+#[cfg(windows)]
 use async_zip::base::read;
+#[cfg(not(windows))]
+use async_zip::base::read1;
 #[cfg(not(windows))]
 use futures::AsyncSeek;
 use futures::{AsyncRead, io::BufReader};
@@ -72,46 +75,50 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
     destination: &Path,
     reader: R,
 ) -> Result<()> {
-    let mut reader = read::seek::ZipFileReader::new(BufReader::new(reader))
+    let mut reader = read1::seek::ZipArchiveReader::open(BufReader::new(reader))
         .await
         .context("reading the zip archive")?;
     let destination = &destination
         .canonicalize()
         .unwrap_or_else(|_| destination.to_path_buf());
-    for (i, entry) in reader.file().entries().to_vec().into_iter().enumerate() {
-        let path = destination.join(
-            entry
-                .filename()
-                .as_str()
-                .context("reading zip entry file name")?,
-        );
+    // read1 exposes raw central-directory records instead of the old
+    // `StoredZipEntry` accessors, so derive name/dir/permissions here with the
+    // same semantics the old API used: `dir` is a trailing-slash name, and
+    // permissions are the high 16 bits of the external attributes, only when
+    // the entry was made on Unix (version-made-by high byte == 3).
+    let entries = reader.cdrs().to_vec();
+    for (i, entry) in entries.iter().enumerate() {
+        let filename = entry
+            .insecure_file_name
+            .as_str()
+            .context("reading zip entry file name")?;
+        let path = destination.join(filename);
 
-        if entry
-            .dir()
-            .with_context(|| format!("reading zip entry metadata for path {path:?}"))?
-        {
+        if filename.ends_with('/') {
             std::fs::create_dir_all(&path)
                 .with_context(|| format!("creating directory {path:?}"))?;
         } else {
             let parent_dir = path
                 .parent()
-                .with_context(|| format!("no parent directory for {path:?}"))?;
+                .with_context(|| format!("no parent directory for path {path:?}"))?;
             std::fs::create_dir_all(parent_dir)
-                .with_context(|| format!("creating parent directory {parent_dir:?}"))?;
+                .with_context(|| format!("creating parent directory for path {path:?}"))?;
             let mut file = smol::fs::File::create(&path)
                 .await
                 .with_context(|| format!("creating file {path:?}"))?;
             let mut entry_reader = reader
-                .reader_with_entry(i)
+                .file(i)
                 .await
                 .with_context(|| format!("reading entry for path {path:?}"))?;
             futures::io::copy(&mut entry_reader, &mut file)
                 .await
                 .with_context(|| format!("extracting into file {path:?}"))?;
 
-            if let Some(perms) = entry.unix_permissions() {
+            // Version-made-by high byte == 3 means the entry's external
+            // attributes follow Unix conventions ( AttributeCompatibility::Unix ).
+            if entry.cdrh.v_made_by >> 8 == 3 {
                 use std::os::unix::fs::PermissionsExt;
-                let permissions = std::fs::Permissions::from_mode(u32::from(perms));
+                let permissions = std::fs::Permissions::from_mode(entry.cdrh.exter_attr >> 16);
                 file.set_permissions(permissions)
                     .await
                     .with_context(|| format!("setting permissions for file {path:?}"))?;
