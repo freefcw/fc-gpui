@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- **Library target names now match the published package names** — all 18 release crates drop
+  their custom `[lib]` names. A plain dependency on `fc-gpui` is now imported as `fc_gpui`
+  (was `gpui`), `fc-gpui-core` as `fc_gpui_core` (was `gpui_core`), the platform backends as
+  `fc_gpui_{linux,macos,windows,wgpu,platform}` (were `gpui_*`), and the utility crates as
+  `fc_gpui_*` (were `adabraka_*`):
+
+  ```toml
+  fc-gpui = "0.10.0"
+  ```
+
+  ```rust
+  use fc_gpui::*;
+  ```
+
+  To keep Zed-style `use gpui::*` code compiling unchanged, rename the dependency once — the
+  GPUI macros (derives, `register_action!`, `#[gpui::test]`) follow the dependency key:
+
+  ```toml
+  gpui = { package = "fc-gpui", version = "0.10.0" }
+  ```
+
+  Downstream that already renames the dependency needs no changes. The macros' automatic crate
+  resolution and the `[package.metadata.gpui-macros] crate = "…"` override apply to both
+  spellings, and the renamed-dependency path is pinned by `tests/downstream-gpui-alias`.
+- **`adabraka_perf` binary renamed to `fc-gpui-perf`** — removing the custom `[[bin]]` name
+  derives the executable from the package name; adjust scripts that invoke the old command.
+- **Package metadata drops the Adabraka branding** — crate descriptions and the authors field
+  now read `fc-gpui` / `FC GPUI Contributors`; no functional change.
+
 ### Fixes
 
 - **macOS tray clicks report the real button** — `handleTrayPanelClick:` no longer synthesizes
@@ -25,6 +56,29 @@
   `bounds_changed` always runs instead of being swallowed by `log_err`.
 
 ### Improvements
+
+- **Dependency refresh: renderer and accessibility stacks** — upgrades `wgpu` to 30.0.1
+  (surface `color_space: Auto` and `Queue::present` keep 29-era behavior; adapter limits
+  request skips the new anti-fingerprinting bucketing), `taffy` to 0.14.0 (measured nodes
+  delegate back to taffy's leaf algorithm, preserving 0.13 clamping and scrollable-overflow
+  semantics), and the accesskit family to `accesskit` 0.25.1 / `accesskit_macos` 0.27.1 /
+  `accesskit_unix` 0.24.0 / `accesskit_windows` 0.35.1 (deprecated `Tree` alias → `TreeInfo`).
+- **Dependency refresh: utilities** — `git2` 0.21 (clears RUSTSEC-2026-0183/0184),
+  `resvg`/`usvg` 0.48, `dirs` 7, `ctor` 1.0, `strum` 0.28, `etagere` 0.3, `itertools` 0.15,
+  `sha2` 0.11 (hex digest encoding no longer relies on the removed `LowerHex` impl),
+  `take-until` 0.3, and `async_zip` 0.0.19 including the migration from the deprecated
+  `read::seek` module to `read1`. Lockfile-wide `cargo update` applied 205 semver-compatible
+  bumps.
+- **Smaller production dependency graph** — `num_cpus` and `backtrace` are replaced by
+  `std::thread::available_parallelism` / `std::backtrace`, and `postage` (unmaintained since
+  2022) moves behind the `test-support` feature, which is the only code that uses it.
+- **Workspace-level dependency management** — a `[workspace.dependencies]` table now pins the
+  ~30 dependencies shared across crates, and member crates inherit via `workspace = true`, so
+  shared versions stay in lockstep; `[workspace.package]` metadata (authors, license, homepage,
+  repository) is inherited the same way.
+- **Profiler test isolation** — the executor timing test identifies its own task's timings via
+  a dedicated spawn-site probe file instead of asserting on global profiler state, fixing
+  interference from unrelated tests that poll tasks while the profiler is enabled.
 
 - **`Window::resize_anchored(size, anchor)`** — new API (also on `PlatformWindow`, with a
   default fallback to `resize`) that resizes without AppKit animation while keeping the given

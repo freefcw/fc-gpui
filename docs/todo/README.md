@@ -226,7 +226,7 @@ async fn concurrent_feature_is_stable(cx: &mut TestAppContext) { ... }
 
 | 债务 | 说明 | 触发时机 |
 | --- | --- | --- |
-| objc2 双版本 | `accesskit_macos`（截至 0.27.1）仍依赖 objc2 0.5 系，与 `gpui-macos` 的 objc2 0.6 系并存；升级 accesskit 系还需连带迁移 accesskit 0.25 API | 等上游 accesskit 迁移到 objc2 0.6 后统一 |
+| objc2 双版本 | `accesskit_macos` 0.27.1 仍依赖 objc2 0.5 系，与 `gpui-macos` 的 objc2 0.6 系并存（accesskit 系已在本次依赖刷新中升到 0.25.1 / 0.27.1 / 0.24.0 / 0.35.1，API 迁移完成；0.27.1 的依赖清单依旧钉在 objc2 0.5） | 等上游 accesskit 迁移到 objc2 0.6 后统一 |
 | Windows `async-std` `unstable` | `async-tar` 0.6 的 async-std 后端在 Windows 上调用 `symlink_file`，该 API 藏在 `async-std` 的 `unstable` 特性后，上游没有转发。`fc-gpui-http-client` 因此在 `cfg(windows)` 上直接依赖 `async-std` 并打开 `unstable`，靠特性合并让 Windows 构建编过。这不是业务代码自己要用的依赖。符号链接解压在 Unix 测试里跑过；Windows 的 `symlink_file` 只保证能编过，仓库测试不会在没有 `SeCreateSymbolicLinkPrivilege` 的 CI 上真正创建链接 | 升级或替换 `async-tar` 时先看它是否仍需要这条特性，不要把它当成无用依赖删掉 |
 
 ## 当前建议
