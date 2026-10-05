@@ -121,7 +121,7 @@ version = "0.25.1"
 version = "2.5.0"
 
 [dependencies.ctor]
-version = "0.4.3"
+version = "1.0.13"
 
 [dependencies.hdrhistogram]
 version = "7"
@@ -149,7 +149,7 @@ package = "fc-gpui-refineable"
 version = "0.5.1"
 
 [dependencies.resvg]
-version = "0.47"
+version = "0.48"
 features = [
     "text",
     "system-fonts",
@@ -194,7 +194,7 @@ version = "2.0.12"
 version = "0.25"
 
 [dependencies.usvg]
-version = "0.47"
+version = "0.48"
 default-features = false
 
 [dependencies.waker-fn]

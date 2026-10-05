@@ -48,11 +48,11 @@ bindgen = "0.73.2"
 bytemuck = "1"
 derive_more = "2.1.1"
 env_logger = "0.11"
-etagere = "0.2"
+etagere = "0.3"
 flume = "0.11"
 futures = "0.3"
 image = { version = "0.25.1", default-features = false }
-itertools = "0.14.0"
+itertools = "0.15.0"
 libc = "0.2"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 parking = "2.0.0"
@@ -67,7 +67,7 @@ serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 smallvec = "1.6"
 smol = "2.0"
-strum = { version = "0.27.2", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 
 # Workspace-only lockfile patches. Published fc-gpui-* manifests still

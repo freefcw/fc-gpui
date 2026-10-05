@@ -1,4 +1,4 @@
-use std::{path::Path, pin::Pin, task::Poll};
+use std::{fmt::Write as _, path::Path, pin::Pin, task::Poll};
 
 use anyhow::{Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -59,7 +59,14 @@ pub async fn download_server_binary(
                 .with_context(|| {
                     format!("saving archive contents into the temporary file for {url}",)
                 })?;
-            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+            let digest = writer.hasher.finalize();
+            let asset_sha_256 =
+                digest
+                    .iter()
+                    .fold(String::with_capacity(digest.len() * 2), |mut hex, byte| {
+                        let _ = write!(hex, "{byte:02x}");
+                        hex
+                    });
 
             anyhow::ensure!(
                 asset_sha_256 == expected_sha_256,
