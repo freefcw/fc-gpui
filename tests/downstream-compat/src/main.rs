@@ -26,7 +26,7 @@ fn compile_startup_and_desktop_contracts() {
         .with_resource_profile(AppProfile::Minimal)
         .run(|cx: &mut App| {
             cx.set_quit_mode(gpui::QuitMode::Explicit);
-            cx.set_tray_tooltip("Adabraka GPUI");
+            cx.set_tray_tooltip("fc-gpui");
             let _ = cx.show_notification("Ready", "Compatibility fixture");
         });
 }

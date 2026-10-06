@@ -4,30 +4,16 @@
 
 ### Breaking changes
 
-- **Library target names now match the published package names** — all 18 release crates drop
-  their custom `[lib]` names. A plain dependency on `fc-gpui` is now imported as `fc_gpui`
-  (was `gpui`), `fc-gpui-core` as `fc_gpui_core` (was `gpui_core`), the platform backends as
-  `fc_gpui_{linux,macos,windows,wgpu,platform}` (were `gpui_*`), and the utility crates as
-  `fc_gpui_*` (were `adabraka_*`):
-
-  ```toml
-  fc-gpui = "0.10.0"
-  ```
-
-  ```rust
-  use fc_gpui::*;
-  ```
-
-  To keep Zed-style `use gpui::*` code compiling unchanged, rename the dependency once — the
-  GPUI macros (derives, `register_action!`, `#[gpui::test]`) follow the dependency key:
-
-  ```toml
-  gpui = { package = "fc-gpui", version = "0.10.0" }
-  ```
-
-  Downstream that already renames the dependency needs no changes. The macros' automatic crate
-  resolution and the `[package.metadata.gpui-macros] crate = "…"` override apply to both
-  spellings, and the renamed-dependency path is pinned by `tests/downstream-gpui-alias`.
+- **Utility library target names now match the published package names** — the eleven support
+  crates drop their custom `adabraka_*` `[lib]` names: `fc-gpui-util` → `fc_gpui_util`,
+  `fc-gpui-collections` → `fc_gpui_collections`, `fc-gpui-http-client` → `fc_gpui_http_client`,
+  and so on. This only affects consumers that depend on those packages directly with the
+  default dependency key; in-tree and renamed dependencies are unchanged.
+- **The framework's import identity is unchanged** — `fc-gpui` still imports as `gpui`,
+  `fc-gpui-core` as `gpui_core`, and the platform backends as `gpui_*`. Existing
+  `use gpui::*` / `use gpui_core::*` code compiles without changes, and renamed dependencies
+  keep working with the GPUI macros (see `tests/downstream-gpui-alias` and the sibling
+  compatibility fixtures).
 - **`adabraka_perf` binary renamed to `fc-gpui-perf`** — removing the custom `[[bin]]` name
   derives the executable from the package name; adjust scripts that invoke the old command.
 - **Package metadata drops the Adabraka branding** — crate descriptions and the authors field

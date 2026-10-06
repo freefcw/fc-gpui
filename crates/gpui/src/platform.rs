@@ -2992,9 +2992,9 @@ mod clipboard_string_tests {
     #[test]
     fn raw_metadata_preserves_the_clipboard_text() {
         let clipboard_string = ClipboardString::new("copied text".to_owned())
-            .with_metadata("application/x-adabraka".to_owned());
+            .with_metadata("application/x-fc-gpui".to_owned());
 
         assert_eq!(clipboard_string.text(), "copied text");
-        assert_eq!(clipboard_string.metadata(), Some("application/x-adabraka"));
+        assert_eq!(clipboard_string.metadata(), Some("application/x-fc-gpui"));
     }
 }

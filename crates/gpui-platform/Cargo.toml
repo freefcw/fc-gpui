@@ -7,7 +7,7 @@ publish = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Internal platform composition facade for Adabraka GPUI"
+description = "Internal platform composition facade for fc-gpui"
 
 [lib]
 name = "gpui_platform"

@@ -1,6 +1,6 @@
-# Adabraka GPUI
+# FC GPUI
 
-A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github.com/zed-industries/zed). Adabraka GPUI extends the original framework with daemon-mode capabilities, system tray integration, global hotkeys, native notifications, and more — making it suitable for background apps, menu bar utilities, and overlay tools.
+A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github.com/zed-industries/zed). fc-gpui extends the original framework with daemon-mode capabilities, system tray integration, global hotkeys, native notifications, and more — making it suitable for background apps, menu bar utilities, and overlay tools.
 
 ## Getting Started
 
@@ -31,6 +31,26 @@ fc-gpui = { version = "0.10.0", default-features = false, features = [
 
 `image-format-*` features map to the underlying `image` crate decoder features. `image-rayon`
 re-enables parallel decoding. SVG support is handled separately through `resvg`.
+
+### Import Naming
+
+The published package is `fc-gpui`, but the library target keeps the upstream `gpui` namespace,
+so a plain dependency imports as `gpui` and Zed-derived code compiles unchanged:
+
+```rust
+use gpui::*;
+```
+
+Renaming the dependency is also supported — the GPUI macros (derives, `register_action!`,
+`#[gpui::test]`) follow the dependency key:
+
+```toml
+[dependencies]
+gpui = { package = "fc-gpui", version = "0.10.0" }
+```
+
+The utility crates (`fc-gpui-util`, `fc-gpui-http-client`, …) import under their matching
+`fc_gpui_*` library names.
 
 ### Macro Dependency Override
 
@@ -77,7 +97,7 @@ implementation dependency and does not change the `Application::new()` entry poi
 
 ### Accessibility
 
-Adabraka GPUI exposes AccessKit-backed roles, labels, values, focus, and action handlers on
+fc-gpui exposes AccessKit-backed roles, labels, values, focus, and action handlers on
 elements. Native adapters connect the generated accessibility tree to macOS Accessibility,
 Linux AT-SPI, and Windows UI Automation.
 
@@ -145,7 +165,7 @@ cargo check -p fc-gpui --example layer_shell --features wayland
 - AccessKit accessibility tree and native platform adapters
 - Test framework with `#[gpui::test]`
 
-### Daemon & Background App Support (new in Adabraka)
+### Daemon & Background App Support (new in fc-gpui)
 - **System tray** — icon, tooltip, and nested menus with action callbacks
 - **Global hotkeys** — register system-wide keyboard shortcuts
 - **Native notifications** — OS-level notifications on all platforms

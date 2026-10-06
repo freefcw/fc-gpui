@@ -1,11 +1,11 @@
-# Adabraka GPUI
+# FC GPUI
 
 [![Crates.io](https://img.shields.io/crates/v/fc-gpui.svg)](https://crates.io/crates/fc-gpui)
 [![License](https://img.shields.io/crates/l/fc-gpui.svg)](LICENSE-APACHE)
 
 > `fc-gpui` 0.10.0 is published on crates.io.
 
-A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github.com/zed-industries/zed). Adabraka GPUI extends the original framework with daemon-mode capabilities, system tray integration, global hotkeys, native notifications, and more — making it suitable for background apps, menu bar utilities, and overlay tools.
+A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github.com/zed-industries/zed). fc-gpui extends the original framework with daemon-mode capabilities, system tray integration, global hotkeys, native notifications, and more — making it suitable for background apps, menu bar utilities, and overlay tools.
 
 ## Getting Started
 
@@ -36,6 +36,27 @@ fc-gpui = { version = "0.10.0", default-features = false, features = [
 
 The crate now exposes `image-format-*` features that map directly to `image` crate decoders, plus
 `image-rayon` for parallel decoding. SVG rendering remains available separately via `resvg`.
+
+### Import Naming
+
+The published package is `fc-gpui`, but the library target keeps the upstream `gpui` namespace,
+so a plain dependency imports as `gpui` and Zed-derived code compiles unchanged:
+
+```rust
+use gpui::*;
+```
+
+Renaming the dependency is also supported — the GPUI macros (derives, `register_action!`,
+`#[gpui::test]`) follow the dependency key, covered by
+[`tests/downstream-gpui-alias`](tests/downstream-gpui-alias):
+
+```toml
+[dependencies]
+gpui = { package = "fc-gpui", version = "0.10.0" }
+```
+
+The utility crates (`fc-gpui-util`, `fc-gpui-http-client`, …) import under their matching
+`fc_gpui_*` library names.
 
 ### Macro Dependency Override
 

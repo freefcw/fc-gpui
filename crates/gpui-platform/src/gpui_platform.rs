@@ -1,4 +1,4 @@
-//! Platform composition helpers for Adabraka GPUI.
+//! Platform composition helpers for fc-gpui.
 //!
 //! This crate is an internal migration boundary. The published `fc-gpui`
 //! package remains the compatibility entry point for ordinary downstream users.

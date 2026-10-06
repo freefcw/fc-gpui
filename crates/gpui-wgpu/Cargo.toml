@@ -8,7 +8,7 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 readme = "README.md"
-description = "WGPU renderer backend for Adabraka GPUI"
+description = "WGPU renderer backend for fc-gpui"
 
 [lib]
 name = "gpui_wgpu"

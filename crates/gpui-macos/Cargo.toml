@@ -9,7 +9,7 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 readme = "README.md"
-description = "macOS platform and Metal renderer backend for Adabraka GPUI"
+description = "macOS platform and Metal renderer backend for fc-gpui"
 
 [lib]
 name = "gpui_macos"

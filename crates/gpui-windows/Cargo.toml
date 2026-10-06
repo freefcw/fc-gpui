@@ -9,7 +9,7 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 readme = "README.md"
-description = "Windows platform and DirectX renderer backend for Adabraka GPUI"
+description = "Windows platform and DirectX renderer backend for fc-gpui"
 
 [lib]
 name = "gpui_windows"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/adabraka-release-archives.XXXXXX")"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/fc-gpui-release-archives.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 readonly RELEASE_PACKAGES=(
