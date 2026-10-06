@@ -13,7 +13,6 @@ license.workspace = true
 perf-enabled = ["dep:perf"]
 
 [lib]
-name = "adabraka_util_macros"
 path = "src/util_macros.rs"
 doctest = false
 proc-macro = true

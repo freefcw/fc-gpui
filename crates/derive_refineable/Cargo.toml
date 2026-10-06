@@ -10,7 +10,6 @@ readme = false
 license.workspace = true
 
 [lib]
-name = "adabraka_derive_refineable"
 path = "src/derive_refineable.rs"
 doctest = false
 proc-macro = true

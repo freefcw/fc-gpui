@@ -10,7 +10,6 @@ readme = false
 license.workspace = true
 
 [lib]
-name = "adabraka_perf"
 path = "src/lib.rs"
 
 [dependencies]

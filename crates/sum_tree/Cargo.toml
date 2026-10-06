@@ -10,7 +10,6 @@ readme = false
 license.workspace = true
 
 [lib]
-name = "adabraka_sum_tree"
 path = "src/sum_tree.rs"
 doctest = false
 

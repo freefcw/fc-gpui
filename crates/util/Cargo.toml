@@ -17,7 +17,6 @@ test-support = [
 ]
 
 [lib]
-name = "adabraka_util"
 path = "src/util.rs"
 doctest = true
 

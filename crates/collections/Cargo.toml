@@ -13,7 +13,6 @@ license.workspace = true
 test-support = []
 
 [lib]
-name = "adabraka_collections"
 path = "src/collections.rs"
 doctest = false
 

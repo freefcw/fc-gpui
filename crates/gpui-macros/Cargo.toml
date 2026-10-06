@@ -13,7 +13,6 @@ license.workspace = true
 inspector = []
 
 [lib]
-name = "adabraka_gpui_macros"
 path = "src/gpui_macros.rs"
 doctest = false
 proc-macro = true

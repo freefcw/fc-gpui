@@ -1,6 +1,6 @@
 #[test]
 fn test_derive_context() {
-    use adabraka_gpui_macros::{AppContext, VisualContext};
+    use fc_gpui_macros::{AppContext, VisualContext};
     use gpui::{App, Window};
 
     #[derive(AppContext, VisualContext)]

@@ -21,6 +21,7 @@ members = [
     "crates/semantic_version",
     "tests/downstream-compat",
     "tests/downstream-core-with-facade-dev",
+    "tests/downstream-gpui-alias",
     "tests/downstream-renamed-compat",
     "tests/downstream-underscore-alias",
 ]

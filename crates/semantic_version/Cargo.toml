@@ -10,7 +10,6 @@ readme = false
 license.workspace = true
 
 [lib]
-name = "adabraka_semantic_version"
 path = "src/semantic_version.rs"
 
 [dependencies]

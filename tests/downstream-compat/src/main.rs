@@ -31,8 +31,17 @@ fn compile_startup_and_desktop_contracts() {
         });
 }
 
+// A plain (default-key) dependency imports under the library target name, so
+// fc-gpui-collections must stay fc_gpui_collections; this pin fails to compile
+// if a custom [lib] name ever returns.
+fn compile_utility_default_key_import_contract() {
+    let counts: fc_gpui_collections::HashMap<&str, u32> = fc_gpui_collections::HashMap::default();
+    let _ = counts.len();
+}
+
 fn main() {
     let _ = DerivedView;
     let _ = ManualView;
     let _ = compile_startup_and_desktop_contracts;
+    let _ = compile_utility_default_key_import_contract;
 }

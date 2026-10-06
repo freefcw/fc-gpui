@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 fc-gpui = { path = "../../crates/gpui-compat", default-features = false }
+fc-gpui-collections = { path = "../../crates/collections" }

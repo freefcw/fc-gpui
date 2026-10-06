@@ -1,6 +1,6 @@
 //! This code was generated using Zed Agent with Claude Opus 4.
 
-use adabraka_gpui_macros::derive_inspector_reflection;
+use fc_gpui_macros::derive_inspector_reflection;
 
 #[derive_inspector_reflection]
 trait Transform: Clone {

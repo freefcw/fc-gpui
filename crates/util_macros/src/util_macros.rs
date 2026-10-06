@@ -180,7 +180,7 @@ impl PerfArgs {
 ///
 /// # Examples
 /// ```rust
-/// use util_macros::perf;
+/// use fc_gpui_util_macros::perf;
 ///
 /// #[perf]
 /// fn generic_test() {
@@ -196,7 +196,7 @@ impl PerfArgs {
 /// This also works with `#[gpui::test]`s, though in most cases it shouldn't
 /// be used with automatic iterations.
 /// ```rust,ignore
-/// use util_macros::perf;
+/// use fc_gpui_util_macros::perf;
 ///
 /// #[perf(iterations = 1, critical)]
 /// #[gpui::test]
