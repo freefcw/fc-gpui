@@ -6,18 +6,19 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/fc-gpui-release-archives.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# Topological order: also the safe order for sequential `cargo publish`.
 readonly RELEASE_PACKAGES=(
+    fc-gpui-collections
+    fc-gpui-perf
     fc-gpui-util-macros
     fc-gpui-util
-    fc-gpui-collections
-    fc-gpui-semantic-version
+    fc-gpui-http-client
+    fc-gpui-macros
     fc-gpui-derive-refineable
     fc-gpui-refineable
+    fc-gpui-semantic-version
     fc-gpui-sum-tree
-    fc-gpui-http-client
     fc-gpui-media
-    fc-gpui-perf
-    fc-gpui-macros
     fc-gpui-core
     fc-gpui-wgpu
     fc-gpui-linux
