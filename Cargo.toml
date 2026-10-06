@@ -37,11 +37,11 @@ repository = "https://github.com/freefcw/fc-gpui"
 # and may only add features on top, so versions stay in lockstep across crates.
 [workspace.dependencies]
 # Internal crates, also usable from downstream via the registry.
-collections = { path = "crates/collections", package = "fc-gpui-collections", version = "0.5.1" }
+collections = { path = "crates/collections", package = "fc-gpui-collections", version = "0.6.0" }
 gpui = { path = "crates/gpui", package = "fc-gpui-core", version = "0.10.0", default-features = false }
 http_client = { path = "crates/http_client", package = "fc-gpui-http-client", version = "0.5.2" }
-util = { path = "crates/util", package = "fc-gpui-util", version = "0.6.0" }
-util_macros = { path = "crates/util_macros", package = "fc-gpui-util-macros", version = "0.6.0" }
+util = { path = "crates/util", package = "fc-gpui-util", version = "0.7.0" }
+util_macros = { path = "crates/util_macros", package = "fc-gpui-util-macros", version = "0.7.0" }
 
 anyhow = "1.0.86"
 async-task = "4.7"

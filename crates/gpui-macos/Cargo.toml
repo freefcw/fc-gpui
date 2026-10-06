@@ -48,7 +48,7 @@ image.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
-media = { package = "fc-gpui-media", path = "../media", version = "0.5.2" }
+media = { package = "fc-gpui-media", path = "../media", version = "0.6.0" }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSAlert", "NSApplication", "NSApplicationScripting", "NSAppearance", "NSAttributedString", "NSButton", "NSCell", "NSColor", "NSControl", "NSCursor", "NSDockTile", "NSDocumentController", "NSDragging", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSProgressIndicator", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSScroller", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSTextInputClient", "NSTextInputContext", "NSTrackingArea", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "NSWindowRestoration", "NSWindowTabGroup", "NSWorkspace", "block2", "libc", "objc2-core-foundation", "objc2-core-graphics", "objc2-quartz-core", "std"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFCGTypes", "objc2"] }

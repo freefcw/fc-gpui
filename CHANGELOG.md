@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0 (2026-10-06)
+
 ### Breaking changes
 
 - **Utility library target names now match the published package names** — the eleven support
@@ -40,6 +42,13 @@
   `on_moved` callbacks retry on the foreground executor when they fire synchronously while the
   app is already borrowed (the exact path taken by programmatic `setFrame:`-based resizes), so
   `bounds_changed` always runs instead of being swallowed by `log_err`.
+
+- **GitHub archive extraction** — `fc-gpui-http-client` 0.5.2 keeps a PAX size header on
+  the entry it describes. A size header placed before a GNU long name no longer changes the
+  length of the following file. Unix symlink extraction is covered by a test.
+- **Windows archive builds** — `fc-gpui-http-client` depends on `async-std` with the `unstable`
+  feature on Windows only, so `async-tar` 0.6 can call `symlink_file`. This dependency is
+  required for that build. Windows CI does not create links without `SeCreateSymbolicLinkPrivilege`.
 
 ### Improvements
 
@@ -80,6 +89,20 @@
   `on_tray_icon_click_event` doc comments now state the macOS next-main-queue-turn delivery, the
   click-kind mapping, and the Linux host caveats.
 
+- **Dependency refresh for 0.10** — migrates `derive_more` 0.99 to 2.1 with the minimal
+  feature set and regression coverage for the derived geometry and font-weight arithmetic,
+  and moves the Linux portal client to `ashpd` 0.12 (`zbus` 5).
+  The public `gpui::ctor` re-export is now `ctor` 0.4.3: annotate startup functions with
+  `unsafe fn`. Existing safe `fn` items still compile because `ctor` silences that deprecation
+  by default.
+  macOS screen-capture frameworks (`objc2-core-media`, `objc2-screen-capture-kit`) are now
+  optional behind the existing `screen-capture` feature, and `objc2-app-kit` /
+  `objc2-foundation` no longer pull unused default features.
+- **Build and bench tooling** — updates `bindgen` to 0.73.2, `cbindgen` to 0.29.4, and the
+  Criterion benches to 0.8.2.
+- **`stacksafe` 1.0** — drops the transitive `proc-macro-error2` crate, whose code Rust has
+  flagged for rejection in a future version.
+
 ### Downstream workarounds removable
 
 Standing section: lists upstream fixes that let downstream packages delete their own
@@ -95,33 +118,6 @@ workarounds. Check here before maintaining a local workaround registry.
   - macOS tray right-click discrimination no longer needs left-click-only UI workarounds;
     handle `TrayIconEvent::RightClick` directly. The implicit `set_tray_panel_mode(true)`
     prerequisite call is only needed when a menu is attached.
-
-## 0.10.0 (2026-10-05)
-
-### Fixes
-
-- **GitHub archive extraction** — `fc-gpui-http-client` 0.5.2 keeps a PAX size header on
-  the entry it describes. A size header placed before a GNU long name no longer changes the
-  length of the following file. Unix symlink extraction is covered by a test.
-- **Windows archive builds** — `fc-gpui-http-client` depends on `async-std` with the `unstable`
-  feature on Windows only, so `async-tar` 0.6 can call `symlink_file`. This dependency is
-  required for that build. Windows CI does not create links without `SeCreateSymbolicLinkPrivilege`.
-
-### Improvements
-
-- **Dependency refresh for 0.10** — migrates `derive_more` 0.99 to 2.1 with the minimal
-  feature set and regression coverage for the derived geometry and font-weight arithmetic,
-  and moves the Linux portal client to `ashpd` 0.12 (`zbus` 5).
-  The public `gpui::ctor` re-export is now `ctor` 0.4.3: annotate startup functions with
-  `unsafe fn`. Existing safe `fn` items still compile because `ctor` silences that deprecation
-  by default.
-  macOS screen-capture frameworks (`objc2-core-media`, `objc2-screen-capture-kit`) are now
-  optional behind the existing `screen-capture` feature, and `objc2-app-kit` /
-  `objc2-foundation` no longer pull unused default features.
-- **Build and bench tooling** — updates `bindgen` to 0.73.2, `cbindgen` to 0.29.4, and the
-  Criterion benches to 0.8.2.
-- **`stacksafe` 1.0** — drops the transitive `proc-macro-error2` crate, whose code Rust has
-  flagged for rejection in a future version.
 
 ## 0.9.2 (2026-10-02)
 
