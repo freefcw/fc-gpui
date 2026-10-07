@@ -96,7 +96,6 @@ version = "8"
 
 [dev-dependencies]
 git2 = { version = "0.21.0", default-features = false }
-indoc = "2"
 pretty_assertions.workspace = true
 rand.workspace = true
 util_macros.workspace = true

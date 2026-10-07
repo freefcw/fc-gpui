@@ -6,5 +6,4 @@ publish = false
 license.workspace = true
 
 [dependencies]
-rand = "=0.9.4"
 ui = { package = "fc-gpui", path = "../../crates/gpui-compat", default-features = false, features = ["test-support"] }

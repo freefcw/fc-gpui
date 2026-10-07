@@ -203,9 +203,7 @@ version = "1.2.0"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
-pretty_assertions.workspace = true
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 
@@ -228,9 +226,6 @@ features = [
 ]
 default-features = false
 package = "zed-reqwest"
-
-[dev-dependencies.unicode-segmentation]
-version = "1.10"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.bitflags]
 version = "2.6"

@@ -16,6 +16,9 @@
 
 ### Changes
 
+- **Unused dependencies removed** — `fc-gpui-core` dev-deps `env_logger`,
+  `pretty_assertions`, `unicode-segmentation`; `fc-gpui-util` dev-dep `indoc`;
+  stale `rand` pins in the downstream compatibility fixtures.
 - **`deny.toml` licensing fix** — allow `NCSA` (`libfuzzer-sys`, reachable only
   under `image-format-avif`) so `cargo deny check licenses` passes; drop the
   unmatched `Unicode-DFS-2016` / `CDLA-Permissive-2.0` allowances.

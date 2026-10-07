@@ -304,7 +304,7 @@ dependencies = [
  "enumflags2",
  "futures-channel",
  "futures-util",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "serde_repr",
  "url",
@@ -1853,7 +1853,7 @@ dependencies = [
  "futures",
  "log",
  "lyon",
- "rand 0.9.4",
+ "rand 0.9.5",
  "schemars",
  "serde",
  "serde_json",
@@ -1883,7 +1883,6 @@ dependencies = [
  "criterion",
  "ctor",
  "derive_more",
- "env_logger",
  "etagere",
  "fc-gpui-collections",
  "fc-gpui-http-client",
@@ -1904,9 +1903,8 @@ dependencies = [
  "parking",
  "parking_lot",
  "postage",
- "pretty_assertions",
  "profiling",
- "rand 0.9.4",
+ "rand 0.9.5",
  "raw-window-handle",
  "regex",
  "resvg",
@@ -1923,7 +1921,6 @@ dependencies = [
  "taffy",
  "thiserror 2.0.21",
  "ttf-parser",
- "unicode-segmentation",
  "usvg",
  "uuid",
  "waker-fn",
@@ -1963,7 +1960,6 @@ name = "fc-gpui-gpui-alias-compat"
 version = "0.0.0"
 dependencies = [
  "fc-gpui",
- "rand 0.9.4",
 ]
 
 [[package]]
@@ -2150,7 +2146,6 @@ name = "fc-gpui-renamed-dependency-compat"
 version = "0.0.0"
 dependencies = [
  "fc-gpui",
- "rand 0.9.4",
 ]
 
 [[package]]
@@ -2169,7 +2164,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "log",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rayon",
 ]
 
@@ -2178,7 +2173,6 @@ name = "fc-gpui-underscore-alias-compat"
 version = "0.0.0"
 dependencies = [
  "fc-gpui",
- "rand 0.9.4",
 ]
 
 [[package]]
@@ -2197,13 +2191,12 @@ dependencies = [
  "futures-lite",
  "git2",
  "globset",
- "indoc",
  "itertools 0.15.0",
  "libc",
  "log",
  "nix",
  "pretty_assertions",
- "rand 0.9.4",
+ "rand 0.9.5",
  "regex",
  "rust-embed",
  "schemars",
@@ -2268,7 +2261,7 @@ dependencies = [
  "log",
  "parking",
  "parking_lot",
- "rand 0.9.4",
+ "rand 0.9.5",
  "raw-window-handle",
  "smallvec",
  "uuid",
@@ -3136,15 +3129,6 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
-]
-
-[[package]]
-name = "indoc"
-version = "2.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
-dependencies = [
- "rustversion",
 ]
 
 [[package]]
@@ -4350,7 +4334,7 @@ dependencies = [
  "num",
  "num-bigint-dig",
  "pbkdf2",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "sha2 0.10.9",
  "subtle",
@@ -4945,9 +4929,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.4"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -5056,7 +5040,7 @@ dependencies = [
  "num-traits",
  "paste",
  "profiling",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "simd_helpers",
  "thiserror 2.0.21",
