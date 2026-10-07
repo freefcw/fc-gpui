@@ -107,7 +107,7 @@ wayland-protocols-wlr = { version = "0.3.9", features = ["client"], optional = t
 wayland-scanner = { version = "0.31.10", optional = true }
 x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "xkb", "randr", "xinput", "cursor", "resource_manager", "screensaver", "shape", "sync"], optional = true }
 xim = { package = "zed-xim", version = "0.4.0-zed", features = ["x11rb-xcb", "x11rb-client"], optional = true }
-xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
+xkbcommon = { version = "0.9.0", features = ["wayland", "x11"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

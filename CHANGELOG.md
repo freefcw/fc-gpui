@@ -16,6 +16,10 @@
 
 ### Changes
 
+- **Linux channel and keyboard deps refreshed** — `flume` 0.11 → 0.12 and `xkbcommon`
+  0.8 → 0.9 (no API changes at our call sites). Deferred with reasons: `x11rb` 0.14
+  (blocked by `zed-xim`'s `^0.13` requirement), `ashpd` 0.13 (feature rework needs a
+  Linux compile check), `oo7` 0.6 (controversial keyring behavior change upstream).
 - **Unused dependencies removed** — `fc-gpui-core` dev-deps `env_logger`,
   `pretty_assertions`, `unicode-segmentation`; `fc-gpui-util` dev-dep `indoc`;
   stale `rand` pins in the downstream compatibility fixtures.
