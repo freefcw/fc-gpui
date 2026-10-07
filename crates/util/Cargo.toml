@@ -114,7 +114,7 @@ features = [
 ]
 
 [target."cfg(windows)".dependencies.tendril]
-version = "0.4.3"
+version = "0.5"
 
 [lints.clippy]
 dbg_macro = "deny"

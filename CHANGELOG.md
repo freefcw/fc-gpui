@@ -32,6 +32,8 @@
   `windows-capture` requirement is capped `<1.5` (1.5 changes `Settings::new`'s
   arity and breaks registry scap — the real fix is a windows-capture 2.x port).
   `windows 0.61` remains in the lockfile through `windows-capture` 1.4.4.
+- **`tendril` 0.4 → 0.5** — Windows-only `WTF8::validate` call site is
+  unchanged; verified with a `windows-msvc` target check.
 - **`deny.toml` licensing fix** — allow `NCSA` (`libfuzzer-sys`, reachable only
   under `image-format-avif`) so `cargo deny check licenses` passes; drop the
   unmatched `Unicode-DFS-2016` / `CDLA-Permissive-2.0` allowances.
