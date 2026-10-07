@@ -26,6 +26,7 @@ accessibility = ["gpui_core/accessibility", "gpui_platform/accessibility"]
 default = [
     "accessibility",
     "font-kit",
+    "keyring",
     "wayland",
     "x11",
     "windows-manifest",
@@ -33,6 +34,10 @@ default = [
     "image-rayon",
 ]
 font-kit = ["gpui_core/font-kit", "gpui_platform/font-kit"]
+# Secret Service credentials storage on Linux (oo7). Included in default;
+# disable with default-features = false to drop oo7 and its unique
+# transitive dependencies (credentials methods then return an error).
+keyring = ["gpui_platform/keyring"]
 image-default-formats = ["gpui_core/image-default-formats", "gpui_platform/image-default-formats"]
 image-format-avif = ["gpui_core/image-format-avif", "gpui_platform/image-format-avif"]
 image-format-bmp = ["gpui_core/image-format-bmp", "gpui_platform/image-format-bmp"]

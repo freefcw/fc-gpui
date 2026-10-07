@@ -16,9 +16,13 @@ path = "src/gpui_linux.rs"
 doctest = false
 
 [features]
-default = ["accessibility", "font-kit", "wayland", "x11"]
+default = ["accessibility", "font-kit", "keyring", "wayland", "x11"]
 accessibility = ["dep:accesskit", "dep:accesskit_unix", "gpui/accessibility"]
 font-kit = ["dep:font-kit"]
+# Secret Service / keyring credentials storage (oo7). Included in default;
+# disabling sheds oo7 plus its unique transitive deps (the zbus/ashpd
+# subtree is shared with tray/notifications/accessibility, which stay).
+keyring = ["dep:oo7"]
 screen-capture = ["gpui/screen-capture"]
 test-support = ["gpui/test-support", "gpui_wgpu/test-support", "wayland", "x11"]
 wayland = [
@@ -80,7 +84,7 @@ ksni = { version = "0.3", default-features = false, features = ["blocking", "asy
 libc.workspace = true
 log.workspace = true
 notify-rust = "4"
-oo7 = { version = "0.5.0", default-features = false, features = ["async-std", "native_crypto"] }
+oo7 = { version = "0.5.0", default-features = false, features = ["async-std", "native_crypto"], optional = true }
 open = { version = "5.2.0", optional = true }
 parking.workspace = true
 parking_lot.workspace = true

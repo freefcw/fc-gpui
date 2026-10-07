@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **`keyring` feature gates Linux credentials storage** — `fc-gpui`, `fc-gpui-platform`,
+  and `fc-gpui-linux` gain a `keyring` feature (on by default) that controls the `oo7`
+  Secret Service integration behind `write_credentials` / `read_credentials` /
+  `delete_credentials`. Disabling it drops `oo7` and its unique transitive dependencies;
+  the three credentials methods then return an error explaining the feature is off.
+  Default behavior is unchanged.
+
 ### Breaking changes
 
 - **`Animation` gains start delay and finite repeat** — the `oneshot: bool` field is replaced by a

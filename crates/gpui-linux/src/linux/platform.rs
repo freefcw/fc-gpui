@@ -56,7 +56,15 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
+#[cfg(feature = "keyring")]
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+
+#[cfg(not(feature = "keyring"))]
+fn credentials_unavailable<T>() -> Task<Result<T>> {
+    Task::ready(Err(anyhow!(
+        "credentials storage requires the `keyring` feature"
+    )))
+}
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
@@ -800,6 +808,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.with_common(|common| common.auto_hide_scrollbars)
     }
 
+    #[cfg(feature = "keyring")]
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let url = url.to_string();
         let username = username.to_string();
@@ -819,6 +828,12 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         })
     }
 
+    #[cfg(not(feature = "keyring"))]
+    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
+        credentials_unavailable()
+    }
+
+    #[cfg(feature = "keyring")]
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -847,6 +862,12 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         })
     }
 
+    #[cfg(not(feature = "keyring"))]
+    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        credentials_unavailable()
+    }
+
+    #[cfg(feature = "keyring")]
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -864,6 +885,11 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
             Ok(())
         })
+    }
+
+    #[cfg(not(feature = "keyring"))]
+    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
+        credentials_unavailable()
     }
 
     fn window_appearance(&self) -> WindowAppearance {

@@ -52,7 +52,7 @@ EXPECTED = {
         "image-format-hdr", "image-format-ico", "image-format-jpeg",
         "image-format-png", "image-format-pnm", "image-format-qoi",
         "image-format-tga", "image-format-tiff", "image-format-webp",
-        "image-rayon", "input-latency-histogram", "inspector",
+        "image-rayon", "input-latency-histogram", "inspector", "keyring",
         "leak-detection", "runtime_shaders", "screen-capture", "test-support",
         "wayland", "wgpu", "windows-manifest", "x11",
     ],
@@ -74,12 +74,12 @@ EXPECTED = {
         "image-format-hdr", "image-format-ico", "image-format-jpeg",
         "image-format-png", "image-format-pnm", "image-format-qoi",
         "image-format-tga", "image-format-tiff", "image-format-webp",
-        "image-rayon", "input-latency-histogram", "inspector",
+        "image-rayon", "input-latency-histogram", "inspector", "keyring",
         "leak-detection", "runtime_shaders", "screen-capture", "test-support",
         "wayland", "wgpu", "windows-manifest", "x11",
     ],
     "fc-gpui-linux": [
-        "accessibility", "default", "font-kit", "screen-capture",
+        "accessibility", "default", "font-kit", "keyring", "screen-capture",
         "test-support", "wayland", "x11",
     ],
     "fc-gpui-macos": [

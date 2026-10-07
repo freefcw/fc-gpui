@@ -32,6 +32,10 @@ fc-gpui = { version = "0.10.0", default-features = false, features = [
 `image-format-*` features map to the underlying `image` crate decoder features. `image-rayon`
 re-enables parallel decoding. SVG support is handled separately through `resvg`.
 
+Note that `keyring` (Linux Secret Service credentials storage) and `accessibility` are also
+default features; add `"keyring"` back to the list above if your app calls
+`write_credentials` / `read_credentials` / `delete_credentials`.
+
 ### Import Naming
 
 The published package is `fc-gpui`, but the library target keeps the upstream `gpui` namespace,
