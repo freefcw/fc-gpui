@@ -3,6 +3,7 @@ name = "fc-gpui-core-with-facade-dev-compat"
 version = "0.0.0"
 edition = "2024"
 publish = false
+license.workspace = true
 
 [package.metadata.gpui-macros]
 crate = "core_ui"

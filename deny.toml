@@ -1,0 +1,57 @@
+# cargo-deny configuration.
+# Run locally with: cargo deny --workspace check
+
+[advisories]
+version = 2
+# Consider unmaintained advisories for the whole graph; the known ones
+# are explicitly ignored (with reasons) below.
+unmaintained = "all"
+yanked = "warn"
+ignore = [
+  # async-std is discontinued; pulled by async-tar (http_client) and
+  # oo7/ashpd/ksni on Linux. No vulnerability, audit-only notice.
+  { id = "RUSTSEC-2025-0052", reason = "transitive via async-tar/oo7; tracked for upstream replacement" },
+  # paste is unmaintained; only compiled under image-format-avif (rav1e).
+  { id = "RUSTSEC-2024-0436", reason = "transitive via rav1e, non-default avif feature only" },
+  # rustls-pemfile is unmaintained; transitive via zed-reqwest.
+  { id = "RUSTSEC-2025-0134", reason = "transitive via zed-reqwest; replace when reqwest moves on" },
+  # ttf-parser is unmaintained since 2026-06. Direct dependency of
+  # fc-gpui-core (font parsing) and resvg. Keep until a maintained
+  # successor is adopted; revisit quarterly.
+  { id = "RUSTSEC-2026-0192", reason = "direct font-parsing dep; successor evaluation tracked" },
+]
+
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  # libfuzzer-sys (via rav1e, image-format-avif only) is
+  # "(MIT OR Apache-2.0) AND NCSA".
+  "NCSA",
+  "Unicode-3.0",
+  "Zlib",
+  "Unlicense",
+  "CC0-1.0",
+  "BSL-1.0",
+  "MPL-2.0",
+]
+confidence-threshold = 0.93
+
+[bans]
+# Duplicate versions are still numerous (67 packages) and mostly caused by
+# upstream windows-* / zbus / criterion graphs. Start as warnings so the
+# weekly job stays green, tighten to deny as duplicates converge.
+multiple-versions = "warn"
+highlight = "simplest-path"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

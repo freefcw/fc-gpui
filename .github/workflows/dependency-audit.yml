@@ -1,0 +1,43 @@
+name: Dependency audit
+
+on:
+  schedule:
+    # Every Monday 03:17 UTC (off-peak, avoids exact-hour congestion).
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: cargo audit + deny + machete
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install cargo-audit / cargo-deny / cargo-machete
+        # TODO: pin to a commit SHA after first successful run.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-machete
+
+      # Vulnerabilities fail the job (cargo-audit default). Unmaintained
+      # and informational notices are formalized in deny.toml below.
+      - name: cargo audit (RustSec vulnerabilities)
+        run: cargo audit
+
+      # License/ban/advisory policy gate. multiple-versions is set to warn
+      # in deny.toml until the known upstream duplicates converge.
+      - name: cargo deny (licenses + advisories)
+        run: cargo deny --workspace --all-features check --hide-inclusion-graph
+
+      # Unused dependency detection (fast text-based scan).
+      - name: cargo machete (unused dependencies)
+        run: cargo machete

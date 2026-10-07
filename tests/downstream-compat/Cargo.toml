@@ -3,6 +3,12 @@ name = "fc-gpui-downstream-compat"
 version = "0.0.0"
 edition = "2024"
 publish = false
+license.workspace = true
+
+# Renamed-dependency fixture: the crate is consumed as `gpui` (its lib
+# name), which cargo-machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["fc-gpui"]
 
 [dependencies]
 fc-gpui = { path = "../../crates/gpui-compat", default-features = false }

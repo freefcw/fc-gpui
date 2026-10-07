@@ -3,6 +3,7 @@ name = "fc-gpui-renamed-dependency-compat"
 version = "0.0.0"
 edition = "2024"
 publish = false
+license.workspace = true
 
 [dependencies]
 rand = "=0.9.4"

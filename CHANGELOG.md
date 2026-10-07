@@ -10,6 +10,15 @@
   `delete_credentials`. Disabling it drops `oo7` and its unique transitive dependencies;
   the three credentials methods then return an error explaining the feature is off.
   Default behavior is unchanged.
+- **Weekly dependency audit CI** — a scheduled workflow runs `cargo audit`, `cargo deny`
+  (licenses, advisories, bans, sources; policy in the new `deny.toml`), and
+  `cargo machete` against the workspace.
+
+### Changes
+
+- **`deny.toml` licensing fix** — allow `NCSA` (`libfuzzer-sys`, reachable only
+  under `image-format-avif`) so `cargo deny check licenses` passes; drop the
+  unmatched `Unicode-DFS-2016` / `CDLA-Permissive-2.0` allowances.
 
 ### Breaking changes
 

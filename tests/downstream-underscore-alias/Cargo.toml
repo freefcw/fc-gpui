@@ -3,6 +3,7 @@ name = "fc-gpui-underscore-alias-compat"
 version = "0.0.0"
 edition = "2024"
 publish = false
+license.workspace = true
 
 [package.metadata.gpui-macros]
 crate = "fc_gpui"

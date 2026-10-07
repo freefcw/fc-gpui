@@ -3,6 +3,7 @@ name = "fc-gpui-gpui-alias-compat"
 version = "0.0.0"
 edition = "2024"
 publish = false
+license.workspace = true
 
 [dependencies]
 gpui = { package = "fc-gpui", path = "../../crates/gpui-compat", default-features = false, features = ["test-support"] }
