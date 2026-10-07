@@ -4,12 +4,11 @@
 
 ## 当前基线
 
-- 当前开发分支：`develop/0.9`
-- 已发布：GPUI 八个发布包 `0.9.2`；`fc-gpui-http-client` `0.5.1`；`fc-gpui-media` `0.5.2`；utility crates `0.6.0/0.5.1`
-- 当前版本：`0.10.0`（已 bump，待打 tag `v0.10.0`；crates.io 尚未 publish）。`fc-gpui-http-client` `0.5.2`（已 bump，须先于 GPUI 包 publish）
+- 当前开发分支：`develop/0.10`
+- 已发布：GPUI 八个发布包 `0.10.0`；`fc-gpui-http-client` `0.5.2`；utility crates `0.6.0`（`fc-gpui-util` / `fc-gpui-util-macros` `0.7.0`）
+- 当前版本：`0.11.0`（已 bump，待打 tag `v0.11.0` 并 publish；顺序见 `scripts/verify-release-archives.sh` 的 `RELEASE_PACKAGES`，utility crates 本次不发）
 - 兼容基线：GPUI `0.8.1`、utility crates `0.5.1`；breaking API/feature 变化必须在 `CHANGELOG.md` 提供迁移映射
 - 永久兼容入口：`Application::new/headless`；不在任何版本安排弃用或删除
-- 已发布依赖：utility crates 0.6.0/0.5.1，`fc-gpui-media` 0.5.2；本次顺序：`fc-gpui-http-client 0.5.2` → `fc-gpui-macros 0.10.0` → core/wgpu/backends → platform → public facade
 - 上游仓库默认位置：`../zed`
 - 公共包：`fc-gpui`，lib 名仍为 `gpui`
 - 核心实现包：`fc-gpui-core`，lib 名为 `gpui_core`
