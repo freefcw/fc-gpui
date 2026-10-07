@@ -4,11 +4,15 @@
 
 ### Breaking changes
 
-- **`Animation` gains finite repeat** — the `oneshot: bool` field is replaced by a
-  `repeat: AnimationRepeat` enum (`Once`, `Forever`, `Times(n)`) with `repeat_n` / `with_repeat`
-  builders (`repeat()` keeps its infinite-loop meaning). This replaces the downstream "animate
-  with `repeat()` forever, then cancel via a timer" workaround: an animation can now run an exact
-  number of passes before holding its final value. `Times(0)` is clamped to one pass.
+- **`Animation` gains start delay and finite repeat** — the `oneshot: bool` field is replaced by a
+  `repeat: AnimationRepeat` enum (`Once`, `Forever`, `Times(n)`), alongside new `delay: Duration`
+  field and `with_delay` / `repeat_n` / `with_repeat` builders (`repeat()` keeps its infinite-loop
+  meaning). This replaces the downstream "animate with `repeat()` forever, then cancel via a
+  timer" workaround: an animation can now wait before starting and run an exact number of passes
+  before holding its final value. While the delay elapses the element holds `easing(0)` and
+  re-renders are driven by a background timer instead of animation frames; `Times(0)` is clamped
+  to one pass. In animation chains (`with_animations`) each animation's delay counts from the
+  moment that animation begins.
 
 ## 0.10.0 (2026-10-06)
 

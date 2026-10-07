@@ -54,9 +54,13 @@ pub enum AnimationRepeat {
 #[derive(Clone)]
 pub struct Animation {
     /// The amount of time for which this animation should run. A zero
-    /// duration completes immediately, including for
+    /// duration completes immediately after the delay, including for
     /// [`AnimationRepeat::Forever`].
     pub duration: Duration,
+    /// The amount of time to wait before the animation starts. The delay
+    /// applies once, when the animation begins; it is not repeated between
+    /// passes of a repeating animation.
+    pub delay: Duration,
     /// Whether and how this animation repeats when a pass finishes
     pub repeat: AnimationRepeat,
     /// A function that maps normalized time to an animated value.
@@ -73,6 +77,7 @@ impl Animation {
     pub fn new(duration: Duration) -> Self {
         Self {
             duration,
+            delay: Duration::ZERO,
             repeat: AnimationRepeat::Once,
             easing: Rc::new(linear),
             max_fps: None,
@@ -95,6 +100,16 @@ impl Animation {
     /// Set how the animation repeats when a pass finishes.
     pub fn with_repeat(mut self, repeat: AnimationRepeat) -> Self {
         self.repeat = repeat;
+        self
+    }
+
+    /// Wait for the given duration before the animation starts. While the
+    /// delay elapses the animation holds its initial value (`easing(0)`) and
+    /// no animation frames are requested. In an animation chain (see
+    /// [`AnimationExt::with_animations`]) the delay of each animation counts
+    /// from the moment that animation begins.
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = delay;
         self
     }
 
@@ -298,15 +313,20 @@ impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
 struct AnimationState {
     start: Instant,
     animation_ix: usize,
-    /// Whether a throttled re-render (see [`Animation::with_max_fps`]) is
-    /// already scheduled, so overlapping renders don't stack extra timers.
-    delayed_frame_pending: Rc<Cell<bool>>,
+    /// Whether a repaint timer is already scheduled, so overlapping renders
+    /// don't stack extra timers.
+    repaint_pending: Rc<Cell<bool>>,
+    /// Identifies the currently scheduled repaint timer. A newer animation
+    /// phase invalidates older timers without needing to cancel their tasks.
+    repaint_generation: Rc<Cell<u64>>,
 }
 
 /// Where a single animation is in its timeline for a given elapsed time,
 /// ignoring easing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum AnimationPass {
+    /// The start delay has not elapsed yet; progress is zero.
+    Delayed,
     /// The animation is running. `cycle_delta` is the normalized progress
     /// within the current pass, in `0.0..=1.0`.
     Running { cycle_delta: f32 },
@@ -315,6 +335,11 @@ enum AnimationPass {
 }
 
 fn animation_pass(animation: &Animation, elapsed: Duration) -> AnimationPass {
+    if elapsed < animation.delay {
+        return AnimationPass::Delayed;
+    }
+
+    let elapsed = elapsed - animation.delay;
     if animation.duration.is_zero() {
         return AnimationPass::Finished;
     }
@@ -351,6 +376,42 @@ fn animation_pass(animation: &Animation, elapsed: Duration) -> AnimationPass {
             }
         }
     }
+}
+
+fn schedule_repaint(
+    window: &mut Window,
+    cx: &mut App,
+    delay: Duration,
+    repaint_pending: &Rc<Cell<bool>>,
+    repaint_generation: &Rc<Cell<u64>>,
+) {
+    if repaint_pending.get() {
+        return;
+    }
+
+    repaint_pending.set(true);
+    let generation = repaint_generation.get().wrapping_add(1);
+    repaint_generation.set(generation);
+    let repaint_pending = repaint_pending.clone();
+    let repaint_generation = repaint_generation.clone();
+    let view = window.current_view();
+    window
+        .spawn(cx, async move |cx| {
+            cx.background_executor().timer(delay).await;
+            if repaint_generation.get() != generation {
+                return;
+            }
+            repaint_pending.set(false);
+            cx.update(move |_, cx| cx.notify(view)).ok();
+        })
+        .detach();
+}
+
+fn invalidate_scheduled_repaint(state: &AnimationState) {
+    state
+        .repaint_generation
+        .set(state.repaint_generation.get().wrapping_add(1));
+    state.repaint_pending.set(false);
 }
 
 struct SpringElementState {
@@ -507,7 +568,8 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
                 animation_ix: 0,
-                delayed_frame_pending: Rc::new(Cell::new(false)),
+                repaint_pending: Rc::new(Cell::new(false)),
+                repaint_generation: Rc::new(Cell::new(0)),
             });
 
             let cancelled = self.cancel_handle.as_ref().map_or(false, |h| h.get());
@@ -520,6 +582,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             } else {
                 let elapsed = state.start.elapsed();
                 match animation_pass(&animation, elapsed) {
+                    AnimationPass::Delayed => ((animation.easing)(0.0), false),
                     AnimationPass::Running { cycle_delta } => {
                         ((animation.easing)(cycle_delta), false)
                     }
@@ -540,24 +603,40 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let element = self.element.take().expect("should only be called once");
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
+            let animation_changed = state.animation_ix != animation_ix;
+            if animation_changed || done {
+                // A timer for the previous animation must not delay the next
+                // animation's delay or frame-rate schedule, or repaint after
+                // the animation has already completed.
+                invalidate_scheduled_repaint(&state);
+            }
+
             if !done {
-                match animation.max_fps {
-                    Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 => {
-                        if !state.delayed_frame_pending.get() {
-                            state.delayed_frame_pending.set(true);
-                            let delayed_frame_pending = state.delayed_frame_pending.clone();
-                            let view = window.current_view();
+                let animation = &self.animations[state.animation_ix];
+                let elapsed = state.start.elapsed();
+                if elapsed < animation.delay {
+                    let remaining = animation.delay - elapsed;
+                    schedule_repaint(
+                        window,
+                        cx,
+                        remaining,
+                        &state.repaint_pending,
+                        &state.repaint_generation,
+                    );
+                } else {
+                    match animation.max_fps {
+                        Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 => {
                             let interval = Duration::from_secs_f32(1.0 / max_fps);
-                            window
-                                .spawn(cx, async move |cx| {
-                                    cx.background_executor().timer(interval).await;
-                                    delayed_frame_pending.set(false);
-                                    cx.update(move |_, cx| cx.notify(view)).ok();
-                                })
-                                .detach();
+                            schedule_repaint(
+                                window,
+                                cx,
+                                interval,
+                                &state.repaint_pending,
+                                &state.repaint_generation,
+                            );
                         }
+                        _ => window.request_animation_frame(),
                     }
-                    _ => window.request_animation_frame(),
                 }
             }
 
@@ -689,6 +768,15 @@ mod tests {
     }
 
     #[test]
+    fn test_with_delay_stores_delay() {
+        let delayed = Animation::new(Duration::from_secs(1)).with_delay(Duration::from_millis(250));
+        assert_eq!(delayed.delay, Duration::from_millis(250));
+
+        let immediate = Animation::new(Duration::from_secs(1));
+        assert_eq!(immediate.delay, Duration::ZERO);
+    }
+
+    #[test]
     fn test_repeat_builders() {
         assert_eq!(
             Animation::new(Duration::from_secs(1)).repeat,
@@ -727,6 +815,28 @@ mod tests {
         );
         assert_eq!(
             animation_pass(&animation, Duration::from_secs(3)),
+            AnimationPass::Finished
+        );
+    }
+
+    #[test]
+    fn test_animation_pass_delay_holds_zero_then_runs() {
+        let animation =
+            Animation::new(Duration::from_secs(2)).with_delay(Duration::from_millis(500));
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(499)),
+            AnimationPass::Delayed
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(500)),
+            AnimationPass::Running { cycle_delta: 0.0 }
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(1500)),
+            AnimationPass::Running { cycle_delta: 0.5 }
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(2600)),
             AnimationPass::Finished
         );
     }

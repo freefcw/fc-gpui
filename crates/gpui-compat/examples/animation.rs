@@ -282,6 +282,29 @@ impl Render for AnimationExample {
                                             ))
                                         },
                                     ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .size_4()
+                                            .rounded_full()
+                                            .with_animation(
+                                                "delayed_finite_pulse",
+                                                Animation::new(Duration::from_secs(1))
+                                                    .with_delay(Duration::from_secs(1))
+                                                    .repeat_n(3)
+                                                    .with_easing(bounce(ease_in_out)),
+                                                |dot, delta| {
+                                                    dot.bg(gpui::black().opacity(delta))
+                                                },
+                                            ),
+                                    )
+                                    .child("Pulses 3× after a 1s delay"),
                             ),
                     )
                     .child(
