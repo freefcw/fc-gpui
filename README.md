@@ -230,6 +230,15 @@ Application::new()
 
 See [`docs/resource-profiles.md`](docs/resource-profiles.md) for detailed guidance on choosing and tuning resource profiles.
 
+## Ecosystem
+
+- [fc-ui](https://github.com/freefcw/fc-ui) — a component library built on `fc-gpui`,
+  published as [`fc-ui`](https://crates.io/crates/fc-ui) on crates.io: 85+ components, a theme
+  system, an animation framework, and layout utilities. `fc-gpui` provides the renderer and the
+  platform capabilities (windows, tray, hotkeys, notifications, daemon mode); `fc-ui` provides
+  ready-made components on top of it. Feature requests that can be built by composing `div()`
+  and `Styled` belong in fc-ui; changes that need to touch shaders or platform APIs belong here.
+
 ## Dependencies
 
 ### macOS
