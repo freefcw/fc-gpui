@@ -12,7 +12,9 @@
   Default behavior is unchanged.
 - **Weekly dependency audit CI** — a scheduled workflow runs `cargo audit`, `cargo deny`
   (licenses, advisories, bans, sources; policy in the new `deny.toml`), and
-  `cargo machete` against the workspace.
+  `cargo machete` against the workspace. The feature matrix also gains Linux and
+  Windows `screen-capture` entries (plus `libx11-dev` in the native-deps step) so
+  the vendored scap engines keep compile coverage.
 
 ### Changes
 
@@ -23,6 +25,13 @@
 - **Unused dependencies removed** — `fc-gpui-core` dev-deps `env_logger`,
   `pretty_assertions`, `unicode-segmentation`; `fc-gpui-util` dev-dep `indoc`;
   stale `rand` pins in the downstream compatibility fixtures.
+- **Vendored `zed-scap` lockfile dedupe** — the workspace patch drops `sysinfo`
+  (only used by scap's uncompiled macOS module), which removes the retired
+  `sysinfo 0.31` / `windows 0.57` subtree from the lockfile entirely; scap's
+  `windows` 0.61 → 0.62 and `rand` 0.8 → 0.9 now match the workspace, and its
+  `windows-capture` requirement is capped `<1.5` (1.5 changes `Settings::new`'s
+  arity and breaks registry scap — the real fix is a windows-capture 2.x port).
+  `windows 0.61` remains in the lockfile through `windows-capture` 1.4.4.
 - **`deny.toml` licensing fix** — allow `NCSA` (`libfuzzer-sys`, reachable only
   under `image-format-avif`) so `cargo deny check licenses` passes; drop the
   unmatched `Unicode-DFS-2016` / `CDLA-Permissive-2.0` allowances.

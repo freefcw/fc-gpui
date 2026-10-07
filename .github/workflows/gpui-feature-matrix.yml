@@ -186,6 +186,13 @@ jobs:
             cache-key: linux-feature-contracts
             linux-native: true
             command: bash scripts/verify-features.sh
+          - name: Linux / screen-capture (scap Linux engine)
+            os: ubuntu-24.04
+            cache-key: linux-screen-capture
+            linux-native: true
+            # scap is opt-in; these are the only jobs that compile its Linux
+            # engine (needs libx11-dev for the `x11` crate build script).
+            command: cargo check -p fc-gpui --lib --no-default-features --features screen-capture,font-kit,x11 --locked && cargo check -p fc-gpui-linux --features screen-capture --locked
           - name: Linux X11 / real visual smoke
             os: ubuntu-24.04
             cache-key: linux-x11-real-visual
@@ -235,6 +242,13 @@ jobs:
             cache-key: windows-no-default
             linux-native: false
             command: cargo check -p fc-gpui --lib --no-default-features --locked
+          - name: Windows / screen-capture (scap win engine + windows-capture)
+            os: windows-2022
+            cache-key: windows-screen-capture
+            linux-native: false
+            # Locks in the vendored scap manifest (windows 0.62, rand 0.9,
+            # sysinfo dropped, windows-capture capped <1.5).
+            command: cargo check -p fc-gpui --lib --no-default-features --features screen-capture --locked && cargo check -p fc-gpui-windows --features screen-capture --locked
           - name: Windows / real visual smoke
             os: windows-2022
             cache-key: windows-real-visual
@@ -257,6 +271,7 @@ jobs:
             libxcb1-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
+            libx11-dev \
             mesa-vulkan-drivers \
             libegl1 \
             libgles2 \
