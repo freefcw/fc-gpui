@@ -9,8 +9,7 @@ use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::{
-    FutureExt as _,
-    future::{self, BoxFuture},
+    future::BoxFuture,
 };
 use http::request::Builder;
 use parking_lot::Mutex;
@@ -145,7 +144,7 @@ pub trait HttpClient: 'static + Send + Sync {
         _url: &str,
         _request: reqwest::multipart::Form,
     ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        Box::pin(async move { Err(anyhow!("not implemented")) })
     }
 }
 
