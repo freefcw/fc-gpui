@@ -5,8 +5,8 @@
 ## 当前基线
 
 - 当前开发分支：`develop/0.11`
-- 已发布：GPUI 八个发布包 `0.11.0`；`fc-gpui-http-client` `0.5.2`；utility crates `0.6.0`（`fc-gpui-util` / `fc-gpui-util-macros` `0.7.0`）
-- 当前版本：`0.11.1`（已 bump，须先发 `fc-gpui-http-client 0.5.3` 再发 GPUI 包，待打 tag `v0.11.1` 并 publish；顺序见 `scripts/verify-release-archives.sh` 的 `RELEASE_PACKAGES`，utility crates 本次不发）
+- 已发布：GPUI 八个发布包 `0.11.1`；`fc-gpui-http-client` `0.5.3`；utility crates `0.6.0`（`fc-gpui-util` / `fc-gpui-util-macros` `0.7.0`）
+- 当前版本：`0.11.1`（已 bump、已打 tag `v0.11.1`；crates.io 已 publish）
 - 兼容基线：GPUI `0.8.1`、utility crates `0.5.1`；breaking API/feature 变化必须在 `CHANGELOG.md` 提供迁移映射
 - 永久兼容入口：`Application::new/headless`；不在任何版本安排弃用或删除
 - 上游仓库默认位置：`../zed`
