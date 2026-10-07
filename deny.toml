@@ -13,8 +13,6 @@ ignore = [
   { id = "RUSTSEC-2025-0052", reason = "transitive via async-tar/oo7; tracked for upstream replacement" },
   # paste is unmaintained; only compiled under image-format-avif (rav1e).
   { id = "RUSTSEC-2024-0436", reason = "transitive via rav1e, non-default avif feature only" },
-  # rustls-pemfile is unmaintained; transitive via zed-reqwest.
-  { id = "RUSTSEC-2025-0134", reason = "transitive via zed-reqwest; replace when reqwest moves on" },
   # ttf-parser is unmaintained since 2026-06. Direct dependency of
   # fc-gpui-core (font parsing) and resvg. Keep until a maintained
   # successor is adopted; revisit quarterly.

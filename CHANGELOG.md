@@ -4,6 +4,18 @@
 
 ### Changes
 
+- **`zed-reqwest` is replaced by upstream `reqwest` 0.12.28** — Zed's reqwest
+  fork was frozen at 0.12.15 with backports of upstream PRs; all of them
+  shipped upstream in ≥0.12.16, which also dropped the unmaintained
+  `rustls-pemfile` dependency (RUSTSEC-2025-0134). Enabled features and API
+  surface are unchanged; the `rustls-pemfile` advisory ignore is removed from
+  `deny.toml`.
+
+  **If you depend on the `zed-reqwest` package** (e.g. you pass
+  `reqwest::multipart::Form` into `HttpClient::send_multipart_form`): switch
+  your own dependency to `reqwest` 0.12.16+ — the types are identical in name
+  but crates are distinct, so versions must match.
+
 - **`fc-gpui-http-client` drops the unused SOCKS reqwest feature** — `socks` is
   removed entirely (nothing in this crate or its downstream uses SOCKS proxies;
   the whole `tokio-socks` subtree is gone from `Cargo.lock`). Other reqwest
@@ -16,7 +28,7 @@
   **If your application relies on SOCKS proxying** (e.g. an `ALL_PROXY=socks5://…`
   environment for corporate or tunneled networking) behind a `fc-gpui`-provided
   `HttpClient`: SOCKS support is no longer compiled in transitively. Since this
-  crate does not re-export `reqwest`, enable it on your own `zed-reqwest`
+  crate does not re-export `reqwest`, enable it on your own `reqwest`
   dependency with the `socks` feature. Other proxy schemes (`HTTP`/`HTTPS`)
   are unaffected.
 
