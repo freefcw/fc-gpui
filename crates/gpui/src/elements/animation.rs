@@ -37,13 +37,28 @@ impl AnimationHandle {
     }
 }
 
+/// How an [`Animation`] behaves once one pass finishes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnimationRepeat {
+    /// Play once and hold the final value (the default).
+    #[default]
+    Once,
+    /// Restart forever, wrapping progress back to the start.
+    Forever,
+    /// Play a fixed number of passes in total, then hold the final value.
+    /// Zero is clamped to one pass.
+    Times(u32),
+}
+
 /// An animation that can be applied to an element.
 #[derive(Clone)]
 pub struct Animation {
-    /// The amount of time for which this animation should run
+    /// The amount of time for which this animation should run. A zero
+    /// duration completes immediately, including for
+    /// [`AnimationRepeat::Forever`].
     pub duration: Duration,
-    /// Whether to repeat this animation when it finishes
-    pub oneshot: bool,
+    /// Whether and how this animation repeats when a pass finishes
+    pub repeat: AnimationRepeat,
     /// A function that maps normalized time to an animated value.
     /// The result may exceed 0..1 for easing functions that overshoot.
     pub easing: Rc<dyn Fn(f32) -> f32>,
@@ -58,15 +73,28 @@ impl Animation {
     pub fn new(duration: Duration) -> Self {
         Self {
             duration,
-            oneshot: true,
+            repeat: AnimationRepeat::Once,
             easing: Rc::new(linear),
             max_fps: None,
         }
     }
 
-    /// Set the animation to loop when it finishes.
+    /// Set the animation to loop forever when it finishes.
     pub fn repeat(mut self) -> Self {
-        self.oneshot = false;
+        self.repeat = AnimationRepeat::Forever;
+        self
+    }
+
+    /// Set the animation to run the given number of passes in total, then
+    /// hold its final value. Zero is treated as one pass.
+    pub fn repeat_n(mut self, times: u32) -> Self {
+        self.repeat = AnimationRepeat::Times(times);
+        self
+    }
+
+    /// Set how the animation repeats when a pass finishes.
+    pub fn with_repeat(mut self, repeat: AnimationRepeat) -> Self {
+        self.repeat = repeat;
         self
     }
 
@@ -275,6 +303,56 @@ struct AnimationState {
     delayed_frame_pending: Rc<Cell<bool>>,
 }
 
+/// Where a single animation is in its timeline for a given elapsed time,
+/// ignoring easing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum AnimationPass {
+    /// The animation is running. `cycle_delta` is the normalized progress
+    /// within the current pass, in `0.0..=1.0`.
+    Running { cycle_delta: f32 },
+    /// All passes are finished; progress is one.
+    Finished,
+}
+
+fn animation_pass(animation: &Animation, elapsed: Duration) -> AnimationPass {
+    if animation.duration.is_zero() {
+        return AnimationPass::Finished;
+    }
+
+    match animation.repeat {
+        AnimationRepeat::Once => {
+            if elapsed >= animation.duration {
+                AnimationPass::Finished
+            } else {
+                AnimationPass::Running {
+                    cycle_delta: elapsed.as_secs_f32() / animation.duration.as_secs_f32(),
+                }
+            }
+        }
+        AnimationRepeat::Forever => {
+            let delta = elapsed.as_secs_f32() / animation.duration.as_secs_f32();
+            AnimationPass::Running {
+                cycle_delta: delta % 1.0,
+            }
+        }
+        AnimationRepeat::Times(times) => {
+            let times = times.max(1);
+            let total_duration = animation
+                .duration
+                .checked_mul(times)
+                .unwrap_or(Duration::MAX);
+            if elapsed >= total_duration {
+                AnimationPass::Finished
+            } else {
+                let delta = elapsed.as_secs_f32() / animation.duration.as_secs_f32();
+                AnimationPass::Running {
+                    cycle_delta: delta % 1.0,
+                }
+            }
+        }
+    }
+}
+
 struct SpringElementState {
     spring: SpringState,
     target: f32,
@@ -435,29 +513,26 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let cancelled = self.cancel_handle.as_ref().map_or(false, |h| h.get());
 
             let animation_ix = state.animation_ix;
+            let animation = self.animations[animation_ix].clone();
 
             let (delta, done) = if cancelled {
                 (1.0_f32, true)
             } else {
-                let mut delta = state.start.elapsed().as_secs_f32()
-                    / self.animations[animation_ix].duration.as_secs_f32();
-
-                let mut done = false;
-                if delta > 1.0 {
-                    if self.animations[animation_ix].oneshot {
+                let elapsed = state.start.elapsed();
+                match animation_pass(&animation, elapsed) {
+                    AnimationPass::Running { cycle_delta } => {
+                        ((animation.easing)(cycle_delta), false)
+                    }
+                    AnimationPass::Finished => {
                         if animation_ix >= self.animations.len() - 1 {
-                            done = true;
+                            ((animation.easing)(1.0), true)
                         } else {
                             state.start = Instant::now();
                             state.animation_ix += 1;
+                            ((animation.easing)(1.0), false)
                         }
-                        delta = 1.0;
-                    } else {
-                        delta %= 1.0;
                     }
                 }
-                let delta = (self.animations[animation_ix].easing)(delta);
-                (delta, done)
             };
 
             debug_assert!(delta.is_finite(), "animated value should be finite");
@@ -466,7 +541,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
             if !done {
-                match self.animations[animation_ix].max_fps {
+                match animation.max_fps {
                     Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 => {
                         if !state.delayed_frame_pending.get() {
                             state.delayed_frame_pending.set(true);
@@ -611,5 +686,111 @@ mod tests {
 
         let invalid = Animation::new(Duration::from_secs(1)).with_max_fps(0.0);
         assert_eq!(invalid.max_fps, Some(0.0));
+    }
+
+    #[test]
+    fn test_repeat_builders() {
+        assert_eq!(
+            Animation::new(Duration::from_secs(1)).repeat,
+            AnimationRepeat::Once
+        );
+        assert_eq!(
+            Animation::new(Duration::from_secs(1)).repeat().repeat,
+            AnimationRepeat::Forever
+        );
+        assert_eq!(
+            Animation::new(Duration::from_secs(1)).repeat_n(3).repeat,
+            AnimationRepeat::Times(3)
+        );
+        assert_eq!(
+            Animation::new(Duration::from_secs(1))
+                .with_repeat(AnimationRepeat::Times(2))
+                .repeat,
+            AnimationRepeat::Times(2)
+        );
+    }
+
+    #[test]
+    fn test_animation_pass_once() {
+        let animation = Animation::new(Duration::from_secs(2));
+        assert_eq!(
+            animation_pass(&animation, Duration::ZERO),
+            AnimationPass::Running { cycle_delta: 0.0 }
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_secs(1)),
+            AnimationPass::Running { cycle_delta: 0.5 }
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_secs(2)),
+            AnimationPass::Finished
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_secs(3)),
+            AnimationPass::Finished
+        );
+    }
+
+    #[test]
+    fn test_animation_pass_forever_wraps() {
+        let animation = Animation::new(Duration::from_secs(1)).repeat();
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(1500)),
+            AnimationPass::Running { cycle_delta: 0.5 }
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_secs(3)),
+            AnimationPass::Running { cycle_delta: 0.0 }
+        );
+    }
+
+    #[test]
+    fn test_animation_pass_finite_times() {
+        let animation = Animation::new(Duration::from_secs(1)).repeat_n(3);
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(1500)),
+            AnimationPass::Running { cycle_delta: 0.5 }
+        );
+        // Third and final pass.
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(2500)),
+            AnimationPass::Running { cycle_delta: 0.5 }
+        );
+        // Finish exactly when the final pass completes.
+        assert_eq!(
+            animation_pass(&animation, Duration::from_secs(3)),
+            AnimationPass::Finished
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(3100)),
+            AnimationPass::Finished
+        );
+    }
+
+    #[test]
+    fn test_animation_pass_times_zero_clamps_to_once() {
+        let animation = Animation::new(Duration::from_secs(1)).repeat_n(0);
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(500)),
+            AnimationPass::Running { cycle_delta: 0.5 }
+        );
+        assert_eq!(
+            animation_pass(&animation, Duration::from_millis(1500)),
+            AnimationPass::Finished
+        );
+    }
+
+    #[test]
+    fn test_animation_pass_zero_duration_finishes_immediately() {
+        let animation = Animation::new(Duration::ZERO);
+
+        assert_eq!(
+            animation_pass(&animation, Duration::ZERO),
+            AnimationPass::Finished
+        );
+        assert_eq!(
+            animation_pass(&animation.repeat(), Duration::from_secs(1)),
+            AnimationPass::Finished
+        );
     }
 }

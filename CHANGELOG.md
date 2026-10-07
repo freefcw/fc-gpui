@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- **`Animation` gains finite repeat** — the `oneshot: bool` field is replaced by a
+  `repeat: AnimationRepeat` enum (`Once`, `Forever`, `Times(n)`) with `repeat_n` / `with_repeat`
+  builders (`repeat()` keeps its infinite-loop meaning). This replaces the downstream "animate
+  with `repeat()` forever, then cancel via a timer" workaround: an animation can now run an exact
+  number of passes before holding its final value. `Times(0)` is clamped to one pass.
+
 ## 0.10.0 (2026-10-06)
 
 ### Breaking changes
