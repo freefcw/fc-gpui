@@ -1,6 +1,6 @@
 [package]
 name = "fc-gpui-windows"
-version = "0.11.0"
+version = "0.11.1"
 edition.workspace = true
 authors.workspace = true
 build = "build.rs"

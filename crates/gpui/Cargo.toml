@@ -1,7 +1,7 @@
 [package]
 edition.workspace = true
 name = "fc-gpui-core"
-version = "0.11.0"
+version = "0.11.1"
 authors.workspace = true
 publish = true
 description = "GPU-accelerated UI framework with system tray, global hotkeys, notifications, and daemon mode support (fork of Zed's GPUI)"
@@ -130,7 +130,7 @@ optional = true
 [dependencies.gpui_macros]
 path = "../gpui-macros"
 package = "fc-gpui-macros"
-version = "0.11.0"
+version = "0.11.1"
 
 [dependencies.inventory]
 version = "0.3.19"

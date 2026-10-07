@@ -38,8 +38,8 @@ repository = "https://github.com/freefcw/fc-gpui"
 [workspace.dependencies]
 # Internal crates, also usable from downstream via the registry.
 collections = { path = "crates/collections", package = "fc-gpui-collections", version = "0.6.0" }
-gpui = { path = "crates/gpui", package = "fc-gpui-core", version = "0.11.0", default-features = false }
-http_client = { path = "crates/http_client", package = "fc-gpui-http-client", version = "0.5.2" }
+gpui = { path = "crates/gpui", package = "fc-gpui-core", version = "0.11.1", default-features = false }
+http_client = { path = "crates/http_client", package = "fc-gpui-http-client", version = "0.5.3" }
 util = { path = "crates/util", package = "fc-gpui-util", version = "0.7.0" }
 util_macros = { path = "crates/util_macros", package = "fc-gpui-util-macros", version = "0.7.0" }
 

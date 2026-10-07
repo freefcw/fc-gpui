@@ -1,6 +1,6 @@
 [package]
 name = "fc-gpui-platform"
-version = "0.11.0"
+version = "0.11.1"
 edition.workspace = true
 authors.workspace = true
 publish = true
@@ -80,10 +80,10 @@ x11 = ["gpui/x11", "gpui_linux/x11"]
 gpui.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-gpui_windows = { package = "fc-gpui-windows", path = "../gpui-windows", version = "0.11.0", default-features = false }
+gpui_windows = { package = "fc-gpui-windows", path = "../gpui-windows", version = "0.11.1", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui_macos = { package = "fc-gpui-macos", path = "../gpui-macos", version = "0.11.0", default-features = false }
+gpui_macos = { package = "fc-gpui-macos", path = "../gpui-macos", version = "0.11.1", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_linux = { package = "fc-gpui-linux", path = "../gpui-linux", version = "0.11.0", default-features = false }
+gpui_linux = { package = "fc-gpui-linux", path = "../gpui-linux", version = "0.11.1", default-features = false }
