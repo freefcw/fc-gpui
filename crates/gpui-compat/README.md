@@ -181,7 +181,7 @@ cargo check -p fc-gpui --example layer_shell --features wayland
 - **Keep alive without windows** — apps stay alive with no visible windows via `QuitMode::Explicit`, set through `Application::with_quit_mode` or `App::set_quit_mode`
 - **Focused window info** — query which window the user is focused on
 - **Permission status** — check accessibility and microphone permissions
-- **In-app toast notifications** — stackable, auto-dismissing toast component
+- **In-app toast notifications** — stackable, auto-dismissing toast component (deprecated; use the [fc-ui](https://github.com/freefcw/fc-ui) toast component instead)
 
 ## Quick Example
 

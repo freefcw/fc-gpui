@@ -1,3 +1,5 @@
+#![allow(deprecated)] // All public items in this module are deprecated; internal self-references are fine.
+
 use std::time::Duration;
 
 use crate::{
@@ -7,6 +9,10 @@ use crate::{
 
 /// Position where toasts appear on screen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[deprecated(
+    since = "0.11.0",
+    note = "toast is a component-level concern; use the toast component from fc-ui (https://github.com/freefcw/fc-ui) instead"
+)]
 pub enum ToastPosition {
     /// Top-right corner of the window.
     #[default]
@@ -19,6 +25,10 @@ pub enum ToastPosition {
 
 /// Configuration for a single toast notification.
 #[derive(Clone)]
+#[deprecated(
+    since = "0.11.0",
+    note = "toast is a component-level concern; use the toast component from fc-ui (https://github.com/freefcw/fc-ui) instead"
+)]
 pub struct Toast {
     title: SharedString,
     body: Option<SharedString>,
@@ -65,6 +75,10 @@ struct ToastEntry {
 ///
 /// Create a `ToastStack` as a GPUI entity and render it as part of your
 /// window's view tree. Use [`ToastStack::push`] to add new toasts.
+#[deprecated(
+    since = "0.11.0",
+    note = "toast is a component-level concern; use the toast component from fc-ui (https://github.com/freefcw/fc-ui) instead"
+)]
 pub struct ToastStack {
     toasts: Vec<ToastEntry>,
     next_toast_id: u64,

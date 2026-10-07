@@ -94,7 +94,7 @@
 **状态**: ✅ Adabraka 独有
 
 - `show_notification()` - OS 级通知
-- Toast 组件 - 应用内通知（可堆叠、自动消失）
+- Toast 组件 - 应用内通知（可堆叠、自动消失；已废弃，待移除——组件层职责，请改用 fc-ui 的 toast 组件）
 
 **实现**:
 - macOS: UNUserNotificationCenter

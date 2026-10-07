@@ -1,3 +1,7 @@
+// Demonstrates the built-in toast during its deprecation window. For new code,
+// prefer the toast component from fc-ui (https://github.com/freefcw/fc-ui).
+#![allow(deprecated)]
+
 use gpui::single_instance::{SingleInstance, send_activate_to_existing};
 use gpui::{
     App, Application, Bounds, Context, Entity, Keystroke, Toast, ToastPosition, ToastStack,

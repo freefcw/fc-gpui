@@ -50,6 +50,16 @@
   to one pass. In animation chains (`with_animations`) each animation's delay counts from the
   moment that animation begins.
 
+### Deprecated
+
+- **Built-in toast deprecated** — `Toast`, `ToastStack`, and `ToastPosition` are deprecated
+  (removal planned for a future release). Toast is a component-level concern and belongs in
+  [fc-ui](https://github.com/freefcw/fc-ui) per the README's Ecosystem split; fc-ui's toast
+  (semantic variants, theming, animations) is a strict superset of the built-in one, so a
+  single implementation avoids two diverging toasts. Removing the fork-only file also shaves
+  a couple of lines off the upstream sync surface. The `daemon_app` example still exercises
+  the built-in toast during the deprecation window.
+
 ## 0.10.0 (2026-10-06)
 
 ### Breaking changes
