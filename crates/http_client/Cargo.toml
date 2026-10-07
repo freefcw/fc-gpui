@@ -50,13 +50,18 @@ version = "1.0"
 
 [dependencies.reqwest]
 version = "0.12.15-zed"
+# NOTE: `socks` is dropped entirely — nothing in this crate or its downstream
+# uses SOCKS proxies. `multipart` stays unconditional: the
+# `send_multipart_form` trait method's signature references
+# `reqwest::multipart::Form`, and its mime/mime_guess deps are compiled anyway
+# via fc-gpui-util→rust-embed→mime_guess, so gating it would add trait
+# complexity for zero build savings.
 features = [
     "charset",
     "http2",
     "macos-system-configuration",
     "multipart",
     "rustls-tls-native-roots",
-    "socks",
     "stream",
 ]
 default-features = false

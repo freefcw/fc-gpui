@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- **`fc-gpui-http-client` drops the unused SOCKS reqwest feature** — `socks` is
+  removed entirely (nothing in this crate or its downstream uses SOCKS proxies;
+  the whole `tokio-socks` subtree is gone from `Cargo.lock`). Other reqwest
+  features are left unchanged: `multipart` stays enabled because the
+  `HttpClient::send_multipart_form` trait signature needs
+  `reqwest::multipart::Form`, and gating it would add trait complexity with no
+  build savings (its mime/mime_guess deps are already compiled via
+  `fc-gpui-util` → `rust-embed` → `mime_guess`). Default behavior is unchanged.
+
+  **If your application relies on SOCKS proxying** (e.g. an `ALL_PROXY=socks5://…`
+  environment for corporate or tunneled networking) behind a `fc-gpui`-provided
+  `HttpClient`: SOCKS support is no longer compiled in transitively. Since this
+  crate does not re-export `reqwest`, enable it on your own `zed-reqwest`
+  dependency with the `socks` feature. Other proxy schemes (`HTTP`/`HTTPS`)
+  are unaffected.
+
 ## 0.11.0 (2026-10-07)
 
 ### Added
