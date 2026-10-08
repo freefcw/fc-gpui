@@ -803,7 +803,7 @@ impl MacWindow {
         marker: MainThreadMarker,
     ) -> Self {
         unsafe {
-            let pool = NSAutoreleasePool::new();
+            let _pool = NSAutoreleasePool::new();
 
             let allows_automatic_window_tabbing = tabbing_identifier.is_some();
             NSWindow::setAllowsAutomaticWindowTabbing(allows_automatic_window_tabbing, marker);
@@ -1081,8 +1081,9 @@ impl MacWindow {
             native_window.setFrameTopLeftPoint(to_objc_point(window_rect.origin));
             window.0.lock().move_traffic_light();
 
-            pool.drain();
-
+            // 不要显式 drain()：NSAutoreleasePool 的 Retained 在作用域结束 drop
+            // 时已经会 drain 一次，再调 drain() 就是 "pool already drained" 的
+            // double release。
             window
         }
     }
