@@ -1187,7 +1187,10 @@ impl Drop for MacWindow {
                 unsafe {
                     let window = native_window_from_ptr(window_ptr);
                     window.close();
-                    let _: () = msg_send![window_ptr, autorelease];
+                    // autorelease 返回 '@'（仍是同一对象指针），这里不取得所有权，
+                    // 只平衡上面 into_raw 交出的 +1；声明为 () 会在 objc2 的
+                    // debug 编码校验下触发 "expected '@', found 'v'" panic。
+                    let _: *mut AnyObject = msg_send![window_ptr, autorelease];
                 }
             })
             .detach();
