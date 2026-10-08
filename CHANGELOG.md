@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.2 (2026-10-08)
+
+### Fixes
+
+- **macOS: closing a window no longer panics debug builds** — `MacWindow`'s
+  drop sent `autorelease` with the return type declared as `()`, while the
+  Objective-C runtime registers it as returning `'@'`. objc2's debug encoding
+  verification panicked on the mismatch ("expected return to have type code
+  '@', but found 'v'"), so any window close crashed debug builds (regression
+  since 0.9.1; release builds were unaffected). The return type is now
+  declared as `*mut AnyObject`.
+
+- **macOS: window creation no longer double-drains its `NSAutoreleasePool`** —
+  an explicit `drain()` together with the `Retained` drop messaged an
+  already-deallocated pool ("pool already drained", use-after-free). The pool
+  now drains exactly once when it goes out of scope at the end of window
+  creation.
+
 ## 0.11.1 (2026-10-08)
 
 ### Changes

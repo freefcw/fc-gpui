@@ -1844,7 +1844,7 @@ checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
 
 [[package]]
 name = "fc-gpui"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -1875,7 +1875,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-core"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-linux"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-macos"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2097,7 +2097,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-macros"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "fc-gpui-core",
  "heck",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-platform"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "fc-gpui-core",
  "fc-gpui-linux",
@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-wgpu"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-windows"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "accesskit",
  "accesskit_windows",
