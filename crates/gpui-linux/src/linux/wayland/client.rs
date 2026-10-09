@@ -1,7 +1,8 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    os::fd::{AsRawFd, BorrowedFd, FromRawFd, RawFd},
+    os::unix::net::UnixStream,
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
@@ -9,7 +10,7 @@ use std::{
 
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle,
+    LoopHandle, RegistrationToken,
     ping::Ping,
     timer::{TimeoutAction, Timer},
 };
@@ -82,7 +83,7 @@ use crate::linux::{
     open_uri_internal,
     platform::{
         LinuxTrayClickEvent, LinuxTrayEventTarget, TrayIconClickEventCallback,
-        TrayIconEventCallback, TrayMenuActionCallback, install_linux_tray_event_source,
+        TrayIconEventCallback, TrayMenuActionCallback,
     },
     read_fd_with_timeout, reveal_path_internal,
     wayland::{
@@ -96,11 +97,11 @@ use crate::linux::{
 use gpui::PlatformWindow;
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, TrayIconClickEvent, WindowParams, point, px,
-    size,
+    ForegroundExecutor, GraphicalEnvironment, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
+    PlatformKeyboardLayout, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase,
+    TrayIconClickEvent, WindowParams, point, px, size,
 };
 use gpui_wgpu::GpuContext;
 
@@ -186,6 +187,69 @@ fn set_ime_cursor_rectangle_after_done(
 /// Pacing for retry ticks: a fixed 60Hz interval. Retries only occur for throttled or
 /// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
 const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
+
+const XDG_ACTIVATION_TOKEN_ENV_VAR: &str = "XDG_ACTIVATION_TOKEN";
+
+/// Takes `XDG_ACTIVATION_TOKEN` out of this process's environment.
+///
+/// `LinuxPlatform::new` calls this before it starts any threads.
+pub(crate) fn take_startup_activation_token_from_environment() -> Option<String> {
+    let token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
+        .ok()
+        .filter(|token| !token.is_empty());
+    // Per the xdg-activation spec, so that programs we launch don't inherit the token.
+    // SAFETY: called before this process starts any threads.
+    unsafe { std::env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
+    token
+}
+
+/// Takes the Wayland connection that `WAYLAND_SOCKET` hands to this process, as libwayland does.
+pub(crate) fn take_wayland_socket_from_environment() -> Option<UnixStream> {
+    const WAYLAND_SOCKET_ENV_VAR: &str = "WAYLAND_SOCKET";
+    let value = std::env::var_os(WAYLAND_SOCKET_ENV_VAR)?;
+    // SAFETY: called before this process starts any threads.
+    unsafe { std::env::remove_var(WAYLAND_SOCKET_ENV_VAR) };
+    let Some(fd) = value
+        .to_str()
+        .and_then(|value| value.parse::<RawFd>().ok())
+        .filter(|fd| *fd >= 0)
+    else {
+        log::error!("ignoring WAYLAND_SOCKET={value:?}, which is not a file descriptor");
+        return None;
+    };
+    // SAFETY: the process that started us passes this descriptor for us to own.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags == -1 || libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) == -1 {
+            log::error!(
+                "ignoring WAYLAND_SOCKET={fd}: {}",
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        Some(UnixStream::from_raw_fd(fd))
+    }
+}
+
+fn wayland_socket_path(environment: &GraphicalEnvironment) -> anyhow::Result<PathBuf> {
+    use anyhow::Context as _;
+    let display = environment
+        .wayland_display
+        .as_ref()
+        .filter(|display| !display.is_empty())
+        .context("WAYLAND_DISPLAY is not set")?;
+    let display = PathBuf::from(display);
+    if display.is_absolute() {
+        Ok(display)
+    } else {
+        let runtime_directory = environment
+            .xdg_runtime_dir
+            .as_ref()
+            .filter(|directory| !directory.is_empty())
+            .context("XDG_RUNTIME_DIR is not set")?;
+        Ok(PathBuf::from(runtime_directory).join(display))
+    }
+}
 
 #[derive(Clone)]
 pub struct Globals {
@@ -337,20 +401,34 @@ pub(crate) struct WaylandClientState {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
-    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
+    loop_handle: LoopHandle<'static, ()>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
-    event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
-    common: LinuxCommon,
+    startup_activation_token: Option<String>,
+    /// The environment this connection was made in, without its activation token.
+    graphical_environment: GraphicalEnvironment,
+    /// Long-lived sources this client registered on the loop, removed when it drops.
+    registrations: Vec<RegistrationToken>,
+    common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
     tray: crate::linux::tray::LinuxTray,
 }
 
 impl WaylandClientState {
+    fn consume_startup_activation_token(&mut self, surface: &wl_surface::WlSurface) {
+        let Some(startup_activation_token) = self.startup_activation_token.take() else {
+            return;
+        };
+        let Some(activation) = self.globals.activation.as_ref() else {
+            return;
+        };
+        activation.activate(startup_activation_token, surface);
+    }
+
     fn destroy_pinch_gesture(&mut self) {
         if let Some(pinch_gesture) = self.pinch_gesture.take() {
             pinch_gesture.destroy();
@@ -393,18 +471,23 @@ impl LinuxTrayEventTarget for WaylandClientState {
     }
 
     fn take_tray_icon_event_callback(&mut self) -> Option<TrayIconEventCallback> {
-        self.common.callbacks.tray_icon_event.take()
+        self.common.borrow_mut().callbacks.tray_icon_event.take()
     }
 
     fn restore_tray_icon_event_callback_if_empty(&mut self, callback: TrayIconEventCallback) {
         self.common
+            .borrow_mut()
             .callbacks
             .tray_icon_event
             .get_or_insert(callback);
     }
 
     fn take_tray_icon_click_event_callback(&mut self) -> Option<TrayIconClickEventCallback> {
-        self.common.callbacks.tray_icon_click_event.take()
+        self.common
+            .borrow_mut()
+            .callbacks
+            .tray_icon_click_event
+            .take()
     }
 
     fn restore_tray_icon_click_event_callback_if_empty(
@@ -412,17 +495,19 @@ impl LinuxTrayEventTarget for WaylandClientState {
         callback: TrayIconClickEventCallback,
     ) {
         self.common
+            .borrow_mut()
             .callbacks
             .tray_icon_click_event
             .get_or_insert(callback);
     }
 
     fn take_tray_menu_action_callback(&mut self) -> Option<TrayMenuActionCallback> {
-        self.common.callbacks.tray_menu_action.take()
+        self.common.borrow_mut().callbacks.tray_menu_action.take()
     }
 
     fn restore_tray_menu_action_callback_if_empty(&mut self, callback: TrayMenuActionCallback) {
         self.common
+            .borrow_mut()
             .callbacks
             .tray_menu_action
             .get_or_insert(callback);
@@ -579,9 +664,10 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let state = client.borrow();
         let surface_id = surface_id.clone();
+        let this = self.clone();
         if let Err(err) = state.loop_handle.insert_source(
             Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |_, _, this| {
+            move |_, _, _| {
                 let client = this.get_client();
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
@@ -678,12 +764,21 @@ impl WaylandClientStatePtr {
             changed
         };
 
-        if changed && let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
-        {
+        let callback = changed
+            .then(|| {
+                state
+                    .common
+                    .borrow_mut()
+                    .callbacks
+                    .keyboard_layout_change
+                    .take()
+            })
+            .flatten();
+        if let Some(mut callback) = callback {
             drop(state);
             callback();
-            state = client.borrow_mut();
-            state.common.callbacks.keyboard_layout_change = Some(callback);
+            let state = client.borrow_mut();
+            state.common.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
         }
     }
 
@@ -712,6 +807,20 @@ pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
 impl Drop for WaylandClient {
     fn drop(&mut self) {
+        if Rc::strong_count(&self.0) > 1 {
+            return;
+        }
+        let (loop_handle, registrations) = {
+            let mut state = self.0.borrow_mut();
+            (
+                state.loop_handle.clone(),
+                std::mem::take(&mut state.registrations),
+            )
+        };
+        for token in registrations {
+            loop_handle.remove(token);
+        }
+
         let mut state = self.0.borrow_mut();
         state.windows.clear();
 
@@ -757,11 +866,34 @@ fn wl_output_version(version: u32) -> u32 {
 }
 
 impl WaylandClient {
-    pub(crate) fn new() -> Self {
-        let conn = Connection::connect_to_env().unwrap();
+    /// Connects to the Wayland compositor `environment` names and registers its event sources
+    /// on `handle`.
+    pub(crate) fn attach(
+        handle: LoopHandle<'static, ()>,
+        common: Rc<RefCell<LinuxCommon>>,
+        environment: &GraphicalEnvironment,
+        inherited_socket: Option<UnixStream>,
+        activation_token: Option<String>,
+    ) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
 
-        let (globals, mut event_queue) =
-            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+        let stream = match inherited_socket {
+            Some(stream) => stream,
+            None => {
+                let socket_path = wayland_socket_path(environment)?;
+                UnixStream::connect(&socket_path).with_context(|| {
+                    format!(
+                        "failed to connect to Wayland compositor at {}",
+                        socket_path.display()
+                    )
+                })?
+            }
+        };
+        let conn =
+            Connection::from_socket(stream).context("failed to connect to Wayland compositor")?;
+
+        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
+            .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -799,38 +931,16 @@ impl WaylandClient {
             }
         });
 
-        let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
-
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
-
-        let handle = event_loop.handle();
-        handle
-            .insert_source(main_receiver, {
-                let handle = handle.clone();
-                move |event, _, _: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(runnable) = event {
-                        handle.insert_idle(|_| {
-                            runnable.run();
-                        });
-                    }
-                }
-            })
-            .unwrap();
-
         let gpu_context = Rc::new(RefCell::new(None));
 
         let (frame_ping, frame_ping_source) =
-            calloop::ping::make_ping().expect("Failed to create the frame ping");
-        handle
-            .insert_source(frame_ping_source, |_, _, client| {
-                client.dispatch_scheduled_frames();
-            })
-            .unwrap();
+            calloop::ping::make_ping().context("failed to create Wayland frame ping")?;
 
-        let seat = seat.unwrap();
+        let seat = seat.context("Wayland compositor does not provide wl_seat")?;
+        let foreground_executor = common.borrow().foreground_executor.clone();
         let globals = Globals::new(
             globals,
-            common.foreground_executor.clone(),
+            foreground_executor,
             qh.clone(),
             seat.clone(),
             frame_ping,
@@ -846,46 +956,12 @@ impl WaylandClient {
             .as_ref()
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
-        let mut cursor = Cursor::new(&conn, &globals, 24);
-
-        handle
-            .insert_source(XDPEventSource::new(&common.background_executor), {
-                move |event, _, client| match event {
-                    XDPEvent::WindowAppearance(appearance) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-
-                            client.common.appearance = appearance;
-
-                            for window in client.windows.values_mut() {
-                                window.set_appearance(appearance);
-                            }
-                        }
-                    }
-                    XDPEvent::CursorTheme(theme) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme);
-                        }
-                    }
-                    XDPEvent::CursorSize(size) => {
-                        if let Some(client) = client.0.upgrade() {
-                            let mut client = client.borrow_mut();
-                            client.cursor.set_size(size);
-                        }
-                    }
-                }
-            })
-            .unwrap();
-
-        let tray_event_sender =
-            install_linux_tray_event_source(&handle, |client: &mut WaylandClientStatePtr| {
-                client.get_client()
-            })
-            .unwrap();
+        let cursor = Cursor::new(&conn, &globals, 24);
+        let (tray_event_sender, tray_event_channel) = calloop::channel::channel();
         let tray = crate::linux::tray::LinuxTray::with_event_sender(tray_event_sender);
+        let background_executor = common.borrow().background_executor.clone();
 
-        let mut state = Rc::new(RefCell::new(WaylandClientState {
+        let state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
             gpu_context,
@@ -953,16 +1029,79 @@ impl WaylandClient {
             primary_data_offer: None,
             cursor,
             pending_activation: None,
-            event_loop: Some(event_loop),
+            startup_activation_token: activation_token,
+            graphical_environment: GraphicalEnvironment {
+                activation_token: None,
+                ..environment.clone()
+            },
+            registrations: Vec::new(),
             ime_enabled: None,
             tray,
         }));
 
-        WaylandSource::new(conn, event_queue)
-            .insert(handle)
-            .unwrap();
+        let client = Self(state);
+        let pointer = WaylandClientStatePtr(Rc::downgrade(&client.0));
+        let mut registrations = Vec::new();
 
-        Self(state)
+        registrations.push(
+            handle
+                .insert_source(frame_ping_source, {
+                    let client = pointer.clone();
+                    move |_, _, _| client.dispatch_scheduled_frames()
+                })
+                .context("failed to register Wayland frame source")?,
+        );
+
+        registrations.push(
+            handle
+                .insert_source(XDPEventSource::new(&background_executor), {
+                    let client = pointer.clone();
+                    move |event, _, _| match event {
+                        XDPEvent::WindowAppearance(appearance) => {
+                            if let Some(client) = client.0.upgrade() {
+                                let mut client = client.borrow_mut();
+                                client.common.borrow_mut().appearance = appearance;
+                                for window in client.windows.values_mut() {
+                                    window.set_appearance(appearance);
+                                }
+                            }
+                        }
+                        XDPEvent::CursorTheme(theme) => {
+                            if let Some(client) = client.0.upgrade() {
+                                client.borrow_mut().cursor.set_theme(theme);
+                            }
+                        }
+                        XDPEvent::CursorSize(size) => {
+                            if let Some(client) = client.0.upgrade() {
+                                client.borrow_mut().cursor.set_size(size);
+                            }
+                        }
+                    }
+                })
+                .map_err(|err| {
+                    anyhow::anyhow!("failed to register desktop portal source: {err:?}")
+                })?,
+        );
+
+        registrations.push(crate::linux::register_linux_tray_event_source(
+            &handle,
+            tray_event_channel,
+            client.0.clone(),
+        )?);
+
+        registrations.push(
+            handle
+                .insert_source(WaylandSource::new(conn, event_queue), {
+                    let mut client = pointer;
+                    move |_, queue, _| queue.dispatch_pending(&mut client)
+                })
+                .map_err(|err| {
+                    anyhow::anyhow!("failed to register Wayland connection source: {err:?}")
+                })?,
+        );
+
+        client.0.borrow_mut().registrations = registrations;
+        Ok(client)
     }
 }
 
@@ -1037,6 +1176,10 @@ impl LinuxClient for WaylandClient {
             .as_ref()
             .and_then(|w| w.toplevel());
         let outputs = state.outputs.values().cloned().collect();
+        let (gpu_resource_budget, appearance) = {
+            let common = state.common.borrow();
+            (common.gpu_resource_budget.clone(), common.appearance)
+        };
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -1044,11 +1187,14 @@ impl LinuxClient for WaylandClient {
             state.gpu_context.clone(),
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
-            &state.common.gpu_resource_budget,
-            state.common.appearance,
+            &gpu_resource_budget,
+            appearance,
             parent,
             outputs,
         )?;
+        if window.0.toplevel().is_some() {
+            state.consume_startup_activation_token(&window.0.surface());
+        }
         state.windows.insert(surface_id, window.0.clone());
 
         Ok(Box::new(window))
@@ -1101,7 +1247,7 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
             open_uri_internal(executor, uri, None);
         }
     }
@@ -1119,30 +1265,17 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
             reveal_path_internal(executor, path, None);
         }
     }
 
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        f(&mut self.0.borrow_mut().common)
+    fn has_windows(&self) -> bool {
+        !self.0.borrow().windows.is_empty()
     }
 
-    fn run(&self) {
-        let mut event_loop = self
-            .0
-            .borrow_mut()
-            .event_loop
-            .take()
-            .expect("App is already running");
-
-        event_loop
-            .run(
-                None,
-                &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-                |_| {},
-            )
-            .log_err();
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        Some(self.0.borrow().graphical_environment.clone())
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {
@@ -1498,7 +1631,7 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         let mut state = client.borrow_mut();
 
         if let xdg_activation_token_v1::Event::Done { token } = event {
-            let executor = state.common.background_executor.clone();
+            let executor = state.common.borrow().background_executor.clone();
             match state.pending_activation.take() {
                 Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
                 Some(PendingActivation::Path(path)) => {
@@ -1701,7 +1834,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 if matches!(key_state, wl_keyboard::KeyState::Pressed) {
                     if let Some(media_event) = crate::linux::keysym_to_media_key(keysym) {
-                        if let Some(cb) = state.common.callbacks.media_key.as_mut() {
+                        if let Some(cb) = state.common.borrow_mut().callbacks.media_key.as_mut() {
                             cb(media_event);
                         }
                         return;
@@ -1767,6 +1900,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                         let rate = state.repeat.characters_per_second;
                         let id = state.repeat.current_id;
+                        let this = this.clone();
                         state
                             .loop_handle
                             .insert_source(Timer::from_duration(state.repeat.delay), {
@@ -1775,7 +1909,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     is_held: true,
                                     prefer_character_input: false,
                                 });
-                                move |_event, _metadata, this| {
+                                move |_event, _metadata, _| {
                                     let mut client = this.get_client();
                                     let mut state = client.borrow_mut();
                                     let is_repeating = id == state.repeat.current_id
@@ -2366,7 +2500,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let read_task = state.common.background_executor.spawn(async {
+                    let read_task = state.common.borrow().background_executor.spawn(async {
                         let buffer = read_fd_with_timeout(fd, PIPE_READ_TIMEOUT)?;
                         let text = String::from_utf8(buffer)?;
                         anyhow::Ok(text)
@@ -2375,6 +2509,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let this = this.clone();
                     state
                         .common
+                        .borrow()
                         .foreground_executor
                         .spawn(async move {
                             let file_list = match read_task.await {
