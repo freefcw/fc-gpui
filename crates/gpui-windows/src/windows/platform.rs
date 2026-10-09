@@ -1722,8 +1722,10 @@ fn check_can_show_windows(environment: &GraphicalEnvironment) -> Result<()> {
 /// Whether this process's window station has a visible desktop.
 fn is_window_station_visible() -> bool {
     use windows::Win32::System::StationsAndDesktops::{
-        GetProcessWindowStation, GetUserObjectInformationW, UOI_FLAGS, USEROBJECTFLAGS, WSF_VISIBLE,
+        GetProcessWindowStation, GetUserObjectInformationW, UOI_FLAGS, USEROBJECTFLAGS,
     };
+    // windows 0.62 generates this winuser.h flag on WindowsAndMessaging, not StationsAndDesktops.
+    use windows::Win32::UI::WindowsAndMessaging::WSF_VISIBLE;
 
     let Ok(station) = (unsafe { GetProcessWindowStation() }) else {
         return false;
