@@ -72,7 +72,7 @@ test-support = [
     "wayland",
     "x11",
 ]
-wayland = ["dep:bitflags"]
+wayland = []
 windows-manifest = []
 x11 = ["scap?/x11"]
 
@@ -234,7 +234,6 @@ version = "1.10"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.bitflags]
 version = "2.6"
-optional = true
 
 # Optional Linux/Windows/FreeBSD capture only. macOS uses objc2-screen-capture-kit.
 # Registry zed-scap 0.0.8-zed (and Zed git pin 4afea48) still declare macOS
@@ -269,6 +268,7 @@ version = "0.62"
 features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_System_RemoteDesktop",
     "Win32_System_Threading",
     # Used by the test platform (test-support) for bitmap rendering.
     "Win32_Graphics_Imaging",

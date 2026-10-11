@@ -4,14 +4,14 @@ use super::{
     global_point_to_native_screen_point, renderer,
 };
 use crate::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString,
-    CursorStyle, DevicePixels, ForegroundExecutor, GpuResourceBudget, Image, ImageFormat,
-    KeyContext, Keymap, MacActivity, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu,
-    OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, QuitMode, RendererCacheStats,
-    Result, SemanticVersion, SharedString, Size, SystemMenuType, Task, ThermalState, TrayAnchor,
-    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
-    WindowParams,
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
+    ClipboardString, CursorStyle, DevicePixels, ForegroundExecutor, GpuResourceBudget,
+    GraphicalEnvironment, Image, ImageFormat, KeyContext, Keymap, MacActivity, MacDispatcher,
+    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, QuitMode, RendererCacheStats, Result, SemanticVersion, SharedString, Size,
+    SystemMenuType, Task, ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent,
+    TrayIconRenderingMode, TrayMenuItem, WindowAppearance, WindowParams, WindowingRequest,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -138,6 +138,8 @@ define_class!(
             register_launch_observers(self);
 
             let platform = delegate_platform(self);
+            let policy = platform.0.lock().activation_policy;
+            let _ = shared_application().setActivationPolicy(native_activation_policy(policy));
             let callback = platform.0.lock().finish_launching.take();
             if let Some(callback) = callback {
                 callback();
@@ -648,6 +650,8 @@ pub(crate) struct MacPlatformState {
     renderer_context: renderer::Context,
     atlas_initial_size: Size<DevicePixels>,
     headless: bool,
+    activation_policy: ActivationPolicy,
+    application_created: bool,
     pasteboard: Retained<Objc2NSPasteboard>,
     text_hash_pasteboard_type: Retained<Objc2NSString>,
     metadata_pasteboard_type: Retained<Objc2NSString>,
@@ -716,6 +720,8 @@ impl MacPlatform {
 
         let state = Mutex::new(MacPlatformState {
             headless,
+            activation_policy: ActivationPolicy::Regular,
+            application_created: false,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -1027,6 +1033,20 @@ impl MacPlatform {
     }
 }
 
+fn activation_policy_for(request: &WindowingRequest) -> ActivationPolicy {
+    match request {
+        WindowingRequest::Headless => ActivationPolicy::Accessory,
+        WindowingRequest::Windowed(_) => ActivationPolicy::Regular,
+    }
+}
+
+fn native_activation_policy(policy: ActivationPolicy) -> Objc2NSApplicationActivationPolicy {
+    match policy {
+        ActivationPolicy::Regular => Objc2NSApplicationActivationPolicy::Regular,
+        ActivationPolicy::Accessory => Objc2NSApplicationActivationPolicy::Accessory,
+    }
+}
+
 impl Platform for MacPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.0.lock().background_executor.clone()
@@ -1072,9 +1092,22 @@ impl Platform for MacPlatform {
                 .expect("headless launch callback was consumed unexpectedly")();
             unsafe { CFRunLoopRun() };
         } else {
+            // An accessory app must not register in the Dock during launch, so its
+            // policy has to precede the run loop. `Regular` is applied in
+            // `application_did_finish_launching` instead: setting it this early leaves
+            // the menu bar of an unbundled app launched from a terminal unclickable.
+            let policy = {
+                let mut state = self.0.lock();
+                state.application_created = true;
+                state.activation_policy
+            };
+            if policy == ActivationPolicy::Accessory {
+                let _ = app.setActivationPolicy(native_activation_policy(policy));
+            }
             autoreleasepool(|_| {
                 app.run();
             });
+            self.0.lock().application_created = false;
         }
 
         // `NSApplication.delegate`, menu delegates, and notification observers
@@ -1082,6 +1115,45 @@ impl Platform for MacPlatform {
         unhook_application_delegate(&app, &app_delegate, &self.0.lock());
         app.set_platform(ptr::null());
         app_delegate.set_platform(ptr::null());
+    }
+
+    fn set_activation_policy(&self, policy: ActivationPolicy) {
+        let mut state = self.0.lock();
+        state.activation_policy = policy;
+        let should_apply = state.application_created && !state.headless;
+        drop(state);
+        if should_apply {
+            let _ = shared_application().setActivationPolicy(native_activation_policy(policy));
+        }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        self.set_activation_policy(activation_policy_for(&request));
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        let state = self.0.lock();
+        if state.headless {
+            return Task::ready(Err(anyhow!(
+                "a platform created headless has no application to switch windowing modes"
+            )));
+        }
+        let policy = activation_policy_for(&request);
+        if state.activation_policy == policy {
+            return Task::ready(Err(match request {
+                WindowingRequest::Headless => anyhow!("already headless"),
+                WindowingRequest::Windowed(_) => anyhow!("already windowed"),
+            }));
+        }
+        drop(state);
+        self.set_activation_policy(policy);
+        Task::ready(Ok(()))
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        let state = self.0.lock();
+        (!state.headless && state.activation_policy == ActivationPolicy::Regular)
+            .then(GraphicalEnvironment::detect)
     }
 
     fn quit(&self) {
@@ -1782,12 +1854,10 @@ impl Platform for MacPlatform {
         // Lifecycle itself is owned by core; this hook only carries the
         // platform-visible side effect.
         let policy = match mode {
-            QuitMode::Explicit => Objc2NSApplicationActivationPolicy::Accessory,
-            QuitMode::LastWindowClosed | QuitMode::Default => {
-                Objc2NSApplicationActivationPolicy::Regular
-            }
+            QuitMode::Explicit => ActivationPolicy::Accessory,
+            QuitMode::LastWindowClosed | QuitMode::Default => ActivationPolicy::Regular,
         };
-        let _ = shared_application().setActivationPolicy(policy);
+        self.set_activation_policy(policy);
     }
 
     fn set_tray_icon(&self, icon: Option<&[u8]>) {

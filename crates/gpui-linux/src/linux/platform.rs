@@ -28,24 +28,24 @@ use ashpd::{
     enumflags2::BitFlags,
 };
 use async_task::Runnable;
-use calloop::{
-    LoopHandle, LoopSignal,
-    channel::{Channel, Sender},
-};
+use calloop::{EventLoop, LoopHandle, LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
-use crate::linux::LinuxDispatcher;
+use crate::linux::{
+    Backend, DisplayConnection, HeadlessConnection, LinuxDispatcher, select_backend,
+};
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, AttentionType, BackgroundExecutor, BiometricStatus,
     ClipboardItem, CursorStyle, DevicePixels, DialogOptions, DisplayId, FocusedWindowInfo,
-    ForegroundExecutor, GpuResourceBudget, Keymap, Keystroke, MediaKeyEvent, Menu, MenuItem,
-    NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
-    PowerSaveBlockerKind, Result, SharedString, SystemPowerEvent, Task, TrayIconClickEvent,
-    TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance, WindowParams, px,
+    ForegroundExecutor, GpuResourceBudget, GraphicalEnvironment, Keymap, Keystroke, MediaKeyEvent,
+    Menu, MenuItem, NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Point, PowerSaveBlockerKind, Result, SharedString, SystemPowerEvent, Task,
+    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
+    WindowParams, WindowingModes, WindowingRequest, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -145,22 +145,20 @@ fn dispatch_tray_menu_action<State: LinuxTrayEventTarget>(
 }
 
 #[cfg_attr(not(any(feature = "wayland", feature = "x11")), allow(dead_code))]
-pub(crate) fn install_linux_tray_event_source<State, Client, Extract>(
-    handle: &LoopHandle<'static, Client>,
-    state_from_client: Extract,
-) -> anyhow::Result<Sender<LinuxTrayEvent>>
+pub(crate) fn register_linux_tray_event_source<State>(
+    handle: &LoopHandle<'static, ()>,
+    tray_event_channel: Channel<LinuxTrayEvent>,
+    state: Rc<RefCell<State>>,
+) -> anyhow::Result<calloop::RegistrationToken>
 where
     State: LinuxTrayEventTarget + 'static,
-    Client: 'static,
-    Extract: Fn(&mut Client) -> Rc<RefCell<State>> + 'static,
 {
-    let (tray_event_sender, tray_event_channel) = calloop::channel::channel::<LinuxTrayEvent>();
     handle
         .insert_source(tray_event_channel, {
             let handle = handle.clone();
-            move |event, _, client| {
+            move |event, _, _| {
                 if let calloop::channel::Event::Msg(event) = event {
-                    let state = state_from_client(client);
+                    let state = state.clone();
                     handle.insert_idle(move |_| match event {
                         LinuxTrayEvent::Click(event) => dispatch_tray_icon_event(&state, event),
                         LinuxTrayEvent::MenuAction(id) => dispatch_tray_menu_action(&state, id),
@@ -168,13 +166,11 @@ where
                 }
             }
         })
-        .map_err(|err| anyhow!("Failed to initialize tray event source: {err:?}"))?;
-    Ok(tray_event_sender)
+        .map_err(|err| anyhow!("Failed to initialize tray event source: {err:?}"))
 }
 
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     #[allow(unused)]
@@ -201,7 +197,8 @@ pub trait LinuxClient {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
-    fn run(&self);
+    fn has_windows(&self) -> bool;
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment>;
 
     fn focused_window_info(&self) -> Option<FocusedWindowInfo> {
         None
@@ -281,6 +278,9 @@ pub(crate) struct LinuxCommon {
     pub(crate) last_network_status: NetworkStatus,
     pub(crate) attention_window: Option<AnyWindowHandle>,
     pub(crate) gpu_resource_budget: GpuResourceBudget,
+    /// Runs after each foreground runnable. X11 uses this to drain events that a runnable's
+    /// requests read into xcb's queue, where they would not wake the event loop.
+    pub(crate) after_runnable: Option<Rc<dyn Fn()>>,
 }
 
 impl LinuxCommon {
@@ -314,6 +314,7 @@ impl LinuxCommon {
             last_network_status: NetworkStatus::Online,
             attention_window: None,
             gpu_resource_budget: gpui::AppResourceProfile::default().gpu,
+            after_runnable: None,
         };
 
         (common, main_receiver)
@@ -328,49 +329,277 @@ impl Drop for LinuxCommon {
     }
 }
 
-pub(crate) struct LinuxPlatform<P> {
-    pub(crate) inner: P,
+/// What a Wayland connection made at startup may use from this process's environment.
+#[derive(Default)]
+struct StartupEnvironment {
+    #[cfg(feature = "wayland")]
+    activation_token: Option<String>,
+    #[cfg(feature = "wayland")]
+    wayland_socket: Option<std::os::unix::net::UnixStream>,
 }
 
-impl<P: LinuxClient> LinuxPlatform<P> {
-    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
-        self.inner.with_common(f)
+/// GPUI's platform for Linux and FreeBSD.
+///
+/// One event loop serves the whole process. The foreground executor is registered on it once,
+/// and the current [`DisplayConnection`] adds and removes its own sources as the app switches
+/// between the display modes it allows.
+pub(crate) struct LinuxPlatform {
+    common: Rc<RefCell<LinuxCommon>>,
+    event_loop: RefCell<Option<EventLoop<'static, ()>>>,
+    loop_handle: LoopHandle<'static, ()>,
+    connection: RefCell<DisplayConnection>,
+    allowed_modes: WindowingModes,
+    initial_windowing: RefCell<Option<WindowingRequest>>,
+    startup_environment: RefCell<Option<StartupEnvironment>>,
+    pending_mode: RefCell<Option<WindowingRequest>>,
+    transition_waiter: RefCell<Option<oneshot::Sender<anyhow::Result<()>>>>,
+}
+
+impl LinuxPlatform {
+    /// Creates the platform, headless until `run` connects it in its initial mode.
+    pub(crate) fn new(allowed_modes: WindowingModes) -> Self {
+        let startup = StartupEnvironment {
+            #[cfg(feature = "wayland")]
+            activation_token: crate::linux::take_startup_activation_token_from_environment(),
+            #[cfg(feature = "wayland")]
+            wayland_socket: crate::linux::take_wayland_socket_from_environment(),
+        };
+        let event_loop = EventLoop::try_new().expect("failed to create Linux event loop");
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let common = Rc::new(RefCell::new(common));
+        let loop_handle = event_loop.handle();
+        loop_handle
+            .insert_source(main_receiver, {
+                let loop_handle = loop_handle.clone();
+                let common = common.clone();
+                move |event, _, _| {
+                    if let calloop::channel::Event::Msg(runnable) = event {
+                        let common = common.clone();
+                        loop_handle.insert_idle(move |_| {
+                            runnable.run();
+                            let after_runnable = common.borrow().after_runnable.clone();
+                            if let Some(after_runnable) = after_runnable {
+                                after_runnable();
+                            }
+                        });
+                    }
+                }
+            })
+            .expect("failed to register Linux foreground executor");
+
+        Self {
+            common,
+            event_loop: RefCell::new(Some(event_loop)),
+            loop_handle,
+            connection: RefCell::new(DisplayConnection::Headless(HeadlessConnection::new())),
+            allowed_modes,
+            initial_windowing: RefCell::new(None),
+            startup_environment: RefCell::new(Some(startup)),
+            pending_mode: RefCell::new(None),
+            transition_waiter: RefCell::new(None),
+        }
+    }
+
+    fn connect_initially(&self) {
+        let request = self
+            .initial_windowing
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| WindowingRequest::Windowed(GraphicalEnvironment::detect()));
+        let startup = self
+            .startup_environment
+            .borrow_mut()
+            .take()
+            .unwrap_or_default();
+        let backend = match &request {
+            WindowingRequest::Headless => None,
+            WindowingRequest::Windowed(environment) => {
+                select_backend(self.allowed_modes, environment)
+                    .map(|backend| (backend, environment))
+            }
+        };
+        match backend {
+            Some((backend, environment)) => {
+                let connection = self
+                    .connect(backend, environment, startup)
+                    .unwrap_or_else(|error| panic!("{error:#}"));
+                self.replace_connection(connection);
+            }
+            None => assert!(
+                self.allowed_modes.contains(WindowingModes::HEADLESS),
+                "{:?} does not allow starting headless, and no allowed display server was given",
+                self.allowed_modes
+            ),
+        }
+    }
+
+    fn with_common<R>(&self, function: impl FnOnce(&mut LinuxCommon) -> R) -> R {
+        function(&mut self.common.borrow_mut())
+    }
+
+    #[cfg_attr(
+        not(feature = "wayland"),
+        allow(unused_variables, reason = "only Wayland uses the startup environment")
+    )]
+    fn connect(
+        &self,
+        backend: Backend,
+        environment: &GraphicalEnvironment,
+        startup: StartupEnvironment,
+    ) -> anyhow::Result<DisplayConnection> {
+        let loop_handle = self.loop_handle.clone();
+        let common = self.common.clone();
+        match backend {
+            #[cfg(feature = "wayland")]
+            Backend::Wayland => {
+                let activation_token = environment
+                    .activation_token
+                    .clone()
+                    .or(startup.activation_token);
+                Ok(DisplayConnection::Wayland(
+                    crate::linux::WaylandClient::attach(
+                        loop_handle,
+                        common,
+                        environment,
+                        startup.wayland_socket,
+                        activation_token,
+                    )?,
+                ))
+            }
+            #[cfg(feature = "x11")]
+            Backend::X11 => Ok(DisplayConnection::X11(crate::linux::X11Connection::new(
+                crate::linux::X11Client::attach(loop_handle, common, environment)?,
+            ))),
+        }
+    }
+
+    fn replace_connection(&self, connection: DisplayConnection) {
+        let previous = std::mem::replace(&mut *self.connection.borrow_mut(), connection);
+        drop(previous);
+        let callback = self
+            .common
+            .borrow_mut()
+            .callbacks
+            .keyboard_layout_change
+            .take();
+        if let Some(mut callback) = callback {
+            callback();
+            let mut common = self.common.borrow_mut();
+            if common.callbacks.keyboard_layout_change.is_none() {
+                common.callbacks.keyboard_layout_change = Some(callback);
+            }
+        }
+    }
+
+    fn apply_pending_mode(&self) {
+        let Some(mode) = self.pending_mode.borrow().clone() else {
+            return;
+        };
+        let result = if self.connection.borrow().has_windows() {
+            Err(anyhow!("a window was opened while switching display modes"))
+        } else {
+            match mode {
+                WindowingRequest::Headless => {
+                    self.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
+                    Ok(())
+                }
+                WindowingRequest::Windowed(environment) => {
+                    select_backend(self.allowed_modes, &environment)
+                        .context("the environment names no allowed Wayland or X11 display server")
+                        .and_then(|backend| {
+                            self.connect(backend, &environment, StartupEnvironment::default())
+                        })
+                        .map(|connection| self.replace_connection(connection))
+                }
+            }
+        };
+        self.pending_mode.borrow_mut().take();
+        if let Some(waiter) = self.transition_waiter.borrow_mut().take() {
+            waiter.send(result).ok();
+        }
+    }
+
+    fn request_mode(&self, mode: WindowingRequest) -> Task<anyhow::Result<()>> {
+        if self.pending_mode.borrow().is_some() {
+            return Task::ready(Err(anyhow!(
+                "a display mode transition is already in progress"
+            )));
+        }
+        let is_headless = self.connection.borrow().is_headless();
+        match &mode {
+            WindowingRequest::Headless
+                if !self.allowed_modes.contains(WindowingModes::HEADLESS) =>
+            {
+                return Task::ready(Err(anyhow!(
+                    "{:?} does not allow headless mode",
+                    self.allowed_modes
+                )));
+            }
+            WindowingRequest::Headless if is_headless => {
+                return Task::ready(Err(anyhow!("already headless")));
+            }
+            WindowingRequest::Headless => {}
+            WindowingRequest::Windowed(_) if !is_headless => {
+                return Task::ready(Err(anyhow!(
+                    "already windowed ({}); switch to headless mode first",
+                    self.connection.borrow().compositor_name()
+                )));
+            }
+            WindowingRequest::Windowed(environment) => {
+                if select_backend(self.allowed_modes, environment).is_none() {
+                    return Task::ready(Err(anyhow!(
+                        "the environment names no display server that {:?} allows",
+                        self.allowed_modes
+                    )));
+                }
+            }
+        }
+        let (sender, receiver) = oneshot::channel();
+        self.transition_waiter.borrow_mut().replace(sender);
+        *self.pending_mode.borrow_mut() = Some(mode);
+        self.common.borrow().signal.wakeup();
+        self.common.borrow().foreground_executor.spawn(async move {
+            receiver
+                .await
+                .map_err(|_| anyhow!("display mode transition was canceled"))
+                .and_then(|result| result)
+        })
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
-        self.inner.keyboard_layout()
+        self.connection.borrow().keyboard_layout()
     }
 
     fn compositor_name(&self) -> &'static str {
-        self.inner.compositor_name()
+        self.connection.borrow().compositor_name()
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        self.inner.primary_display()
+        self.connection.borrow().primary_display()
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        self.inner.displays()
+        self.connection.borrow().displays()
     }
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        self.inner.is_screen_capture_supported()
+        self.connection.borrow().is_screen_capture_supported()
     }
 
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
-        self.inner.screen_capture_sources()
+        self.connection.borrow().screen_capture_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        self.inner.active_window()
+        self.connection.borrow().active_window()
     }
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
-        self.inner.window_stack()
+        self.connection.borrow().window_stack()
     }
 
     fn open_window(
@@ -378,46 +607,52 @@ impl<P: LinuxClient> LinuxPlatform<P> {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        self.inner.open_window(handle, options)
+        self.connection.borrow().open_window(handle, options)
     }
 
     fn open_uri(&self, uri: &str) {
-        self.inner.open_uri(uri)
+        self.connection.borrow().open_uri(uri)
     }
 
     fn reveal_path(&self, path: PathBuf) {
-        self.inner.reveal_path(path)
+        self.connection.borrow().reveal_path(path)
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.inner.set_cursor_style(style)
+        self.connection.borrow().set_cursor_style(style)
     }
 
     fn write_to_primary(&self, item: ClipboardItem) {
-        self.inner.write_to_primary(item)
+        self.connection.borrow().write_to_primary(item)
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.inner.write_to_clipboard(item)
+        self.connection.borrow().write_to_clipboard(item)
     }
 
     fn read_from_primary(&self) -> Option<ClipboardItem> {
-        self.inner.read_from_primary()
+        self.connection.borrow().read_from_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.inner.read_from_clipboard()
+        self.connection.borrow().read_from_clipboard()
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
         &self,
     ) -> impl Future<Output = Option<ashpd::WindowIdentifier>> + Send + 'static {
-        self.inner.window_identifier()
+        self.connection.borrow().window_identifier()
     }
 }
 
-impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
+impl Drop for LinuxPlatform {
+    fn drop(&mut self) {
+        self.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
+    }
+}
+
+impl Platform for LinuxPlatform {
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         self.with_common(|common| common.gpu_resource_budget = gpu.clone());
     }
@@ -447,21 +682,41 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
+        self.connect_initially();
         on_finish_launching();
 
         // calloop's EventLoop::run() clears LoopSignal::stop on entry, then
         // dispatch(None) waits forever. Visual smoke (and other tests) quit
-        // during finish-launching; entering the X11/Wayland loop after that
-        // hangs until an external timeout.
+        // during finish-launching; entering the loop after that hangs until an
+        // external timeout.
         let already_quit = self.with_common(|common| common.quit_requested.get());
         if !already_quit {
-            LinuxClient::run(&self.inner);
+            let mut event_loop = self
+                .event_loop
+                .borrow_mut()
+                .take()
+                .expect("App is already running");
+            event_loop
+                .run(None, &mut (), |_| self.apply_pending_mode())
+                .log_err();
         }
 
         let quit = self.with_common(|common| common.callbacks.quit.take());
         if let Some(mut fun) = quit {
             fun();
         }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        *self.initial_windowing.borrow_mut() = Some(request);
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<anyhow::Result<()>> {
+        self.request_mode(request)
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        self.connection.borrow().graphical_environment()
     }
 
     fn quit(&self) {
@@ -897,23 +1152,25 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn add_recent_document(&self, _path: &Path) {}
 
     fn set_tray_icon(&self, icon: Option<&[u8]>) {
-        LinuxClient::set_tray_icon(&self.inner, icon);
+        self.connection.borrow().set_tray_icon(icon);
     }
 
     fn set_tray_icon_rendering_mode(&self, rendering_mode: TrayIconRenderingMode) {
-        LinuxClient::set_tray_icon_rendering_mode(&self.inner, rendering_mode);
+        self.connection
+            .borrow()
+            .set_tray_icon_rendering_mode(rendering_mode);
     }
 
     fn set_tray_menu(&self, menu: Vec<TrayMenuItem>) {
-        LinuxClient::set_tray_menu(&self.inner, menu);
+        self.connection.borrow().set_tray_menu(menu);
     }
 
     fn set_tray_tooltip(&self, tooltip: &str) {
-        LinuxClient::set_tray_tooltip(&self.inner, tooltip);
+        self.connection.borrow().set_tray_tooltip(tooltip);
     }
 
     fn set_tray_panel_mode(&self, enabled: bool) {
-        LinuxClient::set_tray_panel_mode(&self.inner, enabled);
+        self.connection.borrow().set_tray_panel_mode(enabled);
     }
 
     fn on_tray_icon_event(&self, callback: Box<dyn FnMut(TrayIconEvent)>) {
@@ -929,11 +1186,13 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn register_global_hotkey(&self, id: u32, keystroke: &Keystroke) -> Result<()> {
-        LinuxClient::register_global_hotkey(&self.inner, id, keystroke)
+        self.connection
+            .borrow()
+            .register_global_hotkey(id, keystroke)
     }
 
     fn unregister_global_hotkey(&self, id: u32) {
-        LinuxClient::unregister_global_hotkey(&self.inner, id);
+        self.connection.borrow().unregister_global_hotkey(id);
     }
 
     fn on_global_hotkey(&self, callback: Box<dyn FnMut(u32)>) {
@@ -941,7 +1200,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn focused_window_info(&self) -> Option<FocusedWindowInfo> {
-        LinuxClient::focused_window_info(&self.inner)
+        self.connection.borrow().focused_window_info()
     }
 
     fn set_auto_launch(&self, app_id: &str, enabled: bool) -> Result<()> {
@@ -1024,7 +1283,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn system_idle_time(&self) -> Option<Duration> {
-        LinuxClient::system_idle_time(&self.inner)
+        self.connection.borrow().system_idle_time()
     }
 
     fn on_system_power_event(&self, callback: Box<dyn FnMut(SystemPowerEvent)>) {
@@ -1041,12 +1300,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn request_user_attention(&self, level: AttentionType) {
         let handle = self.active_window();
         self.with_common(|common| common.attention_window = handle);
-        LinuxClient::request_user_attention(&self.inner, level, handle);
+        self.connection
+            .borrow()
+            .request_user_attention(level, handle);
     }
 
     fn cancel_user_attention(&self) {
         let handle = self.with_common(|common| common.attention_window.take());
-        LinuxClient::cancel_user_attention(&self.inner, handle);
+        self.connection.borrow().cancel_user_attention(handle);
     }
 
     fn show_context_menu(

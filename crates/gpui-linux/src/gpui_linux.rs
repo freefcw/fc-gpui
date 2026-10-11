@@ -4,4 +4,4 @@
 
 mod linux;
 
-pub use linux::current_platform;
+pub use linux::{current_platform, linux_platform};

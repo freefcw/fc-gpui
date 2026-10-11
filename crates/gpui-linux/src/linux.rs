@@ -1,6 +1,7 @@
 mod auto_launch;
 mod dialog;
 mod dispatcher;
+mod display_connection;
 mod global_hotkey;
 mod headless;
 mod keyboard;
@@ -20,6 +21,7 @@ mod x11;
 mod xdg_desktop_portal;
 
 pub(crate) use dispatcher::*;
+pub(crate) use display_connection::{Backend, DisplayConnection, select_backend};
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
@@ -32,33 +34,25 @@ pub(crate) use x11::*;
 
 use std::rc::Rc;
 
+use gpui::WindowingModes;
+
 /// Returns the default Linux or FreeBSD platform implementation for this process.
+///
+/// A windowed platform connects to the display server the process environment names, or starts
+/// headless when it names none, and can switch between those modes later. A headless platform
+/// stays headless.
 pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
-    #[cfg(feature = "x11")]
-    use anyhow::Context as _;
-
-    if headless {
-        return Rc::new(LinuxPlatform {
-            inner: HeadlessClient::new(),
-        });
+    if headless || std::env::var_os("ZED_HEADLESS").is_some() {
+        linux_platform(WindowingModes::HEADLESS)
+    } else {
+        linux_platform(WindowingModes::all())
     }
+}
 
-    match gpui::guess_compositor() {
-        #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(LinuxPlatform {
-            inner: WaylandClient::new(),
-        }),
-
-        #[cfg(feature = "x11")]
-        "X11" => Rc::new(LinuxPlatform {
-            inner: X11Client::new()
-                .context("Failed to initialize X11 client.")
-                .unwrap(),
-        }),
-
-        "Headless" => Rc::new(LinuxPlatform {
-            inner: HeadlessClient::new(),
-        }),
-        _ => unreachable!(),
-    }
+/// Returns a platform that may switch among `allowed_modes`.
+///
+/// It starts windowed in the process's own environment, or headless if that names no allowed
+/// display server. Set another initial mode with [`gpui::Application::with_windowing`].
+pub fn linux_platform(allowed_modes: WindowingModes) -> Rc<dyn gpui::Platform> {
+    Rc::new(LinuxPlatform::new(allowed_modes))
 }
