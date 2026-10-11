@@ -7,7 +7,7 @@ use gpui::{
 };
 
 #[cfg(feature = "wayland")]
-use super::WaylandClient;
+use super::WaylandConnection;
 #[cfg(feature = "x11")]
 use super::X11Connection;
 use super::{HeadlessConnection, LinuxClient};
@@ -51,7 +51,7 @@ pub(crate) enum Backend {
 pub(crate) enum DisplayConnection {
     Headless(HeadlessConnection),
     #[cfg(feature = "wayland")]
-    Wayland(WaylandClient),
+    Wayland(WaylandConnection),
     #[cfg(feature = "x11")]
     X11(X11Connection),
 }

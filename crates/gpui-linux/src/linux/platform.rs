@@ -4,7 +4,7 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Command,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
     time::Duration,
 };
@@ -148,7 +148,7 @@ fn dispatch_tray_menu_action<State: LinuxTrayEventTarget>(
 pub(crate) fn register_linux_tray_event_source<State>(
     handle: &LoopHandle<'static, ()>,
     tray_event_channel: Channel<LinuxTrayEvent>,
-    state: Rc<RefCell<State>>,
+    state: Weak<RefCell<State>>,
 ) -> anyhow::Result<calloop::RegistrationToken>
 where
     State: LinuxTrayEventTarget + 'static,
@@ -158,7 +158,12 @@ where
             let handle = handle.clone();
             move |event, _, _| {
                 if let calloop::channel::Event::Msg(event) = event {
-                    let state = state.clone();
+                    // The source must not own the connection. A strong `Rc` here
+                    // keeps the state alive after the connection drops, so its
+                    // registrations are never removed.
+                    let Some(state) = state.upgrade() else {
+                        return;
+                    };
                     handle.insert_idle(move |_| match event {
                         LinuxTrayEvent::Click(event) => dispatch_tray_icon_event(&state, event),
                         LinuxTrayEvent::MenuAction(id) => dispatch_tray_menu_action(&state, id),
@@ -167,6 +172,48 @@ where
             }
         })
         .map_err(|err| anyhow!("Failed to initialize tray event source: {err:?}"))
+}
+
+/// Calloop sources owned by one display connection.
+///
+/// `calloop::RegistrationToken` is `Copy` and does not unregister anything when dropped.
+/// Record each token with [`Self::push_token`] as soon as `insert_source` succeeds
+/// so dropping this value removes every source inserted so far, including when a
+/// later attach step fails.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+#[derive(Default)]
+pub(crate) struct OwnedEventSources {
+    handle: Option<LoopHandle<'static, ()>>,
+    tokens: Vec<calloop::RegistrationToken>,
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl OwnedEventSources {
+    pub(crate) fn new(handle: LoopHandle<'static, ()>) -> Self {
+        Self {
+            handle: Some(handle),
+            tokens: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push_token(&mut self, token: calloop::RegistrationToken) {
+        debug_assert!(
+            self.handle.is_some(),
+            "event source recorded without a loop handle"
+        );
+        self.tokens.push(token);
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl Drop for OwnedEventSources {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            for token in self.tokens.drain(..) {
+                handle.remove(token);
+            }
+        }
+    }
 }
 
 pub trait LinuxClient {
@@ -281,6 +328,14 @@ pub(crate) struct LinuxCommon {
     /// Runs after each foreground runnable. X11 uses this to drain events that a runnable's
     /// requests read into xcb's queue, where they would not wake the event loop.
     pub(crate) after_runnable: Option<Rc<dyn Fn()>>,
+    /// Last tray icon. `None` means the app has not set one; `Some(None)` clears it.
+    /// Restored onto the next windowed connection.
+    tray_icon: Option<Option<Vec<u8>>>,
+    tray_menu: Option<Vec<TrayMenuItem>>,
+    tray_tooltip: Option<String>,
+    /// Global hotkeys successfully registered on a display connection, restored after a
+    /// windowed reconnect. Wayland rejects them; the map is kept for the next X11 connection.
+    global_hotkeys: HashMap<u32, Keystroke>,
 }
 
 impl LinuxCommon {
@@ -315,6 +370,10 @@ impl LinuxCommon {
             attention_window: None,
             gpu_resource_budget: gpui::AppResourceProfile::default().gpu,
             after_runnable: None,
+            tray_icon: None,
+            tray_menu: None,
+            tray_tooltip: None,
+            global_hotkeys: HashMap::new(),
         };
 
         (common, main_receiver)
@@ -457,7 +516,7 @@ impl LinuxPlatform {
                     .clone()
                     .or(startup.activation_token);
                 Ok(DisplayConnection::Wayland(
-                    crate::linux::WaylandClient::attach(
+                    crate::linux::WaylandConnection::attach(
                         loop_handle,
                         common,
                         environment,
@@ -467,9 +526,11 @@ impl LinuxPlatform {
                 ))
             }
             #[cfg(feature = "x11")]
-            Backend::X11 => Ok(DisplayConnection::X11(crate::linux::X11Connection::new(
-                crate::linux::X11Client::attach(loop_handle, common, environment)?,
-            ))),
+            Backend::X11 => Ok(DisplayConnection::X11(crate::linux::X11Client::attach(
+                loop_handle,
+                common,
+                environment,
+            )?)),
         }
     }
 
@@ -487,6 +548,39 @@ impl LinuxPlatform {
             let mut common = self.common.borrow_mut();
             if common.callbacks.keyboard_layout_change.is_none() {
                 common.callbacks.keyboard_layout_change = Some(callback);
+            }
+        }
+        if !self.connection.borrow().is_headless() {
+            self.reapply_windowed_session();
+        }
+    }
+
+    /// Puts the tray and global hotkeys remembered on [`LinuxCommon`] onto the current connection.
+    ///
+    /// Dropping the previous connection shuts down its StatusNotifierItem and releases X11 grabs.
+    fn reapply_windowed_session(&self) {
+        let (tray_icon, tray_menu, tray_tooltip, hotkeys) = {
+            let common = self.common.borrow();
+            (
+                common.tray_icon.clone(),
+                common.tray_menu.clone(),
+                common.tray_tooltip.clone(),
+                common.global_hotkeys.clone(),
+            )
+        };
+        let connection = self.connection.borrow();
+        if let Some(icon) = tray_icon.as_ref() {
+            connection.set_tray_icon(icon.as_deref());
+        }
+        if let Some(menu) = tray_menu {
+            connection.set_tray_menu(menu);
+        }
+        if let Some(tooltip) = tray_tooltip.as_deref() {
+            connection.set_tray_tooltip(tooltip);
+        }
+        for (id, keystroke) in hotkeys {
+            if let Err(error) = connection.register_global_hotkey(id, &keystroke) {
+                log::error!("failed to restore global hotkey {id}: {error:#}");
             }
         }
     }
@@ -1152,6 +1246,7 @@ impl Platform for LinuxPlatform {
     fn add_recent_document(&self, _path: &Path) {}
 
     fn set_tray_icon(&self, icon: Option<&[u8]>) {
+        self.with_common(|common| common.tray_icon = Some(icon.map(|bytes| bytes.to_vec())));
         self.connection.borrow().set_tray_icon(icon);
     }
 
@@ -1162,10 +1257,12 @@ impl Platform for LinuxPlatform {
     }
 
     fn set_tray_menu(&self, menu: Vec<TrayMenuItem>) {
+        self.with_common(|common| common.tray_menu = Some(menu.clone()));
         self.connection.borrow().set_tray_menu(menu);
     }
 
     fn set_tray_tooltip(&self, tooltip: &str) {
+        self.with_common(|common| common.tray_tooltip = Some(tooltip.to_string()));
         self.connection.borrow().set_tray_tooltip(tooltip);
     }
 
@@ -1188,10 +1285,17 @@ impl Platform for LinuxPlatform {
     fn register_global_hotkey(&self, id: u32, keystroke: &Keystroke) -> Result<()> {
         self.connection
             .borrow()
-            .register_global_hotkey(id, keystroke)
+            .register_global_hotkey(id, keystroke)?;
+        self.with_common(|common| {
+            common.global_hotkeys.insert(id, keystroke.clone());
+        });
+        Ok(())
     }
 
     fn unregister_global_hotkey(&self, id: u32) {
+        self.with_common(|common| {
+            common.global_hotkeys.remove(&id);
+        });
         self.connection.borrow().unregister_global_hotkey(id);
     }
 
@@ -1369,11 +1473,47 @@ pub(crate) fn keysym_to_media_key(keysym: xkbcommon::xkb::Keysym) -> Option<Medi
     }
 }
 
+/// Applies the active graphical session, then the activation token, to a fallback opener.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn prepare_fallback_command(
+    mut command: Command,
+    environment: &GraphicalEnvironment,
+    activation_token: Option<&str>,
+) -> Command {
+    environment.apply_to(&mut command);
+    if let Some(token) = activation_token {
+        command.env("XDG_ACTIVATION_TOKEN", token);
+    }
+    command
+}
+
+/// Spawns the first of the desktop's openers that starts. Returns whether one did.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+async fn run_open_commands(
+    target: impl AsRef<std::ffi::OsStr>,
+    activation_token: Option<&str>,
+    environment: &GraphicalEnvironment,
+) -> bool {
+    for command in open::commands(target) {
+        let command = prepare_fallback_command(command, environment, activation_token);
+        let program = format!("{:?}", command.get_program());
+        match smol::process::Command::from(command).spawn() {
+            Ok(mut child) => {
+                child.status().await.log_err();
+                return true;
+            }
+            Err(error) => log::error!("Failed to open with {program}: {error}"),
+        }
+    }
+    false
+}
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn open_uri_internal(
     executor: BackgroundExecutor,
     uri: &str,
     activation_token: Option<String>,
+    environment: GraphicalEnvironment,
 ) {
     if let Some(uri) = ashpd::url::Url::parse(uri).log_err() {
         executor
@@ -1387,21 +1527,7 @@ pub(super) fn open_uri_internal(
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
 
-                for mut command in open::commands(uri.to_string()) {
-                    if let Some(token) = activation_token.as_ref() {
-                        command.env("XDG_ACTIVATION_TOKEN", token);
-                    }
-                    let program = format!("{:?}", command.get_program());
-                    match smol::process::Command::from(command).spawn() {
-                        Ok(mut cmd) => {
-                            cmd.status().await.log_err();
-                            return;
-                        }
-                        Err(e) => {
-                            log::error!("Failed to open with {}: {}", program, e)
-                        }
-                    }
-                }
+                run_open_commands(uri.to_string(), activation_token.as_deref(), &environment).await;
             })
             .detach();
     }
@@ -1412,22 +1538,32 @@ pub(super) fn reveal_path_internal(
     executor: BackgroundExecutor,
     path: PathBuf,
     activation_token: Option<String>,
+    environment: GraphicalEnvironment,
 ) {
     executor
         .spawn(async move {
             if let Some(dir) = File::open(path.clone()).log_err() {
                 match ashpd::desktop::open_uri::OpenDirectoryRequest::default()
-                    .activation_token(activation_token.map(ashpd::ActivationToken::from))
+                    .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
                     .send(&dir.as_fd())
                     .await
                 {
                     Ok(_) => return,
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
-                if path.is_dir() {
-                    open::that_detached(path).log_err();
+                let directory = if path.is_dir() {
+                    path
                 } else {
-                    open::that_detached(path.parent().unwrap_or(Path::new(""))).log_err();
+                    path.parent().unwrap_or(Path::new("")).to_path_buf()
+                };
+                if !run_open_commands(
+                    directory.as_os_str(),
+                    activation_token.as_deref(),
+                    &environment,
+                )
+                .await
+                {
+                    log::error!("Failed to reveal {}", directory.display());
                 }
             }
         })
@@ -2008,5 +2144,167 @@ mod tests {
                 released.fetch_add(1, SeqCst);
             })
         }
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn failed_attach_removes_event_sources_registered_so_far() {
+        let event_loop = EventLoop::<()>::try_new().expect("event loop");
+        let handle = event_loop.handle();
+        let (sender, channel) = calloop::channel::channel::<()>();
+
+        let attach = || -> anyhow::Result<()> {
+            let mut sources = OwnedEventSources::new(handle.clone());
+            let token = handle
+                .insert_source(channel, |_, _, _| {})
+                .map_err(|error| anyhow!("first source: {error:?}"))?;
+            // Record the token before the next fallible step, as Wayland and X11 attach do.
+            sources.push_token(token);
+            Err(anyhow!("second source failed"))
+        };
+
+        let error = attach().expect_err("attach fails on the second source");
+        assert!(
+            error.to_string().contains("second source"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            sender.send(()).is_err(),
+            "the source registered before the failure should be removed when attach drops it"
+        );
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn tray_event_source_holds_a_weak_target() {
+        struct Target;
+
+        impl LinuxTrayEventTarget for Target {
+            fn convert_tray_click_event(&self, event: LinuxTrayClickEvent) -> TrayIconClickEvent {
+                TrayIconClickEvent::with_position(event.kind, Point::new(px(0.0), px(0.0)))
+            }
+
+            fn take_tray_icon_event_callback(&mut self) -> Option<TrayIconEventCallback> {
+                None
+            }
+
+            fn restore_tray_icon_event_callback_if_empty(&mut self, _: TrayIconEventCallback) {}
+
+            fn take_tray_icon_click_event_callback(
+                &mut self,
+            ) -> Option<TrayIconClickEventCallback> {
+                None
+            }
+
+            fn restore_tray_icon_click_event_callback_if_empty(
+                &mut self,
+                _: TrayIconClickEventCallback,
+            ) {
+            }
+
+            fn take_tray_menu_action_callback(&mut self) -> Option<TrayMenuActionCallback> {
+                None
+            }
+
+            fn restore_tray_menu_action_callback_if_empty(&mut self, _: TrayMenuActionCallback) {}
+        }
+
+        let event_loop = EventLoop::<()>::try_new().expect("event loop");
+        let handle = event_loop.handle();
+        let (sender, channel) = calloop::channel::channel();
+        let state = Rc::new(RefCell::new(Target));
+        let weak = Rc::downgrade(&state);
+        let mut sources = OwnedEventSources::new(handle.clone());
+        let token = register_linux_tray_event_source(&handle, channel, Rc::downgrade(&state))
+            .expect("tray source");
+        sources.push_token(token);
+        drop(state);
+        assert!(
+            weak.upgrade().is_none(),
+            "the tray callback kept the connection state alive"
+        );
+        drop(sources);
+        assert!(
+            sender
+                .send(LinuxTrayEvent::MenuAction("quit".into()))
+                .is_err(),
+            "dropping the connection should remove the tray source"
+        );
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn fallback_open_command_applies_the_active_graphical_environment() {
+        let environment = GraphicalEnvironment {
+            wayland_display: Some("wayland-9".into()),
+            x11_display: None,
+            xdg_runtime_dir: Some("/run/user/1000".into()),
+            activation_token: Some("left-alone".into()),
+        };
+        let command = prepare_fallback_command(
+            Command::new("xdg-open"),
+            &environment,
+            Some("activation-token"),
+        );
+        let value = |name| {
+            command
+                .get_envs()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value)
+        };
+
+        assert_eq!(value("WAYLAND_DISPLAY"), Some(Some("wayland-9".as_ref())));
+        assert_eq!(value("DISPLAY"), Some(None));
+        assert_eq!(
+            value("XDG_RUNTIME_DIR"),
+            Some(Some("/run/user/1000".as_ref()))
+        );
+        assert_eq!(
+            value("XDG_ACTIVATION_TOKEN"),
+            Some(Some("activation-token".as_ref()))
+        );
+    }
+
+    #[test]
+    fn remembers_tray_and_hotkeys_for_the_next_windowed_connection() {
+        let platform = LinuxPlatform::new(WindowingModes::HEADLESS);
+        platform.set_tray_icon(Some(&[1, 2, 3]));
+        platform.set_tray_menu(vec![TrayMenuItem::Separator]);
+        platform.set_tray_tooltip("status");
+        platform.set_tray_icon(None);
+
+        let keystroke = Keystroke {
+            key: "k".into(),
+            ..Keystroke::default()
+        };
+        assert!(platform.register_global_hotkey(4, &keystroke).is_err());
+        assert!(platform.common.borrow().global_hotkeys.is_empty());
+        platform.with_common(|common| {
+            common.global_hotkeys.insert(4, keystroke);
+        });
+
+        platform.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
+        {
+            let common = platform.common.borrow();
+            assert_eq!(common.tray_icon, Some(None));
+            assert_eq!(common.tray_tooltip.as_deref(), Some("status"));
+            assert_eq!(common.tray_menu.as_ref().map(Vec::len), Some(1));
+            assert!(common.global_hotkeys.contains_key(&4));
+        }
+
+        platform.unregister_global_hotkey(4);
+        assert!(platform.common.borrow().global_hotkeys.is_empty());
+        platform.with_common(|common| {
+            common.global_hotkeys.insert(
+                4,
+                Keystroke {
+                    key: "k".into(),
+                    ..Keystroke::default()
+                },
+            );
+        });
+        // Headless rejects the grab. The remembered map stays for the next X11 connection.
+        platform.reapply_windowed_session();
+        assert!(platform.common.borrow().global_hotkeys.contains_key(&4));
     }
 }
