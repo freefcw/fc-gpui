@@ -720,7 +720,15 @@ impl MacPlatform {
 
         let state = Mutex::new(MacPlatformState {
             headless,
-            activation_policy: ActivationPolicy::Regular,
+            // `headless()` is `current_platform(true)` and never calls
+            // `set_initial_windowing`. Accessory is the documented headless
+            // policy (no Dock icon or menu bar). Windowed construction stays
+            // Regular until `with_windowing` or `set_quit_mode` says otherwise.
+            activation_policy: if headless {
+                ActivationPolicy::Accessory
+            } else {
+                ActivationPolicy::Regular
+            },
             application_created: false,
             text_system,
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
@@ -1087,6 +1095,15 @@ impl Platform for MacPlatform {
             // Install the delegate before the launch callback. Tray objects
             // may be created from that callback, and their target/action must
             // be able to resolve the delegate immediately.
+            //
+            // This branch enters `CFRunLoopRun` directly and never receives
+            // `applicationDidFinishLaunching`, which is where a windowed app
+            // applies its stored policy. Apply it here, before the run loop.
+            // `headless()` stores Accessory, so the process does not stay a
+            // regular app and pick up a Dock icon or menu bar. The windowed
+            // branch below is unchanged.
+            let policy = self.0.lock().activation_policy;
+            let _ = app.setActivationPolicy(native_activation_policy(policy));
             on_finish_launching
                 .take()
                 .expect("headless launch callback was consumed unexpectedly")();
