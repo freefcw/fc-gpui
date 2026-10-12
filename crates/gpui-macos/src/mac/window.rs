@@ -1508,11 +1508,19 @@ impl PlatformWindow for MacWindow {
     }
 
     fn activate(&self) {
-        let window = self.0.lock().native_window_ptr();
-        let executor = self.0.lock().executor.clone();
+        let lock = self.0.lock();
+        let window = lock.native_window_ptr();
+        let view = lock.native_view;
+        let executor = lock.executor.clone();
         executor
             .spawn(async move {
-                unsafe { native_window_from_ptr(window) }.makeKeyAndOrderFront(None);
+                let window = unsafe { native_window_from_ptr(window) };
+                // A hidden window has not drawn yet. Mark it dirty before reveal
+                // so the first frame is ready when it is ordered front.
+                if !window.isVisible() {
+                    as_ns_view(view).setNeedsDisplay(true);
+                }
+                window.makeKeyAndOrderFront(None);
             })
             .detach();
     }
