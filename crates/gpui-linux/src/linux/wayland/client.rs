@@ -78,9 +78,9 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    SCROLL_LINES, get_xkb_compose_state, is_within_click_distance, new_xkb_context,
-    open_uri_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, OwnedEventSources,
+    PIPE_READ_TIMEOUT, SCROLL_LINES, get_xkb_compose_state, is_within_click_distance,
+    new_xkb_context, open_uri_internal,
     platform::{
         LinuxTrayClickEvent, LinuxTrayEventTarget, TrayIconClickEventCallback,
         TrayIconEventCallback, TrayMenuActionCallback,
@@ -411,8 +411,8 @@ pub(crate) struct WaylandClientState {
     startup_activation_token: Option<String>,
     /// The environment this connection was made in, without its activation token.
     graphical_environment: GraphicalEnvironment,
-    /// Long-lived sources this client registered on the loop, removed when it drops.
-    registrations: Vec<RegistrationToken>,
+    /// Sources registered on the loop. Recorded as they are inserted so `Drop` removes a partial attach.
+    registrations: OwnedEventSources,
     common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
     tray: crate::linux::tray::LinuxTray,
@@ -802,24 +802,19 @@ impl WaylandClientStatePtr {
     }
 }
 
-#[derive(Clone)]
-pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
+/// A connection to the Wayland compositor.
+///
+/// Not `Clone`: dropping it tears down the connection and its event-loop sources even when
+/// another handle still points at the state.
+pub(crate) struct WaylandConnection(Rc<RefCell<WaylandClientState>>);
 
-impl Drop for WaylandClient {
+impl Drop for WaylandConnection {
     fn drop(&mut self) {
-        if Rc::strong_count(&self.0) > 1 {
-            return;
-        }
-        let (loop_handle, registrations) = {
+        let sources = {
             let mut state = self.0.borrow_mut();
-            (
-                state.loop_handle.clone(),
-                std::mem::take(&mut state.registrations),
-            )
+            std::mem::take(&mut state.registrations)
         };
-        for token in registrations {
-            loop_handle.remove(token);
-        }
+        drop(sources);
 
         let mut state = self.0.borrow_mut();
         state.windows.clear();
@@ -865,7 +860,7 @@ fn wl_output_version(version: u32) -> u32 {
     version.clamp(WL_OUTPUT_MIN_VERSION, WL_OUTPUT_MAX_VERSION)
 }
 
-impl WaylandClient {
+impl WaylandConnection {
     /// Connects to the Wayland compositor `environment` names and registers its event sources
     /// on `handle`.
     pub(crate) fn attach(
@@ -1034,78 +1029,77 @@ impl WaylandClient {
                 activation_token: None,
                 ..environment.clone()
             },
-            registrations: Vec::new(),
+            registrations: OwnedEventSources::new(handle.clone()),
             ime_enabled: None,
             tray,
         }));
 
+        // From here on, dropping `client` removes sources already registered if a later step fails.
         let client = Self(state);
         let pointer = WaylandClientStatePtr(Rc::downgrade(&client.0));
-        let mut registrations = Vec::new();
 
-        registrations.push(
-            handle
-                .insert_source(frame_ping_source, {
-                    let client = pointer.clone();
-                    move |_, _, _| client.dispatch_scheduled_frames()
-                })
-                .context("failed to register Wayland frame source")?,
-        );
+        let token = handle
+            .insert_source(frame_ping_source, {
+                let client = pointer.clone();
+                move |_, _, _| client.dispatch_scheduled_frames()
+            })
+            .context("failed to register Wayland frame source")?;
+        client.push_registration(token);
 
-        registrations.push(
-            handle
-                .insert_source(XDPEventSource::new(&background_executor), {
-                    let client = pointer.clone();
-                    move |event, _, _| match event {
-                        XDPEvent::WindowAppearance(appearance) => {
-                            if let Some(client) = client.0.upgrade() {
-                                let mut client = client.borrow_mut();
-                                client.common.borrow_mut().appearance = appearance;
-                                for window in client.windows.values_mut() {
-                                    window.set_appearance(appearance);
-                                }
-                            }
-                        }
-                        XDPEvent::CursorTheme(theme) => {
-                            if let Some(client) = client.0.upgrade() {
-                                client.borrow_mut().cursor.set_theme(theme);
-                            }
-                        }
-                        XDPEvent::CursorSize(size) => {
-                            if let Some(client) = client.0.upgrade() {
-                                client.borrow_mut().cursor.set_size(size);
+        let token = handle
+            .insert_source(XDPEventSource::new(&background_executor), {
+                let client = pointer.clone();
+                move |event, _, _| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        if let Some(client) = client.0.upgrade() {
+                            let mut client = client.borrow_mut();
+                            client.common.borrow_mut().appearance = appearance;
+                            for window in client.windows.values_mut() {
+                                window.set_appearance(appearance);
                             }
                         }
                     }
-                })
-                .map_err(|err| {
-                    anyhow::anyhow!("failed to register desktop portal source: {err:?}")
-                })?,
-        );
+                    XDPEvent::CursorTheme(theme) => {
+                        if let Some(client) = client.0.upgrade() {
+                            client.borrow_mut().cursor.set_theme(theme);
+                        }
+                    }
+                    XDPEvent::CursorSize(size) => {
+                        if let Some(client) = client.0.upgrade() {
+                            client.borrow_mut().cursor.set_size(size);
+                        }
+                    }
+                }
+            })
+            .map_err(|err| anyhow::anyhow!("failed to register desktop portal source: {err:?}"))?;
+        client.push_registration(token);
 
-        registrations.push(crate::linux::register_linux_tray_event_source(
+        let token = crate::linux::register_linux_tray_event_source(
             &handle,
             tray_event_channel,
-            client.0.clone(),
-        )?);
+            Rc::downgrade(&client.0),
+        )?;
+        client.push_registration(token);
 
-        registrations.push(
-            handle
-                .insert_source(WaylandSource::new(conn, event_queue), {
-                    let mut client = pointer;
-                    move |_, queue, _| queue.dispatch_pending(&mut client)
-                })
-                .map_err(|err| {
-                    anyhow::anyhow!("failed to register Wayland connection source: {err:?}")
-                })?,
-        );
+        let token = handle
+            .insert_source(WaylandSource::new(conn, event_queue), {
+                let mut client = pointer;
+                move |_, queue, _| queue.dispatch_pending(&mut client)
+            })
+            .map_err(|err| {
+                anyhow::anyhow!("failed to register Wayland connection source: {err:?}")
+            })?;
+        client.push_registration(token);
 
-        client.0.borrow_mut().registrations = registrations;
         Ok(client)
+    }
+
+    fn push_registration(&self, token: RegistrationToken) {
+        self.0.borrow_mut().registrations.push_token(token);
     }
 }
 
-impl LinuxClient for WaylandClient {
+impl LinuxClient for WaylandConnection {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(self.0.borrow().keyboard_layout.clone())
     }
@@ -1248,7 +1242,8 @@ impl LinuxClient for WaylandClient {
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
-            open_uri_internal(executor, uri, None);
+            let environment = state.graphical_environment.clone();
+            open_uri_internal(executor, uri, None, environment);
         }
     }
 
@@ -1266,7 +1261,8 @@ impl LinuxClient for WaylandClient {
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
-            reveal_path_internal(executor, path, None);
+            let environment = state.graphical_environment.clone();
+            reveal_path_internal(executor, path, None, environment);
         }
     }
 
@@ -1632,10 +1628,13 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
 
         if let xdg_activation_token_v1::Event::Done { token } = event {
             let executor = state.common.borrow().background_executor.clone();
+            let environment = state.graphical_environment.clone();
             match state.pending_activation.take() {
-                Some(PendingActivation::Uri(uri)) => open_uri_internal(executor, &uri, Some(token)),
+                Some(PendingActivation::Uri(uri)) => {
+                    open_uri_internal(executor, &uri, Some(token), environment)
+                }
                 Some(PendingActivation::Path(path)) => {
-                    reveal_path_internal(executor, path, Some(token))
+                    reveal_path_internal(executor, path, Some(token), environment)
                 }
                 Some(PendingActivation::Window(window)) => {
                     let Some(window) = get_window(&mut state, &window) else {

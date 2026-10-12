@@ -7,7 +7,7 @@ use gpui::{
 };
 
 #[cfg(feature = "wayland")]
-use super::WaylandClient;
+use super::WaylandConnection;
 #[cfg(feature = "x11")]
 use super::X11Connection;
 use super::{HeadlessConnection, LinuxClient};
@@ -51,7 +51,7 @@ pub(crate) enum Backend {
 pub(crate) enum DisplayConnection {
     Headless(HeadlessConnection),
     #[cfg(feature = "wayland")]
-    Wayland(WaylandClient),
+    Wayland(WaylandConnection),
     #[cfg(feature = "x11")]
     X11(X11Connection),
 }
@@ -185,6 +185,14 @@ impl DisplayConnection {
 
     pub(crate) fn set_tray_panel_mode(&self, enabled: bool) {
         dispatch!(self, connection => connection.set_tray_panel_mode(enabled), headless(connection) => connection.set_tray_panel_mode(enabled))
+    }
+
+    pub(crate) fn supports_global_hotkeys(&self) -> bool {
+        dispatch!(
+            self,
+            connection => connection.supports_global_hotkeys(),
+            headless(connection) => connection.supports_global_hotkeys()
+        )
     }
 
     pub(crate) fn register_global_hotkey(

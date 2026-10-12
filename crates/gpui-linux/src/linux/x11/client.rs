@@ -50,8 +50,8 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, LinuxCommon, LinuxKeyboardLayout, X11Window,
-    get_xkb_compose_state, is_within_click_distance, log_cursor_icon_warning,
+    DEFAULT_CURSOR_ICON_NAME, LinuxClient, LinuxCommon, LinuxKeyboardLayout, OwnedEventSources,
+    X11Window, get_xkb_compose_state, is_within_click_distance, log_cursor_icon_warning,
     modifiers_from_xinput_info, new_xkb_context, open_uri_internal,
     platform::{
         DOUBLE_CLICK_INTERVAL, LinuxTrayClickEvent, LinuxTrayEventTarget, SCROLL_LINES,
@@ -185,8 +185,8 @@ struct ScrollAxisState {
 pub struct X11ClientState {
     this: Weak<RefCell<X11ClientState>>,
     pub(crate) loop_handle: LoopHandle<'static, ()>,
-    /// Long-lived sources this client registered on the loop, removed when its connection drops.
-    registrations: Vec<RegistrationToken>,
+    /// Sources registered on the loop. Recorded as they are inserted so `Drop` removes a partial attach.
+    registrations: OwnedEventSources,
     /// The environment this connection was made in, without its activation token.
     graphical_environment: GraphicalEnvironment,
 
@@ -394,15 +394,19 @@ impl Deref for X11Connection {
     }
 }
 
+impl X11Connection {
+    fn push_registration(&self, token: RegistrationToken) {
+        self.0.0.borrow_mut().registrations.push_token(token);
+    }
+}
+
 impl Drop for X11Connection {
     fn drop(&mut self) {
-        let handle = {
+        let (sources, refresh_tokens, handle) = {
             let mut state = self.0.0.borrow_mut();
             state.common.borrow_mut().after_runnable = None;
+            let sources = std::mem::take(&mut state.registrations);
             let handle = state.loop_handle.clone();
-            for token in std::mem::take(&mut state.registrations) {
-                handle.remove(token);
-            }
             let refresh_tokens = state
                 .windows
                 .values_mut()
@@ -413,12 +417,12 @@ impl Drop for X11Connection {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            for token in refresh_tokens {
-                handle.remove(token);
-            }
-            handle
+            (sources, refresh_tokens, handle)
         };
-        drop(handle);
+        drop(sources);
+        for token in refresh_tokens {
+            handle.remove(token);
+        }
     }
 }
 
@@ -428,7 +432,7 @@ impl X11Client {
         handle: LoopHandle<'static, ()>,
         common: Rc<RefCell<LinuxCommon>>,
         environment: &GraphicalEnvironment,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<X11Connection> {
         let display = environment
             .x11_display
             .as_ref()
@@ -566,7 +570,7 @@ impl X11Client {
             capslock: Capslock::default(),
             last_modifiers_changed_event: Modifiers::default(),
             last_capslock_changed_event: Capslock::default(),
-            registrations: Vec::new(),
+            registrations: OwnedEventSources::new(handle.clone()),
             graphical_environment: GraphicalEnvironment {
                 activation_token: None,
                 ..environment.clone()
@@ -615,58 +619,60 @@ impl X11Client {
             global_hotkey: crate::linux::global_hotkey::x11::X11GlobalHotkey::new(),
         })));
 
-        let mut registrations = Vec::new();
-        // Safety: Safe if xcb::Connection always returns a valid fd
-        let fd = unsafe { FdWrapper::new(Rc::clone(&client.0.borrow().xcb_connection)) };
-        registrations.push(
-            handle
-                .insert_source(
-                    Generic::new_with_error::<EventHandlerError>(
-                        fd,
-                        calloop::Interest::READ,
-                        calloop::Mode::Level,
-                    ),
-                    {
-                        let client = client.clone();
-                        move |_readiness, _, _| {
-                            let xcb_connection = client.0.borrow().xcb_connection.clone();
-                            client.process_x11_events(&xcb_connection)?;
-                            Ok(calloop::PostAction::Continue)
-                        }
-                    },
-                )
-                .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?,
-        );
-        registrations.push(
-            handle
-                .insert_source(XDPEventSource::new(&background_executor), {
-                    let client = client.clone();
-                    move |event, _, _| match event {
-                        XDPEvent::WindowAppearance(appearance) => {
-                            client.0.borrow().common.borrow_mut().appearance = appearance;
-                            for window in client.0.borrow_mut().windows.values_mut() {
-                                window.window.set_appearance(appearance);
-                            }
-                        }
-                        XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {}
-                    }
-                })
-                .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?,
-        );
-        registrations.push(
-            register_linux_tray_event_source(&handle, tray_event_channel, client.0.clone())
-                .map_err(|err| anyhow!("Failed to initialize tray event source: {err:?}"))?,
-        );
-        client.0.borrow_mut().registrations = registrations;
+        // From here on, dropping `connection` removes sources already registered if a later step fails.
+        let connection = X11Connection::new(client);
+        let client = connection.0.clone();
         client.0.borrow_mut().this = Rc::downgrade(&client.0);
 
-        let event_client = client.clone();
+        // Safety: Safe if xcb::Connection always returns a valid fd
+        let fd = unsafe { FdWrapper::new(Rc::clone(&client.0.borrow().xcb_connection)) };
+        let token = handle
+            .insert_source(
+                Generic::new_with_error::<EventHandlerError>(
+                    fd,
+                    calloop::Interest::READ,
+                    calloop::Mode::Level,
+                ),
+                {
+                    let client = client.clone();
+                    move |_readiness, _, _| {
+                        let xcb_connection = client.0.borrow().xcb_connection.clone();
+                        client.process_x11_events(&xcb_connection)?;
+                        Ok(calloop::PostAction::Continue)
+                    }
+                },
+            )
+            .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?;
+        connection.push_registration(token);
+
+        let token = handle
+            .insert_source(XDPEventSource::new(&background_executor), {
+                let client = client.clone();
+                move |event, _, _| match event {
+                    XDPEvent::WindowAppearance(appearance) => {
+                        client.0.borrow().common.borrow_mut().appearance = appearance;
+                        for window in client.0.borrow_mut().windows.values_mut() {
+                            window.window.set_appearance(appearance);
+                        }
+                    }
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {}
+                }
+            })
+            .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
+        connection.push_registration(token);
+
+        let token =
+            register_linux_tray_event_source(&handle, tray_event_channel, Rc::downgrade(&client.0))
+                .map_err(|err| anyhow!("Failed to initialize tray event source: {err:?}"))?;
+        connection.push_registration(token);
+
+        let event_client = client;
         common.borrow_mut().after_runnable = Some(Rc::new(move || {
             let xcb_connection = event_client.0.borrow().xcb_connection.clone();
             event_client.process_x11_events(&xcb_connection).log_err();
         }));
 
-        Ok(client)
+        Ok(connection)
     }
 
     pub fn process_x11_events(
@@ -1781,20 +1787,28 @@ impl LinuxClient for X11Client {
 
     fn open_uri(&self, uri: &str) {
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        open_uri_internal(
-            self.0.borrow().common.borrow().background_executor.clone(),
-            uri,
-            None,
-        );
+        {
+            let state = self.0.borrow();
+            open_uri_internal(
+                state.common.borrow().background_executor.clone(),
+                uri,
+                None,
+                state.graphical_environment.clone(),
+            );
+        }
     }
 
     fn reveal_path(&self, path: PathBuf) {
         #[cfg(any(feature = "x11", feature = "wayland"))]
-        reveal_path_internal(
-            self.0.borrow().common.borrow().background_executor.clone(),
-            path,
-            None,
-        );
+        {
+            let state = self.0.borrow();
+            reveal_path_internal(
+                state.common.borrow().background_executor.clone(),
+                path,
+                None,
+                state.graphical_environment.clone(),
+            );
+        }
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {
@@ -2005,6 +2019,10 @@ impl LinuxClient for X11Client {
 
     fn set_tray_panel_mode(&self, enabled: bool) {
         self.0.borrow_mut().tray.set_panel_mode(enabled);
+    }
+
+    fn supports_global_hotkeys(&self) -> bool {
+        true
     }
 
     fn register_global_hotkey(&self, id: u32, keystroke: &Keystroke) -> gpui::Result<()> {
