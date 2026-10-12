@@ -73,7 +73,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
-    display::WaylandDisplay,
+    display::{WaylandDisplay, refresh_interval_from_millihertz},
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
@@ -331,6 +331,7 @@ pub struct InProgressOutput {
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
+    refresh_interval: Option<Duration>,
 }
 
 impl InProgressOutput {
@@ -344,6 +345,7 @@ impl InProgressOutput {
                 name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
+                refresh_interval: self.refresh_interval,
             })
         } else {
             None
@@ -358,6 +360,7 @@ pub struct Output {
     pub name: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
+    pub refresh_interval: Option<Duration>,
 }
 
 pub(crate) struct WaylandClientState {
@@ -381,7 +384,11 @@ pub(crate) struct WaylandClientState {
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
+    // Kept after each `done`, since outputs only resend the properties that
+    // changed before the next one.
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
+    // Registry global names of the outputs, for `global_remove`.
+    output_globals: HashMap<u32, ObjectId>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -640,6 +647,39 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
+    /// Reports that the outputs may have changed. The client state and
+    /// `LinuxCommon` must not be borrowed, since GPUI reads the displays while
+    /// handling it.
+    fn report_displays_changed(&self) {
+        let common = self.get_client().borrow().common.clone();
+        let callback = common.borrow_mut().callbacks.displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            common
+                .borrow_mut()
+                .callbacks
+                .displays_changed
+                .get_or_insert(callback);
+        }
+    }
+
+    /// Returns the client, or `None` if it was dropped, for example by a switch to headless mode.
+    pub fn try_get_client(&self) -> Option<Rc<RefCell<WaylandClientState>>> {
+        self.0.upgrade()
+    }
+
+    /// The only output, when exactly one is connected.
+    pub fn sole_output(&self) -> Option<(ObjectId, Output)> {
+        let client = self.try_get_client()?;
+        let state = client.try_borrow().ok()?;
+        let mut outputs = state.outputs.iter();
+        let (id, output) = outputs.next()?;
+        if outputs.next().is_some() {
+            return None;
+        }
+        Some((id.clone(), output.clone()))
+    }
+
     pub fn dispatch_scheduled_frames(&self) {
         let Some(client) = self.0.upgrade() else {
             return;
@@ -887,13 +927,14 @@ impl WaylandConnection {
         let conn =
             Connection::from_socket(stream).context("failed to connect to Wayland compositor")?;
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
+        let (globals, mut event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)
             .context("failed to initialize Wayland registry")?;
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        let mut output_globals: HashMap<u32, ObjectId> = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -916,10 +957,11 @@ impl WaylandConnection {
                         in_progress_outputs.insert(
                             output.id(),
                             InProgressOutput {
-                                output: Some(output),
+                                output: Some(output.clone()),
                                 ..Default::default()
                             },
                         );
+                        output_globals.insert(global.name, output.id());
                     }
                     _ => {}
                 }
@@ -975,6 +1017,7 @@ impl WaylandConnection {
             last_ime_cursor_rectangle: None,
             outputs: HashMap::default(),
             in_progress_outputs,
+            output_globals,
             windows: HashMap::default(),
             common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
@@ -1081,6 +1124,14 @@ impl WaylandConnection {
         )?;
         client.push_registration(token);
 
+        // Receive the outputs' descriptions now, so displays are known before
+        // the app's first windows open.
+        let mut pointer = pointer;
+        event_queue
+            .roundtrip(&mut pointer)
+            .context("failed to receive initial Wayland state")
+            .log_err();
+
         let token = handle
             .insert_source(WaylandSource::new(conn, event_queue), {
                 let mut client = pointer;
@@ -1114,6 +1165,7 @@ impl LinuxClient for WaylandConnection {
                     id: output.id.clone(),
                     name: output.name.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
+                    refresh_interval: output.refresh_interval,
                 }) as Rc<dyn PlatformDisplay>
             })
             .collect()
@@ -1126,6 +1178,7 @@ impl LinuxClient for WaylandConnection {
                     id: output.id.clone(),
                     name: output.name.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
+                    refresh_interval: output.refresh_interval,
                 }) as Rc<dyn PlatformDisplay>
             })
         })
@@ -1427,15 +1480,32 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state.in_progress_outputs.insert(
                         output.id(),
                         InProgressOutput {
-                            output: Some(output),
+                            output: Some(output.clone()),
                             ..Default::default()
                         },
                     );
+                    state.output_globals.insert(name, output.id());
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
-                // TODO: handle global removal
+            wl_registry::Event::GlobalRemove { name } => {
+                let Some(id) = state.output_globals.remove(&name) else {
+                    return;
+                };
+                let was_complete = state.outputs.remove(&id).is_some();
+                let proxy = state
+                    .in_progress_outputs
+                    .remove(&id)
+                    .and_then(|pending| pending.output);
+                if let Some(output) = proxy
+                    && output.version() >= wl_output::REQ_RELEASE_SINCE
+                {
+                    output.release();
+                }
+                if was_complete {
+                    drop(state);
+                    this.report_displays_changed();
+                }
             }
             _ => {}
         }
@@ -1541,14 +1611,33 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
             wl_output::Event::Geometry { x, y, .. } => {
                 in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
             }
-            wl_output::Event::Mode { width, height, .. } => {
-                in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
+            wl_output::Event::Mode {
+                flags,
+                width,
+                height,
+                refresh,
+            } => {
+                // Compositors before wl_output v4 may also list modes the
+                // output isn't using.
+                if let WEnum::Value(flags) = flags
+                    && flags.contains(wl_output::Mode::Current)
+                {
+                    in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)));
+                    in_progress_output.refresh_interval = refresh_interval_from_millihertz(refresh);
+                }
             }
             wl_output::Event::Done => {
-                if let Some(complete) = in_progress_output.complete() {
-                    state.outputs.insert(output.id(), complete);
+                let Some(complete) = in_progress_output.complete() else {
+                    return;
+                };
+                let id = output.id();
+                state.outputs.insert(id.clone(), complete.clone());
+                let windows = state.windows.values().cloned().collect::<Vec<_>>();
+                drop(state);
+                for window in windows {
+                    window.handle_output_changed(&id, &complete);
                 }
-                state.in_progress_outputs.remove(&output.id());
+                this.report_displays_changed();
             }
             _ => {}
         }

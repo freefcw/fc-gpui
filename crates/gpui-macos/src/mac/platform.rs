@@ -31,12 +31,12 @@ use objc2::{AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly
 use objc2_app_kit::{
     NSApplication as Objc2NSApplication,
     NSApplicationActivationPolicy as Objc2NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAttributedStringAppKitDocumentFormats, NSDocumentController, NSEvent as Objc2NSEvent,
-    NSEventMask as Objc2NSEventMask, NSEventModifierFlags as Objc2NSEventModifierFlags,
-    NSImage as Objc2NSImage, NSMenu as Objc2NSMenu, NSMenuDelegate, NSMenuItem as Objc2NSMenuItem,
-    NSMenuItemValidation, NSModalResponse as Objc2NSModalResponse,
-    NSModalResponseOK as Objc2NSModalResponseOK, NSOpenPanel as Objc2NSOpenPanel,
-    NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
+    NSApplicationDidChangeScreenParametersNotification, NSAttributedStringAppKitDocumentFormats,
+    NSDocumentController, NSEvent as Objc2NSEvent, NSEventMask as Objc2NSEventMask,
+    NSEventModifierFlags as Objc2NSEventModifierFlags, NSImage as Objc2NSImage,
+    NSMenu as Objc2NSMenu, NSMenuDelegate, NSMenuItem as Objc2NSMenuItem, NSMenuItemValidation,
+    NSModalResponse as Objc2NSModalResponse, NSModalResponseOK as Objc2NSModalResponseOK,
+    NSOpenPanel as Objc2NSOpenPanel, NSPasteboard as Objc2NSPasteboard, NSPasteboardType,
     NSPasteboardTypePNG as Objc2NSPasteboardTypePNG,
     NSPasteboardTypeRTF as Objc2NSPasteboardTypeRTF,
     NSPasteboardTypeRTFD as Objc2NSPasteboardTypeRTFD,
@@ -420,6 +420,36 @@ define_class!(
             }
         }
 
+        #[unsafe(method(onScreenParametersChange:))]
+        fn on_screen_parameters_change(&self, _notification: &NSNotification) {
+            // Deferred for the same reason as `on_thermal_state_change`.
+            let platform_ptr = delegate_platform(self) as *const MacPlatform;
+
+            use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
+
+            unsafe extern "C" fn invoke(context: *mut c_void) {
+                let platform = unsafe { &*(context as *const MacPlatform) };
+                let mut lock = platform.0.lock();
+                if let Some(mut callback) = lock.on_displays_changed.take() {
+                    drop(lock);
+                    callback();
+                    platform
+                        .0
+                        .lock()
+                        .on_displays_changed
+                        .get_or_insert(callback);
+                }
+            }
+
+            unsafe {
+                dispatch_async_f(
+                    dispatch_get_main_queue(),
+                    platform_ptr as *mut c_void,
+                    Some(invoke),
+                );
+            }
+        }
+
         #[unsafe(method(onThermalStateChange:))]
         fn on_thermal_state_change(&self, _notification: &NSNotification) {
             let platform_ptr = delegate_platform(self) as *const MacPlatform;
@@ -595,6 +625,14 @@ fn register_launch_observers(this: &GPUIApplicationDelegate) {
             Some(NSProcessInfoThermalStateDidChangeNotification),
             Some(AsRef::<AnyObject>::as_ref(&*process_info)),
         );
+        // Posted when a display is connected, disconnected, rearranged, or
+        // changes mode, which includes its refresh rate.
+        notification_center.addObserver_selector_name_object(
+            observer,
+            objc2::sel!(onScreenParametersChange:),
+            Some(NSApplicationDidChangeScreenParametersNotification),
+            None,
+        );
 
         let workspace_center = Objc2NSWorkspace::sharedWorkspace().notificationCenter();
         for (name, selector) in [
@@ -658,6 +696,7 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut() -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -749,6 +788,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
+            on_displays_changed: None,
             menus: None,
             keyboard_mapper,
             global_hotkey_mapper,
@@ -1573,6 +1613,10 @@ impl Platform for MacPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_thermal_state_change = Some(callback);
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
     }
 
     fn thermal_state(&self) -> ThermalState {

@@ -114,6 +114,10 @@ mod tests {
             self.bounds
         }
 
+        fn refresh_interval(&self) -> Option<std::time::Duration> {
+            None
+        }
+
         fn visible_bounds(&self) -> Bounds<Pixels> {
             self.visible_bounds
         }

@@ -483,6 +483,7 @@ struct MacWindowState {
     pending_resize: Option<(Size<Pixels>, f32)>,
     moved_callback: Option<Box<dyn FnMut()>>,
     moved_callback_in_flight: bool,
+    display_changed_callback: Option<Box<dyn FnMut()>>,
     pending_moved: bool,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -897,6 +898,7 @@ impl MacWindow {
                         pending_resize: None,
                         moved_callback: None,
                         moved_callback_in_flight: false,
+                        display_changed_callback: None,
                         pending_moved: false,
                         should_close_callback: None,
                         close_callback: None,
@@ -1724,6 +1726,10 @@ impl PlatformWindow for MacWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().moved_callback = Some(callback);
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().display_changed_callback = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {

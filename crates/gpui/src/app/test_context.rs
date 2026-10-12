@@ -1,11 +1,11 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, PlatformTextSystem, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, WindowVisibility,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
+    Drawable, Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, PlatformTextSystem, Point, Render, Result, Size, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, WindowVisibility,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -489,6 +489,31 @@ impl TestAppContext {
     /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&mut self) {
         self.background_executor.run_until_parked()
+    }
+
+    /// Simulates connecting a display.
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_added(display_id, refresh_interval);
+    }
+
+    /// Simulates disconnecting a display.
+    pub fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_removed(display_id);
+    }
+
+    /// Simulates a connected display changing its refresh interval.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
     }
 
     /// Simulate dispatching an action to the currently focused node in the window.

@@ -407,6 +407,7 @@ pub(crate) struct Callbacks {
     pub(crate) hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
+    pub(crate) display_changed: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
     pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
@@ -952,6 +953,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.state.borrow_mut().callbacks.display_changed = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
