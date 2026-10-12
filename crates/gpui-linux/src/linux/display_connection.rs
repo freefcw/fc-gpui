@@ -187,6 +187,14 @@ impl DisplayConnection {
         dispatch!(self, connection => connection.set_tray_panel_mode(enabled), headless(connection) => connection.set_tray_panel_mode(enabled))
     }
 
+    pub(crate) fn supports_global_hotkeys(&self) -> bool {
+        dispatch!(
+            self,
+            connection => connection.supports_global_hotkeys(),
+            headless(connection) => connection.supports_global_hotkeys()
+        )
+    }
+
     pub(crate) fn register_global_hotkey(
         &self,
         id: u32,

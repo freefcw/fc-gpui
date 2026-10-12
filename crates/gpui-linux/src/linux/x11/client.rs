@@ -2021,6 +2021,10 @@ impl LinuxClient for X11Client {
         self.0.borrow_mut().tray.set_panel_mode(enabled);
     }
 
+    fn supports_global_hotkeys(&self) -> bool {
+        true
+    }
+
     fn register_global_hotkey(&self, id: u32, keystroke: &Keystroke) -> gpui::Result<()> {
         let mut state = self.0.borrow_mut();
         let xcb = state.xcb_connection.clone();

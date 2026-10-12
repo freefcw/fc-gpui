@@ -258,6 +258,11 @@ pub trait LinuxClient {
     fn set_tray_menu(&self, _menu: Vec<TrayMenuItem>) {}
     fn set_tray_tooltip(&self, _tooltip: &str) {}
     fn set_tray_panel_mode(&self, _enabled: bool) {}
+    /// X11 can grab keys. Headless and Wayland cannot; registrations stay on `LinuxCommon`
+    /// until a connection that returns `true` is installed.
+    fn supports_global_hotkeys(&self) -> bool {
+        false
+    }
     fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
         Err(anyhow::anyhow!(
             "Global hotkeys not supported on this platform"
@@ -333,8 +338,8 @@ pub(crate) struct LinuxCommon {
     tray_icon: Option<Option<Vec<u8>>>,
     tray_menu: Option<Vec<TrayMenuItem>>,
     tray_tooltip: Option<String>,
-    /// Global hotkeys successfully registered on a display connection, restored after a
-    /// windowed reconnect. Wayland rejects them; the map is kept for the next X11 connection.
+    /// Requested global hotkeys. Restored when the connection can grab keys (X11).
+    /// Headless and Wayland keep the map without grabbing.
     global_hotkeys: HashMap<u32, Keystroke>,
 }
 
@@ -578,9 +583,13 @@ impl LinuxPlatform {
         if let Some(tooltip) = tray_tooltip.as_deref() {
             connection.set_tray_tooltip(tooltip);
         }
-        for (id, keystroke) in hotkeys {
-            if let Err(error) = connection.register_global_hotkey(id, &keystroke) {
-                log::error!("failed to restore global hotkey {id}: {error:#}");
+        // Wayland and headless cannot grab keys. Leave the map for the next X11 connection
+        // instead of logging a failure for an expected limitation.
+        if connection.supports_global_hotkeys() {
+            for (id, keystroke) in hotkeys {
+                if let Err(error) = connection.register_global_hotkey(id, &keystroke) {
+                    log::error!("failed to restore global hotkey {id}: {error:#}");
+                }
             }
         }
     }
@@ -1283,9 +1292,11 @@ impl Platform for LinuxPlatform {
     }
 
     fn register_global_hotkey(&self, id: u32, keystroke: &Keystroke) -> Result<()> {
-        self.connection
-            .borrow()
-            .register_global_hotkey(id, keystroke)?;
+        if self.connection.borrow().supports_global_hotkeys() {
+            self.connection
+                .borrow()
+                .register_global_hotkey(id, keystroke)?;
+        }
         self.with_common(|common| {
             common.global_hotkeys.insert(id, keystroke.clone());
         });
@@ -2277,11 +2288,19 @@ mod tests {
             key: "k".into(),
             ..Keystroke::default()
         };
-        assert!(platform.register_global_hotkey(4, &keystroke).is_err());
-        assert!(platform.common.borrow().global_hotkeys.is_empty());
-        platform.with_common(|common| {
-            common.global_hotkeys.insert(4, keystroke);
-        });
+        assert!(!platform.connection.borrow().supports_global_hotkeys());
+        platform
+            .register_global_hotkey(4, &keystroke)
+            .expect("headless remembers a hotkey it cannot grab yet");
+        assert_eq!(
+            platform
+                .common
+                .borrow()
+                .global_hotkeys
+                .get(&4)
+                .map(|keystroke| keystroke.key.as_str()),
+            Some("k")
+        );
 
         platform.replace_connection(DisplayConnection::Headless(HeadlessConnection::new()));
         {
@@ -2294,16 +2313,16 @@ mod tests {
 
         platform.unregister_global_hotkey(4);
         assert!(platform.common.borrow().global_hotkeys.is_empty());
-        platform.with_common(|common| {
-            common.global_hotkeys.insert(
+        platform
+            .register_global_hotkey(
                 4,
-                Keystroke {
+                &Keystroke {
                     key: "k".into(),
                     ..Keystroke::default()
                 },
-            );
-        });
-        // Headless rejects the grab. The remembered map stays for the next X11 connection.
+            )
+            .expect("register again while headless");
+        // No grab is attempted, and the remembered map is left for the next X11 connection.
         platform.reapply_windowed_session();
         assert!(platform.common.borrow().global_hotkeys.contains_key(&4));
     }
