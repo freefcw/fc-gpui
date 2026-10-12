@@ -668,7 +668,6 @@ pub struct App {
     pub(crate) accessibility_force_disabled: bool,
     pub(crate) resource_profile: AppResourceProfile,
     text_system: Arc<TextSystem>,
-    flushing_effects: bool,
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
@@ -755,7 +754,6 @@ impl App {
                 resource_profile,
                 text_system,
                 actions: Rc::new(ActionRegistry::default()),
-                flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
                 background_executor: executor,
@@ -1025,10 +1023,8 @@ impl App {
     }
 
     pub(crate) fn finish_update(&mut self) {
-        if !self.flushing_effects && self.pending_updates == 1 {
-            self.flushing_effects = true;
+        if self.pending_updates == 1 {
             self.flush_effects();
-            self.flushing_effects = false;
         }
         self.pending_updates -= 1;
     }
