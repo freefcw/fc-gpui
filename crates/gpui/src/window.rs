@@ -752,11 +752,59 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
+/// The ids of the elements being drawn, root first, with the hash of every
+/// prefix alongside: a [`GlobalElementId`] for the current element is then
+/// the ids cloned out and the hash on top of the stack, without walking the
+/// path — the ids of every ancestor, string names byte by byte — for each
+/// element on every frame.
+#[derive(Clone, Default)]
+pub(crate) struct ElementIdStack {
+    ids: SmallVec<[ElementId; 32]>,
+    hashes: SmallVec<[u64; 32]>,
+}
+
+impl ElementIdStack {
+    pub(crate) fn push(&mut self, id: ElementId) {
+        self.hashes.push(crate::extend_path_hash(self.hash(), &id));
+        self.ids.push(id);
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<ElementId> {
+        self.hashes.pop();
+        self.ids.pop()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.ids.clear();
+        self.hashes.clear();
+    }
+
+    /// The hash of the whole path on the stack.
+    fn hash(&self) -> u64 {
+        self.hashes
+            .last()
+            .copied()
+            .unwrap_or(crate::EMPTY_PATH_HASH)
+    }
+
+    pub(crate) fn global_id(&self) -> GlobalElementId {
+        GlobalElementId::with_hash(&self.ids, self.hash())
+    }
+}
+
+impl std::ops::Deref for ElementIdStack {
+    type Target = [ElementId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.ids
+    }
+}
+
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
     priority: usize,
     parent_node: DispatchNodeId,
-    element_id_stack: SmallVec<[ElementId; 32]>,
+    element_id_stack: ElementIdStack,
     text_style_stack: SmallVec<[TextStyleRefinement; 4]>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -1081,7 +1129,7 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
-    pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: SmallVec<[TextStyleRefinement; 4]>,
     pub(crate) rendered_entity_stack: SmallVec<[EntityId; 16]>,
     pub(crate) element_offset_stack: SmallVec<[Point<Pixels>; 16]>,
@@ -1882,7 +1930,7 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
-            element_id_stack: SmallVec::default(),
+            element_id_stack: ElementIdStack::default(),
             text_style_stack: SmallVec::new(),
             rendered_entity_stack: SmallVec::new(),
             element_offset_stack: SmallVec::new(),
@@ -2604,7 +2652,7 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let global_id = self.element_id_stack.global_id();
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
@@ -3201,7 +3249,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -3279,7 +3327,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -3582,10 +3630,10 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
+        let key = (global_id.clone(), TypeId::of::<S>());
         self.next_frame
             .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+            .push((key.0.clone(), TypeId::of::<S>()));
 
         if let Some(any) = self
             .next_frame
