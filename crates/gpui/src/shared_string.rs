@@ -166,8 +166,7 @@ impl<'de> Deserialize<'de> for SharedString {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        Ok(SharedString::from(s))
+        SmolStr::deserialize(deserializer).map(SharedString)
     }
 }
 
@@ -181,5 +180,23 @@ mod tests {
         assert_eq!(SharedString::from('字').as_str(), "字");
         let emoji: SharedString = '😀'.into();
         assert_eq!(emoji.as_str(), "😀");
+    }
+
+    #[test]
+    fn deserialize_reads_json_strings_through_smol_str() {
+        let short: SharedString = serde_json::from_str(r#""hi""#).unwrap();
+        assert_eq!(short.as_str(), "hi");
+
+        let escaped: SharedString = serde_json::from_str(r#""a\nb\t\"c""#).unwrap();
+        assert_eq!(escaped.as_str(), "a\nb\t\"c");
+
+        let long_src = "x".repeat(64);
+        let encoded = serde_json::to_string(&SharedString::from(long_src.as_str())).unwrap();
+        let long: SharedString = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(long.as_str(), long_src);
+        assert_eq!(serde_json::to_string(&long).unwrap(), encoded);
+
+        assert!(serde_json::from_str::<SharedString>("1").is_err());
+        assert!(serde_json::from_str::<SharedString>("null").is_err());
     }
 }
