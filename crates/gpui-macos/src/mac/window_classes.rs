@@ -25,8 +25,8 @@ use objc2::{
 use objc2_app_kit::{
     NSCursor, NSCursorFrameResizeDirections, NSCursorFrameResizePosition, NSDragOperation,
     NSDraggingDestination, NSDraggingInfo, NSEvent, NSPanel, NSScreen, NSTextInputClient, NSView,
-    NSViewController, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-    NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
+    NSViewController, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
+    NSVisualEffectView, NSWindow, NSWindowDelegate, NSWindowOcclusionState, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSData, NSError, NSKeyedArchiver,
@@ -501,7 +501,14 @@ define_class!(
             let this = this.set_ivars(());
             let this: Retained<Self> =
                 unsafe { objc2::msg_send![super(this), initWithFrame: frame] };
-            this.setMaterial(NSVisualEffectMaterial::Selection);
+            // A window-background material, whose tint and extra saturation
+            // `remove_layer_background` strips, leaving only the blur. `Selection`,
+            // used before, has no `CABackdropLayer` on macOS 27, so nothing behind
+            // the window was blurred. Setting a material also avoids the deprecated
+            // default, `AppearanceBased`.
+            this.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+            // The default, but blurring what's behind the window is this view's whole purpose.
+            this.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             this.setState(NSVisualEffectState::Active);
             this
         }
