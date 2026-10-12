@@ -233,7 +233,7 @@ package = "zed-reqwest"
 [dev-dependencies.unicode-segmentation]
 version = "1.10"
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.bitflags]
+[dependencies.bitflags]
 version = "2.6"
 
 # Optional Linux/Windows/FreeBSD capture only. macOS uses objc2-screen-capture-kit.

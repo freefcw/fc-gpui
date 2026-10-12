@@ -1,9 +1,9 @@
 use crate::{
     A11yCallbacks, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions, Size,
-    TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams, WindowVisibility,
+    DispatchEventResult, DisplayId, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, RequestFrameOptions,
+    Size, TestDisplay, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowParams, WindowVisibility,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -31,6 +31,7 @@ pub(crate) struct TestWindowState {
     frame_wake_count: usize,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    display_changed_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
@@ -139,6 +140,7 @@ impl TestWindow {
             frame_wake_count: 0,
             resize_callback: None,
             moved_callback: None,
+            display_changed_callback: None,
             appearance_change_callback: None,
             input_handler: None,
             is_fullscreen: false,
@@ -172,6 +174,19 @@ impl TestWindow {
             lock.bounds.size
         };
         self.simulate_resize(size);
+    }
+
+    /// Moves the window to the display with the given ID.
+    pub fn simulate_move_to_display(&self, display_id: DisplayId) {
+        let callback = {
+            let mut state = self.0.lock();
+            state.display = Rc::new(TestDisplay::with_id(display_id));
+            state.display_changed_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            callback();
+            self.0.lock().display_changed_callback = Some(callback);
+        }
     }
 
     pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
@@ -403,6 +418,10 @@ impl PlatformWindow for TestWindow {
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().moved_callback = Some(callback)
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().display_changed_callback = Some(callback)
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {

@@ -192,7 +192,9 @@ macro_rules! define_gpui_ns_window {
 
                 #[unsafe(method(windowDidChangeScreen:))]
                 fn window_did_change_screen(&self, _notification: &NSNotification) {
-                    window_ivars_state(self.ivars()).lock().start_display_link();
+                    let window_state = window_ivars_state(self.ivars());
+                    window_state.lock().start_display_link();
+                    report_display_change(&window_state);
                 }
 
                 #[unsafe(method(windowDidBecomeKey:))]
@@ -1442,6 +1444,24 @@ fn dispatch_resize_callback(
         };
         next = pending;
     }
+}
+
+fn report_display_change(window_state: &Arc<Mutex<MacWindowState>>) {
+    let executor = window_state.lock().executor.clone();
+    // AppKit can post screen changes while GPUI is updating a window, e.g.
+    // from `setFrame:`, so deliver after that update completes.
+    executor
+        .spawn({
+            let window_state = window_state.clone();
+            async move {
+                let callback = window_state.lock().display_changed_callback.take();
+                if let Some(mut callback) = callback {
+                    callback();
+                    window_state.lock().display_changed_callback = Some(callback);
+                }
+            }
+        })
+        .detach();
 }
 
 fn dispatch_moved_callback(window_state: &Arc<Mutex<MacWindowState>>) {

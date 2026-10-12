@@ -1,7 +1,12 @@
-use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, TrayAnchor, point, px, size};
+use crate::{
+    Bounds, DisplayId, Pixels, PlatformDisplay, Point, TrayAnchor, point, px,
+    refresh_interval_from_hz, size,
+};
 use anyhow::Result;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
-use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
+use core_graphics::display::{
+    CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetActiveDisplayList,
+};
 use objc2::MainThreadMarker;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSScreen;
@@ -39,24 +44,30 @@ impl MacDisplay {
     }
 
     /// Obtains an iterator over all currently active system displays.
+    ///
+    /// Empty if the system can't list them, e.g. without a window server
+    /// connection.
     pub fn all() -> impl Iterator<Item = Self> {
-        unsafe {
-            // We're assuming there aren't more than 32 displays connected to the system.
-            let mut displays = Vec::with_capacity(32);
-            let mut display_count = 0;
-            let result = CGGetActiveDisplayList(
+        // We're assuming there aren't more than 32 displays connected to the system.
+        let mut displays = Vec::with_capacity(32);
+        let mut display_count = 0;
+        // SAFETY: `displays` has room for the capacity passed in, and
+        // `display_count` reports how many entries were written.
+        let result = unsafe {
+            CGGetActiveDisplayList(
                 displays.capacity() as u32,
                 displays.as_mut_ptr(),
                 &mut display_count,
-            );
-
-            if result == 0 {
-                displays.set_len(display_count as usize);
-                displays.into_iter().map(MacDisplay)
-            } else {
-                panic!("Failed to get active display list. Result: {result}");
-            }
+            )
+        };
+        if result == 0 {
+            // SAFETY: `CGGetActiveDisplayList` initialized `display_count`
+            // entries, at most the capacity it was given.
+            unsafe { displays.set_len(display_count as usize) };
+        } else {
+            log::error!("Failed to get active display list. Result: {result}");
         }
+        displays.into_iter().map(MacDisplay)
     }
 }
 
@@ -163,6 +174,24 @@ impl PlatformDisplay for MacDisplay {
             bytes.byte14,
             bytes.byte15,
         ]))
+    }
+
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        // `maximumFramesPerSecond` is the ProMotion maximum, where the
+        // display mode's rate is 0 on built-in panels.
+        let screen_hertz = unsafe {
+            match self.ns_screen() {
+                Some(screen) if screen.respondsToSelector(objc2::sel!(maximumFramesPerSecond)) => {
+                    screen.maximumFramesPerSecond() as f64
+                }
+                _ => 0.0,
+            }
+        };
+        refresh_interval_from_hz(screen_hertz).or_else(|| {
+            CGDisplay::new(self.0)
+                .display_mode()
+                .and_then(|mode| refresh_interval_from_hz(mode.refresh_rate()))
+        })
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

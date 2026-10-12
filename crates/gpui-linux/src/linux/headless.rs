@@ -8,14 +8,13 @@ use gpui::{
 };
 
 use super::{LinuxClient, LinuxKeyboardLayout};
-pub(crate) use window::{HeadlessDisplay, HeadlessWindow};
+pub(crate) use window::HeadlessWindow;
 
 /// The state of a `LinuxPlatform` with no display server.
 ///
-/// It reports one fake display and opens [`HeadlessWindow`]s, which lay out and handle input but
-/// draw nothing.
+/// It reports no displays and opens [`HeadlessWindow`]s, which lay out and handle input but draw
+/// nothing.
 pub(crate) struct HeadlessConnection {
-    display: Rc<dyn PlatformDisplay>,
     /// Cloned into every open window, so its count tells whether windows are open.
     window_lease: Rc<()>,
 }
@@ -23,7 +22,6 @@ pub(crate) struct HeadlessConnection {
 impl HeadlessConnection {
     pub(crate) fn new() -> Self {
         Self {
-            display: Rc::new(HeadlessDisplay::new()),
             window_lease: Rc::new(()),
         }
     }
@@ -39,15 +37,15 @@ impl LinuxClient for HeadlessConnection {
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        vec![self.display.clone()]
+        Vec::new()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        (self.display.id() == id).then(|| self.display.clone())
+    fn display(&self, _id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        None
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.display.clone())
+        None
     }
 
     fn open_window(
@@ -57,7 +55,6 @@ impl LinuxClient for HeadlessConnection {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         Ok(Box::new(HeadlessWindow::new(
             params,
-            self.display.clone(),
             self.window_lease.clone(),
         )))
     }

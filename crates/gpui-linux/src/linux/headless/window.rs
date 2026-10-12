@@ -12,46 +12,17 @@ use collections::HashMap;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
-use uuid::Uuid;
 
 use gpui::{
     AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
-    DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     Result, Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams, WindowVisibility, px,
+    WindowControlArea, WindowParams, WindowVisibility,
 };
-
-#[derive(Debug)]
-pub(crate) struct HeadlessDisplay {
-    bounds: Bounds<Pixels>,
-}
-
-impl HeadlessDisplay {
-    pub(crate) fn new() -> Self {
-        Self {
-            bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
-        }
-    }
-}
-
-impl PlatformDisplay for HeadlessDisplay {
-    fn id(&self) -> DisplayId {
-        DisplayId::new(0)
-    }
-
-    fn uuid(&self) -> Result<Uuid> {
-        Ok(Uuid::nil())
-    }
-
-    fn bounds(&self) -> Bounds<Pixels> {
-        self.bounds
-    }
-}
 
 struct HeadlessWindowState {
     bounds: Bounds<Pixels>,
-    display: Rc<dyn PlatformDisplay>,
     /// Held while this window exists, so the platform can tell that headless windows are open.
     _lease: Rc<()>,
     input_handler: Option<PlatformInputHandler>,
@@ -74,14 +45,9 @@ impl rwh::HasDisplayHandle for HeadlessWindow {
 }
 
 impl HeadlessWindow {
-    pub(crate) fn new(
-        params: WindowParams,
-        display: Rc<dyn PlatformDisplay>,
-        lease: Rc<()>,
-    ) -> Self {
+    pub(crate) fn new(params: WindowParams, lease: Rc<()>) -> Self {
         Self(Rc::new(RefCell::new(HeadlessWindowState {
             bounds: params.bounds,
-            display,
             _lease: lease,
             input_handler: None,
             title: None,
@@ -120,7 +86,7 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.0.borrow().display.clone())
+        None
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -204,6 +170,8 @@ impl PlatformWindow for HeadlessWindow {
     fn on_resize(&self, _callback: Box<dyn FnMut(Size<Pixels>, f32)>) {}
 
     fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 

@@ -96,6 +96,7 @@ struct PlatformCallbacks {
     global_hotkey: Option<Box<dyn FnMut(u32)>>,
     system_power: Option<Box<dyn FnMut(SystemPowerEvent)>>,
     network_status_change: Option<Box<dyn FnMut(NetworkStatus)>>,
+    displays_changed: Option<Box<dyn FnMut()>>,
     media_key: Option<Box<dyn FnMut(MediaKeyEvent)>>,
     context_menu: Option<Box<dyn FnMut(SharedString)>>,
 }
@@ -150,9 +151,12 @@ impl WindowsPlatform {
             main_receiver: Some(main_receiver),
             directx_devices: Some(directx_devices),
         };
+        // A hidden top-level window rather than a message-only one, since only
+        // top-level windows receive system broadcasts such as `WM_DISPLAYCHANGE`
+        // and `WM_ENDSESSION`, which the app needs even with no windows open.
         let result = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                WS_EX_TOOLWINDOW,
                 PLATFORM_WINDOW_CLASS_NAME,
                 None,
                 WINDOW_STYLE(0),
@@ -160,7 +164,7 @@ impl WindowsPlatform {
                 0,
                 0,
                 0,
-                Some(HWND_MESSAGE),
+                None,
                 None,
                 None,
                 Some(&context as *const _ as *const _),
@@ -546,6 +550,10 @@ impl Platform for WindowsPlatform {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.borrow_mut().callbacks.displays_changed = Some(callback);
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1137,12 +1145,15 @@ impl WindowsPlatformInner {
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
-            | WM_GPUI_GPU_DEVICE_LOST
-            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_DISPLAYS_CHANGED
+            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
             WM_GPUI_TRAY_ICON => self.handle_tray_icon_event(handle, lparam),
             WM_COMMAND => self.handle_tray_menu_command(wparam),
             WM_HOTKEY => self.handle_global_hotkey(wparam),
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
+            WM_DISPLAYCHANGE => self.handle_display_change(handle),
+            WM_QUERYENDSESSION => Some(1),
+            WM_ENDSESSION if wparam.0 != 0 => self.handle_end_session(),
             super::events::WM_WTSSESSION_CHANGE => self.handle_session_change(wparam),
             WM_GPUI_NETWORK_CHANGE => self.handle_network_change(),
             WM_GPUI_MEDIA_KEY => self.handle_media_key(wparam, lparam),
@@ -1169,10 +1180,36 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
+            WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
-            WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
+    }
+
+    fn handle_display_change(&self, handle: HWND) -> Option<isize> {
+        // Broadcasts can be delivered while the app is mid-update, e.g. inside a
+        // COM call, so report the change from the message loop instead.
+        unsafe {
+            PostMessageW(
+                Some(handle),
+                WM_GPUI_DISPLAYS_CHANGED,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+            .log_err();
+        }
+        Some(0)
+    }
+
+    fn handle_displays_changed(&self) -> Option<isize> {
+        let mut callback = self.state.borrow_mut().callbacks.displays_changed.take()?;
+        callback();
+        self.state
+            .borrow_mut()
+            .callbacks
+            .displays_changed
+            .get_or_insert(callback);
+        Some(0)
     }
 
     fn handle_end_session(&self) -> Option<isize> {
