@@ -956,7 +956,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.display_changed = Some(callback);
+        self.0.state.borrow_mut().callbacks.display_changed = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
