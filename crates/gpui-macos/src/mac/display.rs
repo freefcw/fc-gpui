@@ -10,7 +10,7 @@ use core_graphics::display::{
 use objc2::MainThreadMarker;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSScreen;
-use objc2_foundation::{NSNumber, NSPoint, NSRect, NSString};
+use objc2_foundation::{NSNumber, NSObjectProtocol, NSPoint, NSRect, NSString};
 use uuid::Uuid;
 
 #[derive(Debug)]
