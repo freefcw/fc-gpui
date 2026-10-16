@@ -32,6 +32,21 @@ profiling.workspace = true
 raw-window-handle.workspace = true
 smol.workspace = true
 util.workspace = true
+
+# Linux and FreeBSD never use DirectX 12. Disable wgpu defaults and enable the
+# wgpu 30.0.1 default set minus `dx12`. Other targets stay on wgpu defaults.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = [
+    "std",
+    "parking_lot",
+    "metal",
+    "gles",
+    "vulkan",
+    "wgsl",
+    "webgpu",
+] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
 wgpu = "30.0.1"
 
 [dev-dependencies]
