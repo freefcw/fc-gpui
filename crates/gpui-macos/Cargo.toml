@@ -19,7 +19,7 @@ doctest = false
 [features]
 default = ["accessibility", "font-kit"]
 accessibility = ["dep:accesskit", "dep:accesskit_macos", "gpui/accessibility"]
-font-kit = ["dep:font-kit", "gpui/font-kit"]
+font-kit = ["dep:font-kit", "dep:core-text", "dep:pathfinder_geometry", "gpui/font-kit"]
 runtime_shaders = []
 screen-capture = ["dep:objc2-core-media", "dep:objc2-screen-capture-kit", "gpui/screen-capture"]
 test-support = ["gpui/test-support"]
@@ -34,7 +34,7 @@ collections.workspace = true
 core-foundation = "0.10.1"
 core-foundation-sys = "0.8.7"
 core-graphics = "0.24"
-core-text = "=21.0.0"
+core-text = { version = "=21.0.0", optional = true }
 # CV pixel format / image buffer for Metal presentables. Not the crate's
 # `display-link` feature (legacy `block`); see vendor/core-video.
 core-video = { version = "0.5.2", default-features = false, features = ["link"] }
@@ -62,7 +62,7 @@ objc2-service-management = { version = "0.3", default-features = false, features
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter", "block2"] }
 parking.workspace = true
 parking_lot.workspace = true
-pathfinder_geometry.workspace = true
+pathfinder_geometry = { workspace = true, optional = true }
 raw-window-handle.workspace = true
 smallvec.workspace = true
 smol.workspace = true
