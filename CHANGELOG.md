@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **macOS: view events after window close no longer panic** — `MacWindow::drop`
+  takes `native_window` before the deferred `NSWindow.close()`. AppKit can still
+  deliver `mouseMoved:` (and key, drag, resize, and text-input callbacks) to the
+  view in that gap. Those paths called `native_window()`, which panics with
+  `MacWindowState.native_window already taken` once the handle is gone. They now
+  return as soon as close has started.
+
 ## 0.11.2 (2026-10-08)
 
 ### Fixes

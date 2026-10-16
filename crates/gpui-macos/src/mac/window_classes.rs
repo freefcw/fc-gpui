@@ -830,6 +830,9 @@ fn invoke_toggle_tab_bar(this: &impl HasWindowIvars) {
 fn handle_window_did_change_occlusion_state(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     if lock
         .native_window()
         .occlusionState()
@@ -849,6 +852,9 @@ fn handle_window_did_change_occlusion_state(this: &impl HasWindowIvars) {
 fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     lock.fullscreen_restore_bounds = lock.bounds();
     lock.is_exiting_fullscreen = false;
     lock.fullscreen_exit_traffic_light_frames = None;
@@ -861,6 +867,9 @@ fn handle_window_will_enter_fullscreen(this: &impl HasWindowIvars) {
 fn handle_window_will_exit_fullscreen(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     lock.is_exiting_fullscreen = true;
     if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0))
         && lock.transparent_titlebar
@@ -876,6 +885,9 @@ fn handle_window_will_exit_fullscreen(this: &impl HasWindowIvars) {
 fn handle_window_did_fail_to_exit_fullscreen(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     lock.is_exiting_fullscreen = false;
     if let Some(frames) = lock.fullscreen_exit_traffic_light_frames.take() {
         lock.restore_traffic_light_button_frames(frames);
@@ -885,6 +897,9 @@ fn handle_window_did_fail_to_exit_fullscreen(this: &impl HasWindowIvars) {
 fn handle_window_did_exit_fullscreen(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     lock.is_exiting_fullscreen = false;
     // The exit move repositions buttons while the style mask is still
     // fullscreen. Drop that snapshot so the next entry does not treat those
@@ -895,12 +910,18 @@ fn handle_window_did_exit_fullscreen(this: &impl HasWindowIvars) {
 
 fn handle_window_did_move(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
+    if window_state.lock().is_released() {
+        return;
+    }
     dispatch_moved_callback(&window_state);
 }
 
 fn handle_window_did_change_key_status(this: &impl HasWindowIvars, became_key: bool) {
     let window_state = window_ivars_state(this.window_ivars());
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     let is_active = lock.native_window().isKeyWindow();
 
     if became_key && !is_active {
@@ -948,6 +969,10 @@ fn handle_window_did_change_key_status(this: &impl HasWindowIvars, became_key: b
     executor
         .spawn(async move {
             let mut lock = window_state.lock();
+            // The task can run after `Drop` has taken `native_window`.
+            if lock.is_released() {
+                return;
+            }
             if is_active {
                 lock.move_traffic_light();
             }
@@ -979,7 +1004,9 @@ fn handle_dragging_entered(
     sender: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> NSDragOperation {
     let window_state = window_ivars_state(this.window_ivars());
-    let position = drag_event_position(&window_state, sender);
+    let Some(position) = drag_event_position(&window_state, sender) else {
+        return NSDragOperation::empty();
+    };
     let paths = external_paths_from_event(sender);
     if let Some(event) =
         paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
@@ -997,7 +1024,9 @@ fn handle_dragging_updated(
     sender: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> NSDragOperation {
     let window_state = window_ivars_state(this.window_ivars());
-    let position = drag_event_position(&window_state, sender);
+    let Some(position) = drag_event_position(&window_state, sender) else {
+        return NSDragOperation::empty();
+    };
     if send_new_event(
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Pending { position }),
@@ -1010,6 +1039,9 @@ fn handle_dragging_updated(
 
 fn handle_dragging_exited(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
+    if window_state.lock().is_released() {
+        return;
+    }
     send_new_event(
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
@@ -1022,7 +1054,9 @@ fn handle_perform_drag_operation(
     sender: &ProtocolObject<dyn NSDraggingInfo>,
 ) -> bool {
     let window_state = window_ivars_state(this.window_ivars());
-    let position = drag_event_position(&window_state, sender);
+    let Some(position) = drag_event_position(&window_state, sender) else {
+        return false;
+    };
     send_new_event(
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Submit { position }),
@@ -1031,6 +1065,9 @@ fn handle_perform_drag_operation(
 
 fn handle_conclude_drag_operation(this: &impl HasWindowIvars) {
     let window_state = window_ivars_state(this.window_ivars());
+    if window_state.lock().is_released() {
+        return;
+    }
     send_new_event(
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
@@ -1141,6 +1178,9 @@ fn resize_cursor_for_style(cursor_style: CursorStyle) -> Retained<NSCursor> {
 fn handle_key_event(this: &GPUIView, native_event: &NSEvent, key_equivalent: bool) -> bool {
     let window_state = view_state(this);
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return false;
+    }
 
     let window_height = lock.content_size().height;
     let event =
@@ -1244,6 +1284,11 @@ fn handle_view_event(this: &GPUIView, native_event: &NSEvent) {
     let window_state = view_state(this);
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.lock();
+    // `mouseMoved:` still arrives after `Drop` takes `native_window` and before
+    // the deferred `close`. `content_size` would panic on the missing handle.
+    if lock.is_released() {
+        return;
+    }
     let window_height = lock.content_size().height;
     let event =
         unsafe { platform_input_from_native(as_legacy_event(native_event), Some(window_height)) };
@@ -1362,6 +1407,9 @@ fn handle_view_event(this: &GPUIView, native_event: &NSEvent) {
 fn handle_view_did_change_backing_properties(this: &GPUIView) {
     let window_state = view_state(this);
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
 
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
@@ -1388,6 +1436,9 @@ fn frame_size_changed(this: &GPUIView, size: Objc2NSSize) -> bool {
 fn finish_set_frame_size(this: &GPUIView, size: Objc2NSSize) {
     let window_state = view_state(this);
     let mut lock = window_state.lock();
+    if lock.is_released() {
+        return;
+    }
     let new_size = Size::<Pixels>::from(from_objc_size(size));
 
     let scale_factor = lock.scale_factor();
@@ -1523,6 +1574,9 @@ fn first_rect_for_character_range(this: &GPUIView, range: Objc2NSRange) -> NSRec
 fn get_frame(this: &GPUIView) -> NSRect {
     let state = view_state(this);
     let lock = state.lock();
+    if lock.is_released() {
+        return NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+    }
     let mut frame = super::from_objc_rect(lock.native_window().frame());
     let content_layout_rect = super::from_objc_rect(lock.native_window().contentLayoutRect());
     let style_mask = lock.native_window().styleMask();
@@ -1664,7 +1718,7 @@ async fn synthetic_drag(
             break;
         };
         let mut lock = window_state.lock();
-        if lock.synthetic_drag_counter != drag_id {
+        if lock.is_released() || lock.synthetic_drag_counter != drag_id {
             break;
         }
         // Native menu tracking can consume mouse-up, leaving stale drag events replaying.
@@ -1698,9 +1752,16 @@ fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -
 fn drag_event_position(
     window_state: &Mutex<MacWindowState>,
     dragging_info: &ProtocolObject<dyn NSDraggingInfo>,
-) -> Point<Pixels> {
+) -> Option<Point<Pixels>> {
+    let height = {
+        let lock = window_state.lock();
+        if lock.is_released() {
+            return None;
+        }
+        lock.content_size().height
+    };
     let drag_location = from_objc_point(dragging_info.draggingLocation());
-    convert_mouse_position(drag_location, window_state.lock().content_size().height)
+    Some(convert_mouse_position(drag_location, height))
 }
 
 fn with_input_handler<F, R>(window: &GPUIView, f: F) -> Option<R>

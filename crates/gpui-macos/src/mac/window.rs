@@ -538,6 +538,13 @@ impl MacWindowState {
             .expect("MacWindowState.native_window already taken")
     }
 
+    /// `Drop` sets `is_closing` and takes `native_window` before the deferred
+    /// `NSWindow.close()`. AppKit can still deliver view events in that gap;
+    /// those paths must not call `native_window()`.
+    fn is_released(&self) -> bool {
+        state_released(self.is_closing, self.native_window.is_some())
+    }
+
     fn current_visibility(&self) -> WindowVisibility {
         let Some(window) = self.native_window.as_ref() else {
             return WindowVisibility::Hidden;
@@ -569,6 +576,9 @@ impl MacWindowState {
     }
 
     fn move_traffic_light(&self) {
+        if self.is_released() {
+            return;
+        }
         if let Some(traffic_light_position) = self.traffic_light_position {
             // Moving traffic lights while fullscreen doesn't work,
             // see https://github.com/zed-industries/zed/issues/4712.
@@ -2061,8 +2071,14 @@ fn titlebar_move_rect(bounds: NSRect, app_owns_titlebar_drag: bool) -> NSRect {
     }
 }
 
-fn should_skip_deferred_simple_fullscreen(is_closing: bool, native_window_present: bool) -> bool {
+/// True once close has started or `native_window` has already been taken.
+/// Both states make `native_window()` panic or observe a window that is going away.
+fn state_released(is_closing: bool, native_window_present: bool) -> bool {
     is_closing || !native_window_present
+}
+
+fn should_skip_deferred_simple_fullscreen(is_closing: bool, native_window_present: bool) -> bool {
+    state_released(is_closing, native_window_present)
 }
 
 #[cfg(test)]
@@ -2163,5 +2179,15 @@ mod tests {
         assert!(should_skip_deferred_simple_fullscreen(true, true));
         assert!(should_skip_deferred_simple_fullscreen(false, false));
         assert!(!should_skip_deferred_simple_fullscreen(false, true));
+    }
+
+    #[test]
+    fn view_events_stop_after_native_window_is_taken() {
+        // Drop's gap: closing flag set, handle already taken.
+        assert!(state_released(true, false));
+        // Handle taken without the flag, or flag set while the handle remains.
+        assert!(state_released(false, false));
+        assert!(state_released(true, true));
+        assert!(!state_released(false, true));
     }
 }
