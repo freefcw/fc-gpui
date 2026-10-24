@@ -191,17 +191,17 @@ impl Scene {
         }
         if !self
             .monochrome_sprites
-            .is_sorted_by_key(|s| (s.order, s.tile.tile_id))
+            .is_sorted_by_key(|s| (s.order, s.tile.texture_id.index))
         {
             self.monochrome_sprites
-                .sort_unstable_by_key(|s| (s.order, s.tile.tile_id));
+                .sort_unstable_by_key(|s| (s.order, s.tile.texture_id.index));
         }
         if !self
             .polychrome_sprites
-            .is_sorted_by_key(|s| (s.order, s.tile.tile_id))
+            .is_sorted_by_key(|s| (s.order, s.tile.texture_id.index))
         {
             self.polychrome_sprites
-                .sort_unstable_by_key(|s| (s.order, s.tile.tile_id));
+                .sort_unstable_by_key(|s| (s.order, s.tile.texture_id.index));
         }
         if !self.surfaces.is_sorted_by_key(|s| s.order) {
             self.surfaces.sort_unstable_by_key(|s| s.order);
@@ -731,10 +731,10 @@ impl Default for TransformationMatrix {
 pub struct MonochromeSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
+    pub tile: AtlasTile,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
-    pub tile: AtlasTile,
     pub transformation: TransformationMatrix,
 }
 
@@ -750,12 +750,12 @@ impl From<MonochromeSprite> for Primitive {
 pub struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
+    pub tile: AtlasTile,
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
-    pub tile: AtlasTile,
 }
 
 impl From<PolychromeSprite> for Primitive {
