@@ -1319,11 +1319,18 @@ impl Platform for MacPlatform {
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         use objc2_foundation::NSString;
 
-        let marker = self.1;
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let panel = Objc2NSOpenPanel::openPanel(marker);
+                // AppKit can return nil even though the generated binding currently marks
+                // openPanel as nonnull. Keep the error asynchronous and let the caller handle it
+                // through the same receiver used for normal dialog completion.
+                let panel: Option<Retained<Objc2NSOpenPanel>> =
+                    unsafe { objc2::msg_send![Objc2NSOpenPanel::class(), openPanel] };
+                let Some(panel) = panel else {
+                    _ = done_tx.send(Err(anyhow!("macOS could not create the open dialog")));
+                    return;
+                };
                 panel.setCanChooseDirectories(options.directories);
                 panel.setCanChooseFiles(options.files);
                 panel.setAllowsMultipleSelection(options.multiple);
@@ -1371,10 +1378,15 @@ impl Platform for MacPlatform {
         let url = NSURL::from_directory_path(directory);
         let suggested_name = suggested_name.map(NSString::from_str);
         let (done_tx, done_rx) = oneshot::channel();
-        let marker = self.1;
         self.foreground_executor()
             .spawn(async move {
-                let panel = Objc2NSSavePanel::savePanel(marker);
+                // See the open panel above: the AppKit return value is nullable in practice.
+                let panel: Option<Retained<Objc2NSSavePanel>> =
+                    unsafe { objc2::msg_send![Objc2NSSavePanel::class(), savePanel] };
+                let Some(panel) = panel else {
+                    _ = done_tx.send(Err(anyhow!("macOS could not create the save dialog")));
+                    return;
+                };
                 panel.setDirectoryURL(url.as_deref());
 
                 if let Some(suggested_name) = suggested_name {
