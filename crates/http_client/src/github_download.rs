@@ -134,12 +134,23 @@ async fn extract_tar_gz(
     url: &str,
     from: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
-    let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let archive = async_tar::Archive::new(decompressed_bytes);
-    archive
-        .unpack(&destination_path)
+    let mut decompressed_bytes = GzipDecoder::new(BufReader::new(from));
+    let temp_file = tempfile::NamedTempFile::new()
+        .with_context(|| format!("creating a temporary file for {url}"))?;
+    let mut temp_writer = async_fs::File::from(temp_file.reopen()?);
+    futures::io::copy(&mut decompressed_bytes, &mut temp_writer)
         .await
-        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+        .with_context(|| format!("decompressing {url}"))?;
+    drop(temp_writer);
+
+    let destination = destination_path.to_path_buf();
+    blocking::unblock(move || {
+        let mut archive = tar::Archive::new(std::io::BufReader::new(temp_file.reopen()?));
+        archive.set_preserve_mtime(false);
+        archive.unpack(&destination)
+    })
+    .await
+    .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
     Ok(())
 }
 
@@ -198,8 +209,8 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
 #[cfg(test)]
 mod tests {
     use async_compression::futures::write::GzipEncoder;
-    use async_tar::{EntryType, Header};
     use futures::{AsyncWriteExt, io::Cursor};
+    use tar::{EntryType, Header};
 
     use super::extract_tar_gz;
 
