@@ -8,9 +8,7 @@ use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
-use futures::{
-    future::BoxFuture,
-};
+use futures::future::BoxFuture;
 use http::request::Builder;
 use parking_lot::Mutex;
 #[cfg(feature = "test-support")]

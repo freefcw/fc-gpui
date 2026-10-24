@@ -4,12 +4,12 @@ A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github
 
 ## Getting Started
 
-`fc-gpui` 0.11.3 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
+`fc-gpui` 0.12.0 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
 the upstream [Augani](https://github.com/Augani/adabraka-gpui) crate at `0.5.1` and does not
 carry this fork's releases. Depend on the crates.io package:
 
 ```toml
-fc-gpui = "0.11.3"
+fc-gpui = "0.12.0"
 ```
 
 Building requires the toolchain pinned in
@@ -19,7 +19,7 @@ Rust `1.97.1` with edition 2024.
 To keep the build small, disable default features and opt into only the image formats you need:
 
 ```toml
-fc-gpui = { version = "0.11.3", default-features = false, features = [
+fc-gpui = { version = "0.12.0", default-features = false, features = [
     "font-kit",
     "wayland",
     "x11",
@@ -50,15 +50,15 @@ Renaming the dependency is also supported — the GPUI macros (derives, `registe
 
 ```toml
 [dependencies]
-gpui = { package = "fc-gpui", version = "0.11.3" }
+gpui = { package = "fc-gpui", version = "0.12.0" }
 ```
 
 The utility crates (`fc-gpui-util`, `fc-gpui-http-client`, …) import under their matching
 `fc_gpui_*` library names.
 
-### Upgrading from Published 0.11.3
+### Upgrading from 0.11.3
 
-The post-0.11.3 development line renames `ScrollWheelEvent` to `ScrollEvent`,
+The `0.12.0` release renames `ScrollWheelEvent` to `ScrollEvent`,
 adds the required `Platform::platform_info()` method, and changes
 `Modifiers::secondary` / `secondary_key` to receive the current `&App`.
 macOS also adds the optional `write_credentials_if_not_exists` API. See the

@@ -1,9 +1,8 @@
-# Downstream migration notes for the post-0.11.3 development line
+# Downstream migration notes for 0.12.0
 
-The current development branch contains public API changes after the published
-`0.11.3` release. They must ship in the next minor release rather than as a
-patch release. Applications that stay on the published `0.11.3` packages do
-not need these changes until they upgrade.
+The `0.12.0` release contains public API changes after the `0.11.3` release.
+Applications that stay on the `0.11.3` packages do not need these changes until
+they upgrade.
 
 ## Rename `ScrollWheelEvent`
 
