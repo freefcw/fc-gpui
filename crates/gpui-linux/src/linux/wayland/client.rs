@@ -99,8 +99,7 @@ use gpui::{
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, TrayIconClickEvent, WindowParams, point, px,
-    size,
+    ScrollEvent, SharedString, Size, TouchPhase, TrayIconClickEvent, WindowParams, point, px, size,
 };
 use gpui_wgpu::GpuContext;
 
@@ -2214,7 +2213,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     let discrete = state.discrete_scroll_delta.take();
                     if let Some(continuous) = continuous {
                         if let Some(window) = state.mouse_focused_window.clone() {
-                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            let input = PlatformInput::ScrollWheel(ScrollEvent {
                                 position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
                                 modifiers: state.modifiers,
@@ -2226,7 +2225,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     } else if let Some(discrete) = discrete
                         && let Some(window) = state.mouse_focused_window.clone()
                     {
-                        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        let input = PlatformInput::ScrollWheel(ScrollEvent {
                             position: state.mouse_location.unwrap(),
                             delta: ScrollDelta::Lines(discrete),
                             modifiers: state.modifiers,

@@ -669,7 +669,7 @@ impl WindowsWindowInner {
             }),
             Some(wheel_scroll_amount) => {
                 let wheel_distance = wheel_notches * wheel_scroll_amount as f32;
-                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                PlatformInput::ScrollWheel(ScrollEvent {
                     position,
                     delta: ScrollDelta::Lines(match modifiers.shift {
                         true => Point {
@@ -713,7 +713,7 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let event = PlatformInput::ScrollWheel(ScrollEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             delta: ScrollDelta::Lines(Point {
                 x: wheel_distance,

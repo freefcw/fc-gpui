@@ -22,7 +22,7 @@ use crate::{
     KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
     TooltipId, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
@@ -361,7 +361,7 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -975,7 +975,7 @@ pub trait InteractiveElement: Sized {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_scroll_wheel(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_scroll_wheel(listener);
         self
@@ -1579,7 +1579,7 @@ pub(crate) type FileDropExitListener =
     Box<dyn Fn(&FileDropEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+    Box<dyn Fn(&ScrollEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -2586,7 +2586,7 @@ impl Interactivity {
 
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
@@ -2974,7 +2974,7 @@ impl Interactivity {
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
@@ -3347,7 +3347,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
 
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
-        move |_: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
+        move |_: &ScrollEvent, _phase, window: &mut Window, _cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
@@ -3957,7 +3957,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent as _, MouseButton, Render,
-        ScrollDelta, ScrollWheelEvent, TestAppContext, fallback_prompt_renderer, hsla, point, size,
+        ScrollDelta, ScrollEvent, TestAppContext, fallback_prompt_renderer, hsla, point, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -4519,7 +4519,7 @@ mod tests {
 
         cx.update(|window, cx| {
             window.dispatch_event(
-                ScrollWheelEvent {
+                ScrollEvent {
                     position: point(px(50.), px(50.)),
                     delta: ScrollDelta::Pixels(point(px(-20.), px(-4.))),
                     touch_phase: crate::TouchPhase::Started,
@@ -4540,7 +4540,7 @@ mod tests {
 
         cx.update(|window, cx| {
             window.dispatch_event(
-                ScrollWheelEvent {
+                ScrollEvent {
                     position: point(px(50.), px(50.)),
                     delta: ScrollDelta::Pixels(point(px(-3.), px(-2.))),
                     touch_phase: crate::TouchPhase::Moved,
@@ -4557,7 +4557,7 @@ mod tests {
 
         cx.update(|window, cx| {
             window.dispatch_event(
-                ScrollWheelEvent {
+                ScrollEvent {
                     position: point(px(50.), px(50.)),
                     delta: ScrollDelta::Pixels(point(px(-2.), px(-20.))),
                     touch_phase: crate::TouchPhase::Moved,
@@ -4606,7 +4606,7 @@ mod tests {
 
         cx.update(|window, cx| {
             window.dispatch_event(
-                ScrollWheelEvent {
+                ScrollEvent {
                     position: point(px(50.), px(50.)),
                     delta: ScrollDelta::Pixels(point(px(-20.), px(0.))),
                     ..Default::default()

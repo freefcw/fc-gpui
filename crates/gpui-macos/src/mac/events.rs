@@ -5,7 +5,7 @@ use crate::mac::{
 use crate::{
     Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
-    PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
+    PlatformInput, ScrollDelta, ScrollEvent, TouchPhase, point, px,
 };
 use core_foundation::base::CFRelease;
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
@@ -230,7 +230,7 @@ pub(crate) unsafe fn platform_input_from_native(
                     ScrollDelta::Lines(raw_data)
                 };
 
-                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                PlatformInput::ScrollWheel(ScrollEvent {
                     position: point(
                         px(native_event.locationInWindow().x as f32),
                         window_height - px(native_event.locationInWindow().y as f32),

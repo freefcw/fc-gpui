@@ -293,8 +293,8 @@ impl AnchoredPositionMode {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, Window,
-        deferred, div, point, prelude::*, px, size,
+        Pixels, PlatformInput, Point, ScrollDelta, ScrollEvent, TestAppContext, Window, deferred,
+        div, point, prelude::*, px, size,
     };
 
     struct AnchoredTestView {
@@ -358,7 +358,7 @@ mod tests {
 
         cx.update(|window, cx| {
             window.dispatch_event(
-                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                PlatformInput::ScrollWheel(ScrollEvent {
                     position: point(px(400.), px(300.)),
                     delta: ScrollDelta::Pixels(point(px(0.), px(-1000.))),
                     ..Default::default()

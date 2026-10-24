@@ -10,7 +10,7 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
     FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement, Styled,
     Window, point, px, size,
 };
 use collections::VecDeque;
@@ -1482,7 +1482,7 @@ impl Element for List {
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
         let mut accumulated_scroll_delta = ScrollDelta::default();
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+        window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
                 accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
                 let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
@@ -1593,7 +1593,7 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod test {
 
-    use gpui::{ScrollDelta, ScrollWheelEvent};
+    use gpui::{ScrollDelta, ScrollEvent};
 
     use crate::{
         self as gpui, AppContext, Context, Element, IntoElement, ListState, Render, Styled,
@@ -1699,7 +1699,7 @@ mod test {
         state.reset(5);
 
         // And then receive a scroll event _before_ the next paint
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: point(px(1.), px(1.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-500.))),
             ..Default::default()
@@ -1884,7 +1884,7 @@ mod test {
             cx.new(|_| TestView(state.clone()))
         });
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: point(px(1.), px(1.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-20.))),
             ..Default::default()
@@ -2026,7 +2026,7 @@ mod test {
 
         state.remeasure_items(5..6);
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: point(px(50.), px(100.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-30.))),
             ..Default::default()
@@ -2097,7 +2097,7 @@ mod test {
         item_height.set(50);
         state.remeasure_items(5..6);
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: point(px(50.), px(100.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-30.))),
             ..Default::default()

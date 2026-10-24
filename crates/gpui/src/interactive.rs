@@ -363,7 +363,7 @@ impl MouseMoveEvent {
 
 /// A mouse wheel event from the platform
 #[derive(Clone, Debug, Default)]
-pub struct ScrollWheelEvent {
+pub struct ScrollEvent {
     /// The position of the mouse on the window.
     pub position: Point<Pixels>,
 
@@ -377,15 +377,15 @@ pub struct ScrollWheelEvent {
     pub touch_phase: TouchPhase,
 }
 
-impl Sealed for ScrollWheelEvent {}
-impl InputEvent for ScrollWheelEvent {
+impl Sealed for ScrollEvent {}
+impl InputEvent for ScrollEvent {
     fn to_platform_input(self) -> PlatformInput {
         PlatformInput::ScrollWheel(self)
     }
 }
-impl MouseEvent for ScrollWheelEvent {}
+impl MouseEvent for ScrollEvent {}
 
-impl Deref for ScrollWheelEvent {
+impl Deref for ScrollEvent {
     type Target = Modifiers;
 
     fn deref(&self) -> &Self::Target {
@@ -672,7 +672,7 @@ pub enum PlatformInput {
     /// The mouse exited the window.
     MouseExited(MouseExitEvent),
     /// The scroll wheel was used.
-    ScrollWheel(ScrollWheelEvent),
+    ScrollWheel(ScrollEvent),
     /// A pinch gesture was performed.
     Pinch(PinchEvent),
     /// Files were dragged and dropped onto the window.
