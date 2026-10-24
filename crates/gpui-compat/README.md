@@ -56,6 +56,15 @@ gpui = { package = "fc-gpui", version = "0.11.3" }
 The utility crates (`fc-gpui-util`, `fc-gpui-http-client`, …) import under their matching
 `fc_gpui_*` library names.
 
+### Upgrading from Published 0.11.3
+
+The post-0.11.3 development line renames `ScrollWheelEvent` to `ScrollEvent`,
+adds the required `Platform::platform_info()` method, and changes
+`Modifiers::secondary` / `secondary_key` to receive the current `&App`.
+macOS also adds the optional `write_credentials_if_not_exists` API. See the
+[downstream migration notes](https://github.com/freefcw/fc-gpui/blob/main/docs/downstream-migration-0.11.3-post-release.md)
+before upgrading.
+
 ### Macro Dependency Override
 
 Macro paths are resolved automatically for normal `fc-gpui` dependencies and ordinary

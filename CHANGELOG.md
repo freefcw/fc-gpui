@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- **`ScrollWheelEvent` is renamed to `ScrollEvent`** — update event handlers,
+  imports, and simulated input in downstream applications. The
+  `PlatformInput::ScrollWheel` variant keeps its name; only the event type is
+  renamed.
+- **Platform implementations must provide `Platform::platform_info`** — custom
+  `Platform` implementations must return a `PlatformInfo` with an
+  `OperatingSystem` and `PlatformTarget`. Applications can read the same value
+  through `App::platform_info()`.
+- **Secondary modifier queries now use runtime platform information** —
+  `Modifiers::secondary` and `Modifiers::secondary_key` take `&App`, so calls
+  must pass the current application context. This avoids assuming that the
+  compile target is also the host platform when web support is added.
+
+### Added
+
+- **Runtime platform information** — `PlatformInfo`, `OperatingSystem`, and
+  `PlatformTarget` are available from `gpui`. Native backends report their host
+  operating system and target.
+- **Atomic macOS credential creation** — macOS applications can call
+  `App::write_credentials_if_not_exists` to create credentials only when the
+  same URL and username do not already exist. The method returns `true` when it
+  creates an item and `false` when it leaves an existing item unchanged.
+
+### Fixes
+
+- **Windows ignores foreign internal messages** — window-specific `WM_USER`
+  messages now require GPUI's validation token before they can change cursors,
+  trigger redraws, or handle device recovery.
+- **App borrow panics include both source locations** — conflicting borrows now
+  report where the attempted borrow and the existing borrow group began.
+- **Focus cleanup no longer updates windows while holding the focus-map lock**.
+- **macOS file panels handle failed panel creation** — open and save prompts
+  return an error when AppKit does not create a panel instead of dereferencing
+  an invalid object.
+
+### Improvements
+
+- **Transparent layers use source-over alpha compositing** across Metal, WGPU,
+  and DirectX renderers.
+- **Sprites are grouped by atlas texture** and their GPU layouts are kept in
+  sync across the supported shader backends.
+- **Font fallback results are cached** and only explicitly requested missing
+  fonts produce a warning.
+- **Taffy is upgraded to 0.15** with the current measured-layout adapter.
+- **macOS reuses the thread-local main-thread marker** across AppKit helpers.
+
 ## 0.11.3 (2026-10-16)
 
 ### Fixes

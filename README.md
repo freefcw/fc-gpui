@@ -74,6 +74,15 @@ The value must be the Rust dependency identifier visible to that package. It app
 to derive macros, `register_action!`, and `#[gpui::test]`. An ambiguous direct dependency graph
 without this override fails with an actionable macro error instead of guessing a crate.
 
+### Upgrading from Published 0.11.3
+
+The development line after published `0.11.3` contains breaking API changes:
+`ScrollWheelEvent` is now `ScrollEvent`, custom `Platform` implementations must
+provide `platform_info()`, and `Modifiers::secondary` / `secondary_key` now take
+the current `&App`. The macOS-only `write_credentials_if_not_exists` method is
+additive. See the [downstream migration notes](docs/downstream-migration-0.11.3-post-release.md)
+before upgrading to the next release.
+
 ## Platform Support
 
 | Feature | macOS | Linux (X11) | Linux (Wayland) | Windows |
