@@ -1,9 +1,10 @@
+use super::main_thread_marker;
 use super::screen_frame_to_tray_anchor;
 use crate::TrayIconEvent;
 use crate::TrayMenuItem;
 use crate::{Bounds, Pixels, TrayAnchor, TrayIconRenderingMode};
 use objc2::runtime::AnyObject;
-use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, rc::Retained};
+use objc2::{AnyThread, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSControlStateValueOff, NSControlStateValueOn,
     NSEventMask, NSEventType, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
@@ -311,10 +312,6 @@ pub(crate) unsafe fn build_menu_with_selector(
             }
         }
     }
-}
-
-fn main_thread_marker() -> MainThreadMarker {
-    unsafe { MainThreadMarker::new_unchecked() }
 }
 
 /// Maps an AppKit mouse event to the cross-platform tray click kind.

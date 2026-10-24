@@ -35,7 +35,10 @@ mod tray;
 mod window;
 mod window_appearance;
 
-use objc2::encode::{Encode, Encoding, RefEncode};
+use objc2::{
+    MainThreadMarker,
+    encode::{Encode, Encoding, RefEncode},
+};
 use objc2_foundation::NSNotFound;
 use std::ops::Range;
 
@@ -48,6 +51,13 @@ pub(crate) use window::*;
 
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;
+
+pub(crate) fn main_thread_marker() -> MainThreadMarker {
+    thread_local! {
+        static MAIN_THREAD_MARKER: Option<MainThreadMarker> = MainThreadMarker::new();
+    }
+    MAIN_THREAD_MARKER.with(|marker| marker.expect("macOS AppKit access requires the main thread"))
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]

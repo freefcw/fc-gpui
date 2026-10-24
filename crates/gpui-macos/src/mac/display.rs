@@ -1,8 +1,8 @@
+use crate::main_thread_marker;
 use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, TrayAnchor, point, px, size};
 use anyhow::Result;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
-use objc2::MainThreadMarker;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSScreen;
 use objc2_foundation::{NSNumber, NSPoint, NSRect, NSString};
@@ -29,13 +29,11 @@ impl MacDisplay {
         // The following is what Chromium does too:
         //
         // https://chromium.googlesource.com/chromium/src/+/66.0.3359.158/ui/display/mac/screen_mac.mm#56
-        unsafe {
-            let screens = NSScreen::screens(MainThreadMarker::new_unchecked());
-            let screen = screens
-                .firstObject()
-                .expect("AppKit returned no screens for NSScreen::screens");
-            Self(screen_number(&screen))
-        }
+        let screens = NSScreen::screens(main_thread_marker());
+        let screen = screens
+            .firstObject()
+            .expect("AppKit returned no screens for NSScreen::screens");
+        Self(screen_number(&screen))
     }
 
     /// Obtains an iterator over all currently active system displays.
@@ -88,10 +86,8 @@ pub(crate) unsafe fn display_id_for_screen(screen: *mut AnyObject) -> Option<Dis
 }
 
 pub(crate) unsafe fn primary_screen_frame() -> Option<NSRect> {
-    unsafe {
-        let screens = NSScreen::screens(MainThreadMarker::new_unchecked());
-        screens.firstObject().map(|screen| screen.frame())
-    }
+    let screens = NSScreen::screens(main_thread_marker());
+    screens.firstObject().map(|screen| screen.frame())
 }
 
 pub(crate) unsafe fn global_point_to_native_screen_point(
@@ -209,16 +205,14 @@ impl PlatformDisplay for MacDisplay {
 
 impl MacDisplay {
     unsafe fn ns_screen(&self) -> Option<objc2::rc::Retained<NSScreen>> {
-        unsafe {
-            let screens = NSScreen::screens(MainThreadMarker::new_unchecked());
-            for i in 0..screens.len() {
-                let screen = screens.objectAtIndex(i);
-                if screen_number(&screen) == self.0 {
-                    return Some(screen);
-                }
+        let screens = NSScreen::screens(main_thread_marker());
+        for i in 0..screens.len() {
+            let screen = screens.objectAtIndex(i);
+            if screen_number(&screen) == self.0 {
+                return Some(screen);
             }
-            None
         }
+        None
     }
 }
 

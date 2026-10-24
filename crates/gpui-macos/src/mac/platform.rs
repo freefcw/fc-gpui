@@ -1,7 +1,7 @@
 use super::tray::MacTray;
 use super::{
     MacKeyboardLayout, MacKeyboardMapper, events::key_to_native, global_hotkey::NativeHotkeyMapper,
-    global_point_to_native_screen_point, renderer,
+    global_point_to_native_screen_point, main_thread_marker, renderer,
 };
 use crate::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString,
@@ -82,10 +82,6 @@ type id = ObjcId;
 /// events with this subtype. The numeric value collides with
 /// `NSEventSubtype::ScreenChanged`.
 const NX_SUBTYPE_AUX_CONTROL_BUTTONS: i16 = 8;
-
-fn main_thread_marker() -> MainThreadMarker {
-    unsafe { MainThreadMarker::new_unchecked() }
-}
 
 struct ApplicationIvars {
     platform: Cell<*const MacPlatform>,
