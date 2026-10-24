@@ -1530,7 +1530,7 @@ fn build_pipeline_state(
     color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::SourceAlpha);
     color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
     color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::One);
+    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .newRenderPipelineStateWithDescriptor_error(&descriptor)
@@ -1560,7 +1560,7 @@ fn build_path_sprite_pipeline_state(
     color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
     color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
     color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::One);
+    color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
 
     device
         .newRenderPipelineStateWithDescriptor_error(&descriptor)
