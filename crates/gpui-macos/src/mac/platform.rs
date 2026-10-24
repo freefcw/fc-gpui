@@ -1738,6 +1738,42 @@ impl Platform for MacPlatform {
         })
     }
 
+    fn write_credentials_if_not_exists(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<Result<bool>> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            unsafe {
+                use security::*;
+
+                let url = CFString::from(url.as_str());
+                let username = CFString::from(username.as_str());
+                let password = CFData::from_buffer(&password);
+
+                let mut attrs = CFMutableDictionary::with_capacity(4);
+                attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
+                attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
+                attrs.set(kSecAttrAccount as *const _, username.as_CFTypeRef());
+                attrs.set(kSecValueData as *const _, password.as_CFTypeRef());
+
+                let status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
+                if status == errSecDuplicateItem {
+                    return Ok(false);
+                }
+                anyhow::ensure!(
+                    status == errSecSuccess,
+                    "creating password failed: {status}"
+                );
+            }
+            Ok(true)
+        })
+    }
+
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -2551,6 +2587,7 @@ mod security {
     }
 
     pub const errSecSuccess: OSStatus = 0;
+    pub const errSecDuplicateItem: OSStatus = -25299;
     pub const errSecUserCanceled: OSStatus = -128;
     pub const errSecItemNotFound: OSStatus = -25300;
 }

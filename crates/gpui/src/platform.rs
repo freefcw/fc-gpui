@@ -344,6 +344,22 @@ pub trait Platform: 'static {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
+
+    /// Writes credentials only when no item exists for the same URL and username.
+    ///
+    /// Platforms without atomic credential creation return an error by default.
+    #[cfg(target_os = "macos")]
+    fn write_credentials_if_not_exists(
+        &self,
+        _url: &str,
+        _username: &str,
+        _password: &[u8],
+    ) -> Task<Result<bool>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform does not support atomic credential writes"
+        )))
+    }
+
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
 
