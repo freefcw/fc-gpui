@@ -480,14 +480,10 @@ impl Modifiers {
     ///
     /// On macOS, this is the command key.
     /// On Linux and Windows, this is the control key.
-    pub fn secondary(&self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
+    pub fn secondary(&self, cx: &crate::App) -> bool {
+        if cx.platform_info().is_mac() {
             self.platform
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
+        } else {
             self.control
         }
     }
@@ -515,17 +511,13 @@ impl Modifiers {
     }
 
     /// A Returns [`Modifiers`] with just the secondary key pressed.
-    pub fn secondary_key() -> Modifiers {
-        #[cfg(target_os = "macos")]
-        {
+    pub fn secondary_key(cx: &crate::App) -> Modifiers {
+        if cx.platform_info().is_mac() {
             Modifiers {
                 platform: true,
                 ..Default::default()
             }
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
+        } else {
             Modifiers {
                 control: true,
                 ..Default::default()

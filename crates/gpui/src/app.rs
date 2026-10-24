@@ -38,12 +38,13 @@ use crate::{
     EventEmitter, FocusHandle, FocusMap, FocusedWindowInfo, ForegroundExecutor, Global, KeyBinding,
     KeyContext, Keymap, Keystroke, LayoutId, MediaKeyEvent, Menu, MenuItem, MissingGlyph,
     NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, PermissionRequestStatus, PermissionStatus,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
-    PowerSaveBlockerKind, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
-    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, Size,
-    SubscriberSet, Subscription, SvgRenderer, SystemPowerEvent, Task, TextSystem, ThermalState,
-    TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator, WindowPosition,
+    Pixels, Platform, PlatformDisplay, PlatformInfo, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, PowerSaveBlockerKind, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, Size, SubscriberSet, Subscription, SvgRenderer, SystemPowerEvent, Task,
+    TextSystem, ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
+    TrayMenuItem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    WindowPosition,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, point, px, size,
 };
@@ -1575,6 +1576,11 @@ impl App {
 
             handler(report);
         }));
+    }
+
+    /// Returns the host platform information used by this application.
+    pub fn platform_info(&self) -> PlatformInfo {
+        self.platform.platform_info()
     }
 
     /// Returns the list of currently active displays.

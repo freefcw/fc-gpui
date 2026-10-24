@@ -426,6 +426,17 @@ impl<P: LinuxClient> LinuxPlatform<P> {
 }
 
 impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
+    fn platform_info(&self) -> gpui::PlatformInfo {
+        gpui::PlatformInfo {
+            os: if cfg!(target_os = "freebsd") {
+                gpui::OperatingSystem::FreeBsd
+            } else {
+                gpui::OperatingSystem::Linux
+            },
+            target: gpui::PlatformTarget::Native,
+        }
+    }
+
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         self.with_common(|common| common.gpu_resource_budget = gpu.clone());
     }

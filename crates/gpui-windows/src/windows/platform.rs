@@ -345,6 +345,13 @@ fn encode_restart_arguments(arguments: &[OsString]) -> OsString {
 }
 
 impl Platform for WindowsPlatform {
+    fn platform_info(&self) -> gpui::PlatformInfo {
+        gpui::PlatformInfo {
+            os: gpui::OperatingSystem::Windows,
+            target: gpui::PlatformTarget::Native,
+        }
+    }
+
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         self.inner.state.borrow_mut().atlas_initial_size = gpu.atlas_size();
     }

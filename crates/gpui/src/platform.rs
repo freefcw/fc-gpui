@@ -4,6 +4,7 @@ mod keystroke;
 /// Wayland layer-shell window configuration.
 #[cfg(all(any(target_os = "linux", target_os = "freebsd"), feature = "wayland"))]
 pub mod layer_shell;
+mod platform_info;
 /// Cross-platform single instance enforcement using Unix domain sockets and Windows named mutexes.
 pub mod single_instance;
 /// Pure Rust utility for computing window bounds from a semantic [`WindowPosition`].
@@ -61,6 +62,7 @@ use crate::{
     Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window, WindowControlArea, hash, point,
     px, size,
 };
+
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
@@ -70,6 +72,7 @@ use image::AnimationDecoder as _;
 use image::codecs::gif::GifDecoder;
 use image::{DynamicImage, Frame};
 use parking::Unparker;
+pub use platform_info::{OperatingSystem, PlatformInfo, PlatformTarget};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -202,6 +205,9 @@ impl RendererCacheStats {
 /// Low-level operating-system integration contract implemented by GPUI backends.
 #[allow(missing_docs)]
 pub trait Platform: 'static {
+    /// Returns the host operating system and application target.
+    fn platform_info(&self) -> PlatformInfo;
+
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;

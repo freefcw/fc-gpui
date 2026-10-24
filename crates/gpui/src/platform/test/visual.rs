@@ -3,8 +3,9 @@ use crate::ScreenCaptureSource;
 use crate::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
     ForegroundExecutor, GpuResourceBudget, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, RendererCacheStats, Task, TestDispatcher, WindowAppearance, WindowParams,
+    Platform, PlatformDisplay, PlatformInfo, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, RendererCacheStats, Task, TestDispatcher, WindowAppearance,
+    WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -49,6 +50,10 @@ impl VisualTestPlatform {
 }
 
 impl Platform for VisualTestPlatform {
+    fn platform_info(&self) -> PlatformInfo {
+        self.platform.platform_info()
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }

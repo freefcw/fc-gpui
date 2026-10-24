@@ -1024,6 +1024,13 @@ impl MacPlatform {
 }
 
 impl Platform for MacPlatform {
+    fn platform_info(&self) -> crate::PlatformInfo {
+        crate::PlatformInfo {
+            os: crate::OperatingSystem::Mac,
+            target: crate::PlatformTarget::Native,
+        }
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.0.lock().background_executor.clone()
     }

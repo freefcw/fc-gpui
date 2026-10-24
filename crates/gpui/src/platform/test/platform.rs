@@ -1,11 +1,11 @@
 use crate::{
     ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, GpuResourceBudget, Keymap, NoopTextSystem, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, QuitMode, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    ScreenCaptureStreamTermination, ScreenCaptureTerminationCallback, SourceMetadata, Task,
-    TestDisplay, TestWindow, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
-    WindowAppearance, WindowParams, size,
+    DummyKeyboardMapper, ForegroundExecutor, GpuResourceBudget, Keymap, NoopTextSystem,
+    OperatingSystem, Platform, PlatformDisplay, PlatformInfo, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTarget, PlatformTextSystem, PromptButton, QuitMode,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, ScreenCaptureStreamTermination,
+    ScreenCaptureTerminationCallback, SourceMetadata, Task, TestDisplay, TestWindow,
+    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -355,6 +355,21 @@ impl TestPlatform {
 }
 
 impl Platform for TestPlatform {
+    fn platform_info(&self) -> PlatformInfo {
+        PlatformInfo {
+            os: if cfg!(target_os = "macos") {
+                OperatingSystem::Mac
+            } else if cfg!(target_os = "windows") {
+                OperatingSystem::Windows
+            } else if cfg!(target_os = "freebsd") {
+                OperatingSystem::FreeBsd
+            } else {
+                OperatingSystem::Linux
+            },
+            target: PlatformTarget::Native,
+        }
+    }
+
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         *self.gpu_resource_budget.lock() = gpu.clone();
     }
