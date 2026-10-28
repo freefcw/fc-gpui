@@ -38,28 +38,7 @@ pub async fn latest_github_release(
     http: Arc<dyn HttpClient>,
 ) -> anyhow::Result<GithubRelease> {
     let url = format!("https://api.github.com/repos/{repo_name_with_owner}/releases");
-
-    let request = github_api_request(&url)?;
-
-    let mut response = http
-        .send(request)
-        .await
-        .context("error fetching latest release")?;
-
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .context("error reading latest release")?;
-
-    if response.status().is_client_error() {
-        let text = String::from_utf8_lossy(body.as_slice());
-        bail!(
-            "status error {}, response: {text:?}",
-            response.status().as_u16()
-        );
-    }
+    let body = fetch_github_api(&http, url).await?;
 
     let releases = match serde_json::from_slice::<Vec<GithubRelease>>(body.as_slice()) {
         Ok(releases) => releases,
@@ -78,7 +57,11 @@ pub async fn latest_github_release(
         .into_iter()
         .filter(|release| !require_assets || !release.assets.is_empty())
         .find(|release| release.pre_release == pre_release)
-        .context("finding a prerelease")?;
+        .context(if pre_release {
+            "finding a prerelease"
+        } else {
+            "finding a stable release"
+        })?;
     release.assets.iter_mut().for_each(|asset| {
         if let Some(digest) = &mut asset.digest
             && let Some(stripped) = digest.strip_prefix("sha256:")
@@ -95,29 +78,7 @@ pub async fn get_release_by_tag_name(
     http: Arc<dyn HttpClient>,
 ) -> anyhow::Result<GithubRelease> {
     let url = format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}");
-
-    let request = github_api_request(&url)?;
-
-    let mut response = http
-        .send(request)
-        .await
-        .context("error fetching latest release")?;
-
-    let mut body = Vec::new();
-    let status = response.status();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .context("error reading latest release")?;
-
-    if status.is_client_error() {
-        let text = String::from_utf8_lossy(body.as_slice());
-        bail!(
-            "status error {}, response: {text:?}",
-            response.status().as_u16()
-        );
-    }
+    let body = fetch_github_api(&http, url).await?;
 
     let release = serde_json::from_slice::<GithubRelease>(body.as_slice()).map_err(|err| {
         log::error!("Error deserializing: {err:?}");
@@ -129,6 +90,34 @@ pub async fn get_release_by_tag_name(
     })?;
 
     Ok(release)
+}
+
+/// Sends a GET request to the GitHub API and returns the raw response body,
+/// failing on client-error statuses.
+async fn fetch_github_api(http: &Arc<dyn HttpClient>, url: String) -> Result<Vec<u8>> {
+    let request = github_api_request(&url)?;
+
+    let mut response = http
+        .send(request)
+        .await
+        .with_context(|| format!("error fetching {url}"))?;
+
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .with_context(|| format!("error reading response from {url}"))?;
+
+    if response.status().is_client_error() {
+        let text = String::from_utf8_lossy(body.as_slice());
+        bail!(
+            "status error {}, response: {text:?}",
+            response.status().as_u16()
+        );
+    }
+
+    Ok(body)
 }
 
 fn github_api_request(url: &str) -> Result<Request<AsyncBody>> {
