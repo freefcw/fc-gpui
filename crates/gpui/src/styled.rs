@@ -917,7 +917,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the row span of this element.
+    /// Spans the element across all columns.
     fn col_span_full(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.column = GridPlacement::Line(1)..GridPlacement::Line(-1);
@@ -959,7 +959,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the row span of this element.
+    /// Spans the element across all rows.
     fn row_span_full(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.row = GridPlacement::Line(1)..GridPlacement::Line(-1);
@@ -984,6 +984,12 @@ pub trait Styled: Sized {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_none_requires_no_argument_and_sets_explicit_none() {
+        let mut element = crate::div().cursor_pointer().cursor_none();
+        assert_eq!(element.style().mouse_cursor, Some(CursorStyle::None));
+    }
 
     #[test]
     fn grid_content_sizing_builders_select_expected_modes() {
