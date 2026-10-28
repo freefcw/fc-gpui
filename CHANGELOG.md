@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- **`Styled::cursor_none()` drops its unused argument** — the generated
+  method never read the `CursorStyle` it required; drop the argument at call
+  sites (`.cursor_none()`).
+
+### Deprecated
+
+- **`FollowRedirects` in `fc-gpui-http-client`** — retained for source compatibility.
+  Replace `FollowRedirects(false)` with `RedirectPolicy::NoFollow` and
+  `FollowRedirects(true)` with `RedirectPolicy::FollowAll`, or use `.into()` to
+  convert an existing value. Use `RedirectPolicy::FollowLimit(n)` for a bounded
+  policy. Requests should use `.follow_redirects(policy)`; the legacy wrapper
+  is not interpreted as a request extension by this crate.
+
+### Added
+
+- **`Application::with_restart_arguments` on the `fc-gpui` facade** — the
+  compatibility entry point now forwards restart arguments to core like the
+  rest of its builder surface. A compile-time parity test covers the current
+  facade/core builder signatures.
+
+### Fixes
+
+- **Runs that differ only in background color split font runs consistently** —
+  `shape_line` (through `layout_line`) merged them while `shape_text` split
+  them; both shaping paths now share one decoration-merge predicate, and a test
+  asserts the two paths hand identical font runs to the platform.
+- **Tab-group cycling is deterministic** — next/previous tab-group navigation
+  sorts group ids instead of following hash-map iteration order, and the two
+  navigation helpers share one implementation. New group ids no longer reuse
+  an existing id after another group is removed.
+
+### Internal
+
+- Removed dead code: unused taffy layout probes and an unused wgpu
+  pipeline-creation flag.
+- Named previously bare constants: the wgpu GPU-error thresholds (`5`/`10`) and
+  the `pattern_slash` packing constants on both the Rust and WGSL sides.
+- `KeyBindingMetaIndex::is_user()` replaces the magic `meta.0 == 0` check in
+  keymap dispatch.
+- `latest_github_release`/`get_release_by_tag_name` share one request helper;
+  the by-tag path no longer reports failures as "latest release".
+
 ## 0.12.0 (2026-10-24)
 
 ### Breaking changes
