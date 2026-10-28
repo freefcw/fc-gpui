@@ -19,6 +19,14 @@ use std::sync::{Arc, Mutex};
 /// Zed's native wgpu ceiling. Profile maxes may be lower; device limits may be lower still.
 const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 
+/// Consecutive failed frames above this count trigger a soft reset of GPU resources
+/// (intermediate textures and atlas) before the next attempt.
+const GPU_ERROR_SOFT_RESET_THRESHOLD: u32 = 5;
+
+/// Consecutive failed frames above this count abort rendering with a panic; the
+/// surface is presumed unrecoverable.
+const MAX_CONSECUTIVE_GPU_ERRORS: u32 = 10;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
@@ -369,7 +377,6 @@ impl WgpuRenderer {
             surface_format,
             alpha_mode,
             rendering_params.path_sample_count,
-            dual_source_blending,
         );
 
         let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -656,13 +663,7 @@ impl WgpuRenderer {
         surface_format: wgpu::TextureFormat,
         alpha_mode: wgpu::CompositeAlphaMode,
         path_sample_count: u32,
-        dual_source_blending: bool,
     ) -> WgpuPipelines {
-        let _dual_source_blending = dual_source_blending
-            && device
-                .features()
-                .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
-
         let base_shader_source = include_str!("shaders.wgsl");
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpui_shaders"),
@@ -1001,7 +1002,6 @@ impl WgpuRenderer {
             self.surface_config.alpha_mode = new_alpha_mode;
             let surface_config = self.surface_config.clone();
             let path_sample_count = self.rendering_params.path_sample_count;
-            let dual_source_blending = self.dual_source_blending;
             let Some(resources) = self.resources.as_mut() else {
                 return;
             };
@@ -1014,7 +1014,6 @@ impl WgpuRenderer {
                 surface_config.format,
                 surface_config.alpha_mode,
                 path_sample_count,
-                dual_source_blending,
             );
         }
     }
@@ -1250,14 +1249,14 @@ impl WgpuRenderer {
         if let Some(error) = last_error {
             self.failed_frame_count += 1;
             log::error!(
-                "GPU error during frame (failure {} of 10): {error}",
+                "GPU error during frame (failure {} of {MAX_CONSECUTIVE_GPU_ERRORS}): {error}",
                 self.failed_frame_count
             );
 
             // TBD. Does retrying more actually help?
-            if self.failed_frame_count > 10 {
+            if self.failed_frame_count > MAX_CONSECUTIVE_GPU_ERRORS {
                 panic!("Too many consecutive GPU errors. Last error: {error}");
-            } else if self.failed_frame_count > 5 {
+            } else if self.failed_frame_count > GPU_ERROR_SOFT_RESET_THRESHOLD {
                 if let Some(res) = self.resources.as_mut() {
                     res.invalidate_intermediate_textures();
                 }
