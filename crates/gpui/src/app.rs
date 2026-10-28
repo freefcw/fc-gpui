@@ -407,6 +407,11 @@ pub struct SystemWindowTabController {
     tab_groups: FxHashMap<usize, Vec<SystemWindowTab>>,
 }
 
+enum TabGroupDirection {
+    Next,
+    Previous,
+}
+
 impl Global for SystemWindowTabController {}
 
 impl SystemWindowTabController {
@@ -428,32 +433,27 @@ impl SystemWindowTabController {
         &self.tab_groups
     }
 
-    /// Get the next tab group window handle.
+    /// Get the next tab group window handle in ascending group-id order, wrapping
+    /// at the end. Newly created groups follow the remaining existing groups.
     pub fn get_next_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
-        let controller = cx.global::<SystemWindowTabController>();
-        let current_group = controller
-            .tab_groups
-            .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
-
-        let current_group = current_group?;
-        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
-        let idx = group_ids.iter().position(|g| *g == current_group)?;
-        let next_idx = (idx + 1) % group_ids.len();
-
-        controller
-            .tab_groups
-            .get(group_ids[next_idx])
-            .and_then(|tabs| {
-                tabs.iter()
-                    .max_by_key(|tab| tab.last_active_at)
-                    .or_else(|| tabs.first())
-                    .map(|tab| &tab.handle)
-            })
+        Self::tab_group_window_in_direction(cx, id, TabGroupDirection::Next)
     }
 
-    /// Get the previous tab group window handle.
+    /// Get the previous tab group window handle in ascending group-id order,
+    /// wrapping at the beginning.
     pub fn get_prev_tab_group_window(cx: &mut App, id: WindowId) -> Option<&AnyWindowHandle> {
+        Self::tab_group_window_in_direction(cx, id, TabGroupDirection::Previous)
+    }
+
+    /// Finds the most recently active window of the tab group adjacent to `id`'s group.
+    ///
+    /// Group ids are sorted so cycling direction is stable regardless of hash-map
+    /// iteration order.
+    fn tab_group_window_in_direction(
+        cx: &App,
+        id: WindowId,
+        direction: TabGroupDirection,
+    ) -> Option<&AnyWindowHandle> {
         let controller = cx.global::<SystemWindowTabController>();
         let current_group = controller
             .tab_groups
@@ -461,17 +461,18 @@ impl SystemWindowTabController {
             .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| group));
 
         let current_group = current_group?;
-        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
-        let idx = group_ids.iter().position(|g| *g == current_group)?;
-        let prev_idx = if idx == 0 {
-            group_ids.len() - 1
-        } else {
-            idx - 1
+        let mut group_ids: Vec<_> = controller.tab_groups.keys().copied().collect();
+        group_ids.sort_unstable();
+        let idx = group_ids.iter().position(|g| *g == *current_group)?;
+        let group_count = group_ids.len();
+        let target_idx = match direction {
+            TabGroupDirection::Next => (idx + 1) % group_count,
+            TabGroupDirection::Previous => (idx + group_count - 1) % group_count,
         };
 
         controller
             .tab_groups
-            .get(group_ids[prev_idx])
+            .get(&group_ids[target_idx])
             .and_then(|tabs| {
                 tabs.iter()
                     .max_by_key(|tab| tab.last_active_at)
@@ -562,6 +563,14 @@ impl SystemWindowTabController {
         }
     }
 
+    fn next_group_id(&self) -> usize {
+        self.tab_groups.keys().max().map_or(0, |group_id| {
+            group_id
+                .checked_add(1)
+                .expect("tab group id space exhausted")
+        })
+    }
+
     /// Insert a tab into a tab group.
     pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
@@ -590,7 +599,7 @@ impl SystemWindowTabController {
                 tabs.push(tab);
             }
         } else {
-            let new_group_id = controller.tab_groups.len();
+            let new_group_id = controller.next_group_id();
             controller.tab_groups.insert(new_group_id, tabs);
         }
     }
@@ -616,7 +625,7 @@ impl SystemWindowTabController {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
 
         if let Some(tab) = removed_tab {
-            let new_group_id = controller.tab_groups.keys().max().map_or(0, |k| k + 1);
+            let new_group_id = controller.next_group_id();
             controller.tab_groups.insert(new_group_id, vec![tab]);
         }
     }
@@ -3175,6 +3184,117 @@ mod test {
             self.0.set(self.0.get() + 1);
             Empty
         }
+    }
+
+    #[crate::test]
+    fn tab_group_navigation_is_deterministic(cx: &mut TestAppContext) {
+        use super::{SystemWindowTab, SystemWindowTabController};
+        use crate::{AnyWindowHandle, WindowId};
+        use std::time::{Duration, Instant};
+
+        fn tab(id: u64, last_active_secs_ago: u64) -> SystemWindowTab {
+            let handle = AnyWindowHandle::for_test(WindowId::from(id));
+            SystemWindowTab {
+                id: WindowId::from(id),
+                title: "".into(),
+                handle,
+                last_active_at: Instant::now() - Duration::from_secs(last_active_secs_ago),
+            }
+        }
+
+        fn next(cx: &TestAppContext, from: u64) -> Option<WindowId> {
+            cx.update(|cx| {
+                SystemWindowTabController::get_next_tab_group_window(cx, WindowId::from(from))
+                    .map(|handle| handle.window_id())
+            })
+        }
+        fn prev(cx: &TestAppContext, from: u64) -> Option<WindowId> {
+            cx.update(|cx| {
+                SystemWindowTabController::get_prev_tab_group_window(cx, WindowId::from(from))
+                    .map(|handle| handle.window_id())
+            })
+        }
+
+        cx.update(|cx| SystemWindowTabController::init(cx));
+        // Insert groups in non-sorted order: navigation must follow sorted group
+        // ids, not hash-map iteration order.
+        cx.update(|cx| {
+            cx.global_mut::<SystemWindowTabController>().tab_groups = [
+                (7, vec![tab(71, 0)]),
+                (2, vec![tab(21, 5), tab(22, 0)]),
+                (5, vec![tab(51, 0)]),
+            ]
+            .into_iter()
+            .collect();
+        });
+
+        // Sorted groups are [2, 5, 7]; each group's target is its most
+        // recently active tab.
+        assert_eq!(next(cx, 21), Some(WindowId::from(51)));
+        assert_eq!(prev(cx, 21), Some(WindowId::from(71)));
+        assert_eq!(next(cx, 71), Some(WindowId::from(22))); // wraps around to group 2
+        assert_eq!(prev(cx, 51), Some(WindowId::from(22)));
+    }
+
+    #[crate::test]
+    fn tab_group_ids_remain_unique_after_removing_a_group(cx: &mut TestAppContext) {
+        use super::{SystemWindowTab, SystemWindowTabController};
+        use crate::{AnyWindowHandle, WindowId};
+
+        fn tab(id: u64) -> SystemWindowTab {
+            let handle = AnyWindowHandle::for_test(WindowId::from(id));
+            SystemWindowTab {
+                id: WindowId::from(id),
+                title: "".into(),
+                handle,
+                last_active_at: std::time::Instant::now(),
+            }
+        }
+
+        cx.update(|cx| SystemWindowTabController::init(cx));
+        cx.update(|cx| {
+            SystemWindowTabController::add_tab(cx, WindowId::from(1), vec![tab(1)]);
+            SystemWindowTabController::add_tab(cx, WindowId::from(2), vec![tab(2)]);
+            SystemWindowTabController::add_tab(cx, WindowId::from(3), vec![tab(3)]);
+        });
+
+        cx.update(|cx| {
+            SystemWindowTabController::remove_tab(cx, WindowId::from(2));
+            SystemWindowTabController::add_tab(cx, WindowId::from(4), vec![tab(4)]);
+        });
+
+        cx.update(|cx| {
+            let controller = cx.global::<SystemWindowTabController>();
+            let mut group_ids = controller.tab_groups.keys().copied().collect::<Vec<_>>();
+            group_ids.sort_unstable();
+            assert_eq!(group_ids, vec![0, 2, 3]);
+            assert_eq!(
+                controller.tab_groups.get(&0).map(|tabs| tabs[0].id),
+                Some(WindowId::from(1))
+            );
+            assert_eq!(
+                controller.tab_groups.get(&2).map(|tabs| tabs[0].id),
+                Some(WindowId::from(3))
+            );
+        });
+        cx.update(|cx| {
+            let next = SystemWindowTabController::get_next_tab_group_window(cx, WindowId::from(3))
+                .map(|handle| handle.window_id());
+            assert_eq!(next, Some(WindowId::from(4)));
+            let previous =
+                SystemWindowTabController::get_prev_tab_group_window(cx, WindowId::from(1))
+                    .map(|handle| handle.window_id());
+            assert_eq!(previous, Some(WindowId::from(4)));
+
+            SystemWindowTabController::merge_all_windows(cx, WindowId::from(1));
+            SystemWindowTabController::move_tab_to_new_window(cx, WindowId::from(3));
+            SystemWindowTabController::add_tab(cx, WindowId::from(5), vec![tab(5)]);
+            let controller = cx.global::<SystemWindowTabController>();
+            assert_eq!(controller.tab_groups.len(), 3);
+            for id in [1, 3, 4, 5] {
+                assert!(controller.tabs(WindowId::from(id)).is_some());
+            }
+        });
     }
 
     #[crate::test]

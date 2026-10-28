@@ -6276,6 +6276,15 @@ impl AnyWindowHandle {
         self.id
     }
 
+    /// Creates a handle with the given id and a dummy view type.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(id: WindowId) -> Self {
+        Self {
+            id,
+            state_type: TypeId::of::<()>(),
+        }
+    }
+
     /// Attempt to convert this handle to a window handle with a specific root view type.
     /// If the types do not match, this will return `None`.
     pub fn downcast<T: 'static>(&self) -> Option<WindowHandle<T>> {
