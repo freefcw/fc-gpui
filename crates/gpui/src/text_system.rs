@@ -726,22 +726,7 @@ impl WindowTextSystem {
 
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut()
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-                && last_run.background_color == run.background_color
-            {
-                last_run.len += run.len as u32;
-                continue;
-            }
-            decoration_runs.push(DecorationRun {
-                len: run.len as u32,
-                color: run.color,
-                background_color: run.background_color,
-                underline: run.underline,
-                strikethrough: run.strikethrough,
-            });
+            push_decoration_run(&mut decoration_runs, run, run.len as u32);
         }
 
         let layout =
@@ -787,24 +772,8 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
-                    && last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run_len_within_line as u32;
-                    false
-                } else {
-                    decoration_runs.push(DecorationRun {
-                        len: run_len_within_line as u32,
-                        color: run.color,
-                        background_color: run.background_color,
-                        underline: run.underline,
-                        strikethrough: run.strikethrough,
-                    });
-                    true
-                };
+                let decoration_changed =
+                    push_decoration_run(&mut decoration_runs, run, run_len_within_line as u32);
 
                 if let Some(font_run) = font_runs.last_mut()
                     && Some(font_run.font_id) == last_font
@@ -910,15 +879,12 @@ impl WindowTextSystem {
         font_runs.clear();
 
         for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
+            let decoration_changed = match last_run {
+                Some(last) if decorations_equal(last, run) => false,
+                _ => {
+                    last_run = Some(run);
+                    true
+                }
             };
 
             if let Some(font_run) = font_runs.last_mut()
@@ -1107,6 +1073,44 @@ pub struct TextRun {
     pub underline: Option<UnderlineStyle>,
     /// The strikethrough style (if any)
     pub strikethrough: Option<StrikethroughStyle>,
+}
+
+/// Whether two adjacent [`TextRun`]s share every decoration. The condition must
+/// stay in sync with [`push_decoration_run`]'s merge check: a decoration change
+/// starts both a new [`DecorationRun`] and a new [`FontRun`].
+fn decorations_equal(a: &TextRun, b: &TextRun) -> bool {
+    a.color == b.color
+        && a.underline == b.underline
+        && a.strikethrough == b.strikethrough
+        && a.background_color == b.background_color
+}
+
+/// Appends `len` bytes of `run` to `decoration_runs`, merging into the previous
+/// run when `run` shares every decoration with it. Returns whether a new run was
+/// started, i.e. the decoration changed at this boundary.
+fn push_decoration_run(
+    decoration_runs: &mut SmallVec<[DecorationRun; 32]>,
+    run: &TextRun,
+    len: u32,
+) -> bool {
+    if let Some(last_run) = decoration_runs.last_mut()
+        && last_run.color == run.color
+        && last_run.underline == run.underline
+        && last_run.strikethrough == run.strikethrough
+        && last_run.background_color == run.background_color
+    {
+        last_run.len += len;
+        false
+    } else {
+        decoration_runs.push(DecorationRun {
+            len,
+            color: run.color,
+            background_color: run.background_color,
+            underline: run.underline,
+            strikethrough: run.strikethrough,
+        });
+        true
+    }
 }
 
 #[cfg(all(target_os = "macos", test))]
@@ -1383,6 +1387,125 @@ mod tests {
             is_emoji: false,
             dilation: 0,
         }
+    }
+
+    /// Delegates to [`NoopTextSystem`] while recording the `FontRun`s passed to each
+    /// `layout_line` call, so tests can assert how the core text system split runs
+    /// before handing them to the platform.
+    struct RecordingTextSystem {
+        noop: NoopTextSystem,
+        layout_runs: Mutex<Vec<Vec<FontRun>>>,
+    }
+
+    impl PlatformTextSystem for RecordingTextSystem {
+        fn set_missing_glyph_sink(&self, sink: Arc<dyn MissingGlyphSink>) {
+            self.noop.set_missing_glyph_sink(sink)
+        }
+
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+            self.noop.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.noop.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> Result<FontId> {
+            self.noop.font_id(descriptor)
+        }
+
+        fn clear_glyph_raster_cache(&self) {
+            self.noop.clear_glyph_raster_cache()
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.noop.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
+            self.noop.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+            self.noop.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.noop.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+            self.noop.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.noop.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.layout_runs.lock().push(runs.to_vec());
+            self.noop.layout_line(text, font_size, runs)
+        }
+    }
+
+    #[test]
+    fn background_color_runs_split_font_runs_in_both_shaping_paths() {
+        let platform = Arc::new(RecordingTextSystem {
+            noop: NoopTextSystem::new(),
+            layout_runs: Mutex::default(),
+        });
+        let runs = || {
+            let plain = TextRun {
+                len: 1,
+                font: font("Noop Font"),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let mut highlighted = plain.clone();
+            highlighted.background_color = Some(Hsla::default());
+            [plain, highlighted]
+        };
+
+        let line_shaper = WindowTextSystem::new(Arc::new(TextSystem::new(
+            platform.clone(),
+            &AppResourceProfile::desktop().text,
+        )));
+        let shaped_line = line_shaper.shape_line("ab".into(), px(16.), &runs(), None);
+        assert_eq!(
+            shaped_line.decoration_runs.len(),
+            2,
+            "decoration runs must split on background color"
+        );
+
+        let text_shaper = WindowTextSystem::new(Arc::new(TextSystem::new(
+            platform.clone(),
+            &AppResourceProfile::desktop().text,
+        )));
+        let wrapped_lines = text_shaper
+            .shape_text("ab".into(), px(16.), &runs(), None, None)
+            .unwrap();
+        assert_eq!(
+            wrapped_lines[0].decoration_runs.len(),
+            2,
+            "decoration runs must split on background color"
+        );
+
+        let recorded = platform.layout_runs.lock();
+        assert_eq!(
+            recorded.len(),
+            2,
+            "each shaping path should reach the platform once"
+        );
+        assert_eq!(
+            recorded[0], recorded[1],
+            "shape_line and shape_text must agree on font run boundaries"
+        );
     }
 
     #[test]

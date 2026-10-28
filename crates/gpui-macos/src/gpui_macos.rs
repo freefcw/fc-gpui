@@ -55,6 +55,100 @@ mod tests {
     }
 
     #[test]
+    fn background_color_boundaries_shape_consistently() {
+        use gpui::{FontRun, LineLayout, PlatformTextSystem};
+
+        let platform = Arc::new(MacTextSystem::new());
+        // Separate TextSystems prevent one path from reusing the other's global
+        // layout cache. Both calls must actually reach CoreText.
+        let line_app = TestApp::with_platform_text_system(platform.clone());
+        let text_app = TestApp::with_platform_text_system(platform.clone());
+        let line_shaper = WindowTextSystem::new(line_app.text_system().clone());
+        let text_shaper = WindowTextSystem::new(text_app.text_system().clone());
+        let family = platform
+            .all_font_names()
+            .into_iter()
+            .find(|name| !name.starts_with('.'))
+            .unwrap_or_else(|| ".SystemUIFont".to_string());
+        let font = font(family);
+        let font_id = platform.font_id(&font).unwrap();
+
+        let glyphs = |layout: &LineLayout| {
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| {
+                    run.glyphs.iter().map(move |glyph| {
+                        (
+                            run.font_id,
+                            glyph.id,
+                            glyph.index,
+                            glyph.position,
+                            glyph.is_emoji,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (text, split) in [
+            ("fi", 1),
+            ("سلام", "س".len()),
+            ("e\u{301}x", "e\u{301}".len()),
+            ("e\u{301}x", 1),
+            ("中文🙂", "中".len()),
+        ] {
+            let plain = TextRun {
+                len: split,
+                font: font.clone(),
+                color: black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let mut highlighted = plain.clone();
+            highlighted.len = text.len() - split;
+            highlighted.background_color = Some(black());
+            let runs = [plain, highlighted];
+
+            // Preserve shape_text's existing policy: decoration boundaries are
+            // shaping boundaries, not a promise of identical unstyled glyphs.
+            let expected = platform.layout_line(
+                text,
+                px(16.),
+                &[
+                    FontRun {
+                        font_id,
+                        len: split,
+                    },
+                    FontRun {
+                        font_id,
+                        len: text.len() - split,
+                    },
+                ],
+            );
+            let line = line_shaper.shape_line(text.into(), px(16.), &runs, None);
+            let wrapped = text_shaper
+                .shape_text(text.into(), px(16.), &runs, None, None)
+                .unwrap();
+            assert_eq!(wrapped.len(), 1);
+            for layout in [&**line, wrapped[0].unwrapped_layout.as_ref()] {
+                assert_eq!(layout.len, text.len());
+                assert_eq!(layout.width, expected.width, "{text:?}");
+                assert_eq!(layout.ascent, expected.ascent);
+                assert_eq!(layout.descent, expected.descent);
+                assert!(layout.width > px(0.));
+                let actual = glyphs(layout);
+                assert!(!actual.is_empty());
+                assert_eq!(actual, glyphs(&expected), "{text:?} split at {split}");
+                assert!(actual.iter().all(|(_, _, index, _, _)| {
+                    *index < text.len() && text.is_char_boundary(*index)
+                }));
+            }
+        }
+    }
+
+    #[test]
     #[ignore]
     fn real_visual_context_advance_clock_works() {
         let capabilities = VisualTestCapabilities::detect();
