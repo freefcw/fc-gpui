@@ -23,7 +23,23 @@ pub enum RedirectPolicy {
     FollowLimit(u32),
     FollowAll,
 }
+
+/// Legacy boolean redirect policy retained for source compatibility.
+///
+/// Prefer [`RedirectPolicy`], which can express bounded redirect following.
+#[deprecated(note = "use RedirectPolicy instead")]
 pub struct FollowRedirects(pub bool);
+
+#[allow(deprecated)]
+impl From<FollowRedirects> for RedirectPolicy {
+    fn from(value: FollowRedirects) -> Self {
+        if value.0 {
+            Self::FollowAll
+        } else {
+            Self::NoFollow
+        }
+    }
+}
 
 /// The caller's deadline for a complete HTTP request, including its response body.
 ///
@@ -509,6 +525,21 @@ impl HttpClient for FakeHttpClient {
 mod tests {
     use super::{HttpRequestExt, RequestTimeout};
     use std::time::Duration;
+
+    #[test]
+    #[allow(deprecated)]
+    fn legacy_redirect_policy_converts_both_boolean_values() {
+        use super::{FollowRedirects, RedirectPolicy};
+
+        assert_eq!(
+            RedirectPolicy::from(FollowRedirects(false)),
+            RedirectPolicy::NoFollow
+        );
+        assert_eq!(
+            RedirectPolicy::from(FollowRedirects(true)),
+            RedirectPolicy::FollowAll
+        );
+    }
 
     #[test]
     fn request_timeout_is_extractable_from_request() {
