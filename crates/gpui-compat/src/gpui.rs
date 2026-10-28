@@ -146,6 +146,11 @@ impl Application {
         Self(self.0.with_assets(asset_source))
     }
 
+    /// Sets the arguments passed to the application binary on restart.
+    pub fn with_restart_arguments(self, arguments: Vec<std::ffi::OsString>) -> Self {
+        Self(self.0.with_restart_arguments(arguments))
+    }
+
     /// Sets the HTTP client for the application.
     pub fn with_http_client(self, http_client: Arc<dyn http_client::HttpClient>) -> Self {
         Self(self.0.with_http_client(http_client))
