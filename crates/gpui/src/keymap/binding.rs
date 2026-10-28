@@ -141,3 +141,13 @@ impl std::fmt::Debug for KeyBinding {
 /// associated with the binding, such as the source of the binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBindingMetaIndex(pub u32);
+
+impl KeyBindingMetaIndex {
+    /// Meta index of user-defined keybindings (the default source).
+    pub const USER: Self = Self(0);
+
+    /// Returns whether this index refers to a user-defined keybinding.
+    pub fn is_user(self) -> bool {
+        self.0 == Self::USER.0
+    }
+}

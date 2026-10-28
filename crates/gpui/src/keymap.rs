@@ -202,7 +202,7 @@ impl Keymap {
                 // Only break if this is a user-defined NoAction binding
                 // This allows user keymaps to override base keymap NoAction bindings
                 if let Some(meta) = binding.meta {
-                    if meta.0 == 0 {
+                    if meta.is_user() {
                         break;
                     }
                 } else {
