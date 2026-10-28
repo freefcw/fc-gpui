@@ -28,6 +28,11 @@ fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>)
 
 */
 
+// Keep in sync with gpui/src/color.rs; the packed payload is an f32, not a
+// lossless pair of integers. Preserve the existing floating-point decoding.
+const PATTERN_SLASH_SCALE: f32 = 255.0;
+const PATTERN_SLASH_BASE: f32 = 65535.0;
+
 // Contrast and gamma correction adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
@@ -549,8 +554,10 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
         case 2u: {
             // pattern slash
             let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
-            let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
-            let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
+            let pattern_width = (gradient_angle_or_pattern_height / PATTERN_SLASH_BASE)
+                / PATTERN_SLASH_SCALE;
+            let pattern_interval = (gradient_angle_or_pattern_height % PATTERN_SLASH_BASE)
+                / PATTERN_SLASH_SCALE;
             let pattern_height = pattern_width + pattern_interval;
             let stripe_angle = M_PI_F / 4.0;
             let pattern_period = pattern_height * sin(stripe_angle);

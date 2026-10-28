@@ -774,11 +774,18 @@ impl Default for Background {
     }
 }
 
+/// Packs `pattern_slash`'s width and interval into the single
+/// `gradient_angle_or_pattern_height` f32 as `width * PATTERN_SLASH_BASE + interval`, with
+/// both components pre-scaled by `PATTERN_SLASH_SCALE`. The WGSL side unpacks with the
+/// matching `/ 65535.0 / 255.0`; see `crates/gpui-wgpu/src/shaders.wgsl`.
+const PATTERN_SLASH_SCALE: f32 = 255.0;
+const PATTERN_SLASH_BASE: u32 = 0xFFFF;
+
 /// Creates a hash pattern background
 pub fn pattern_slash(color: Hsla, width: f32, interval: f32) -> Background {
-    let width_scaled = (width * 255.0) as u32;
-    let interval_scaled = (interval * 255.0) as u32;
-    let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
+    let width_scaled = (width * PATTERN_SLASH_SCALE) as u32;
+    let interval_scaled = (interval * PATTERN_SLASH_SCALE) as u32;
+    let height = ((width_scaled * PATTERN_SLASH_BASE) + interval_scaled) as f32;
 
     Background {
         tag: BackgroundTag::PatternSlash,
@@ -1038,6 +1045,23 @@ mod tests {
         assert!(!background.is_transparent());
         background.solid = hsla(0.0, 0.0, 0.0, 0.0);
         assert!(background.is_transparent());
+    }
+
+    #[test]
+    fn pattern_slash_preserves_packed_shader_payload() {
+        // Pin the existing wire format, including truncation and f32 rounding.
+        // This is not a lossless round-trip: shaders use floating-point division
+        // and large packed values lose low bits when converted to f32.
+        for (width, interval, expected) in [
+            (0.0, 0.0, 0.0),
+            (0.5, 0.75, 8_323_136.0),
+            (1.0, 1.0, 16_711_680.0),
+            (2.0, 3.0, 33_423_616.0),
+            (8.0, 16.0, 133_695_480.0),
+        ] {
+            let background = pattern_slash(Hsla::default(), width, interval);
+            assert_eq!(background.gradient_angle_or_pattern_height, expected);
+        }
     }
 
     #[test]

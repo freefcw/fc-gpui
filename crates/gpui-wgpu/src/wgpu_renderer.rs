@@ -2161,6 +2161,37 @@ mod tests {
     use gpui::GpuResourceBudget;
 
     #[test]
+    fn shader_validates_and_preserves_pattern_packing_constants() {
+        use wgpu::naga;
+
+        let module = naga::front::wgsl::parse_str(include_str!("shaders.wgsl")).unwrap();
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap();
+
+        // Pin the shader side of the wire format alongside the payload fixtures
+        // in gpui/src/color.rs; these values are manually synchronized, not shared.
+        for (name, expected) in [
+            ("PATTERN_SLASH_SCALE", 255.0),
+            ("PATTERN_SLASH_BASE", 65535.0),
+        ] {
+            let constant = module
+                .constants
+                .iter()
+                .map(|(_, constant)| constant)
+                .find(|constant| constant.name.as_deref() == Some(name))
+                .unwrap();
+            match module.global_expressions[constant.init] {
+                naga::Expression::Literal(naga::Literal::F32(value)) => assert_eq!(value, expected),
+                ref expression => panic!("{name} must be an f32 literal, got {expression:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn batch_range_is_relative_to_the_full_array() {
         let items = [1u32, 2, 3, 4, 5];
         assert_eq!(batch_instance_range(&items, &items[2..4]), 2..4);
