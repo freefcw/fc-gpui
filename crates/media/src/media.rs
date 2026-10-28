@@ -214,12 +214,10 @@ pub mod core_media {
 pub mod core_video {
     #![allow(non_snake_case)]
 
-    #[cfg(target_os = "macos")]
     use core_foundation::{
         base::{CFTypeID, TCFType},
         declare_TCFType, impl_CFTypeDescription, impl_TCFType,
     };
-    #[cfg(target_os = "macos")]
     use std::ffi::c_void;
 
     // core-video already defines these C constants; bindgen `-xc` emits them as
