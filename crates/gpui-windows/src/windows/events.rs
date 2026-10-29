@@ -1400,6 +1400,24 @@ impl WindowsWindowInner {
         None
     }
 
+    fn handle_gpui_events(
+        &self,
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        if wparam.0 != self.validation_number {
+            return None;
+        }
+        match message {
+            WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
+            WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            _ => unreachable!(),
+        }
+    }
+
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         if lparam.0 == 0 {
             return None;
