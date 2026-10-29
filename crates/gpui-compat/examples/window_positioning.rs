@@ -253,7 +253,7 @@ fn main() {
             let bounds = Bounds {
                 origin: point(
                     display_bounds.center().x - size.center().x,
-                    display_bounds.origin.y + margin_offset,
+                    display_bounds.top() + margin_offset,
                 ),
                 size,
             };
@@ -272,7 +272,7 @@ fn main() {
 
             let bounds = Bounds {
                 origin: point(
-                    display_bounds.origin.x + margin_offset,
+                    display_bounds.left() + margin_offset,
                     display_bounds.center().y - size.center().y,
                 ),
                 size,
