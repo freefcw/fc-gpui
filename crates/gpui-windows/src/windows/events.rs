@@ -166,9 +166,9 @@ impl WindowsWindowInner {
             WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_APPCOMMAND => self.handle_app_command(lparam),
-            WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
-            WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_CURSOR_STYLE_CHANGED
+            | WM_GPUI_FORCE_UPDATE_WINDOW
+            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(handle, msg, wparam, lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             #[cfg(feature = "accessibility")]
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
@@ -1383,7 +1383,28 @@ impl WindowsWindowInner {
         None
     }
 
+    fn handle_gpui_events(
+        &self,
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        if wparam.0 != self.validation_number {
+            return None;
+        }
+        match message {
+            WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
+            WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            _ => unreachable!(),
+        }
+    }
+
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+        if lparam.0 == 0 {
+            return None;
+        }
         let mut lock = self.state.borrow_mut();
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
