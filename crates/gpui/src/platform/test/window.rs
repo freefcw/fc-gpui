@@ -22,6 +22,7 @@ pub(crate) struct TestWindowState {
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    close_callback: Option<Box<dyn FnOnce()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -130,6 +131,7 @@ impl TestWindow {
             title: Default::default(),
             edited: false,
             should_close_handler: None,
+            close_callback: None,
             hit_test_window_control_callback: None,
             input_callback: None,
             active_status_change_callback: None,
@@ -150,6 +152,13 @@ impl TestWindow {
             map_error,
             render_artifact: None,
         })))
+    }
+
+    pub fn simulate_close(&self) {
+        let callback = self.0.lock().close_callback.take();
+        if let Some(callback) = callback {
+            callback();
+        }
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -409,7 +418,9 @@ impl PlatformWindow for TestWindow {
         self.0.lock().should_close_handler = Some(callback);
     }
 
-    fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+    fn on_close(&self, callback: Box<dyn FnOnce()>) {
+        self.0.lock().close_callback = Some(callback);
+    }
 
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
         self.0.lock().hit_test_window_control_callback = Some(callback);
