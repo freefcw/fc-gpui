@@ -244,7 +244,7 @@ pub struct TextSystem {
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     raster_bounds_max_entries: Option<usize>,
-    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
+    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<CharWidthCache>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
     font_generation: Arc<AtomicUsize>,
@@ -616,12 +616,17 @@ impl TextSystem {
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
-        let wrappers = lock
+        let char_widths = lock
             .entry(FontIdWithSize { font_id, font_size })
-            .or_default();
-        let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
-        });
+            .or_default()
+            .pop()
+            .unwrap_or_default();
+        let wrapper = LineWrapper::new(
+            font_id,
+            font_size,
+            self.platform_text_system.clone(),
+            char_widths,
+        );
 
         LineWrapperHandle {
             wrapper: Some(wrapper),
@@ -938,7 +943,7 @@ impl Drop for LineWrapperHandle {
                 font_size: wrapper.font_size,
             })
             .unwrap()
-            .push(wrapper);
+            .push(wrapper.into_char_widths());
     }
 }
 
@@ -1618,6 +1623,38 @@ mod tests {
         assert!("not-a-number".parse::<FontWeight>().is_err());
         assert_eq!(weight + FontWeight(50.0), FontWeight(500.0));
         assert_eq!(weight - FontWeight(50.0), FontWeight(400.0));
+    }
+}
+
+#[cfg(test)]
+mod line_wrapper_pool_tests {
+    use super::*;
+    use crate::{AppResourceProfile, NoopTextSystem};
+
+    #[test]
+    fn pooled_line_wrappers_do_not_retain_text_system() {
+        let platform = Arc::new(NoopTextSystem::new());
+        let text_system = Arc::new(TextSystem::new(
+            platform.clone(),
+            &AppResourceProfile::desktop().text,
+        ));
+        let weak_text_system = Arc::downgrade(&text_system);
+
+        let mut wrapper = text_system.line_wrapper(font(".ZedMono"), px(16.));
+        let fragments = [LineFragment::text("hello world")];
+        wrapper
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .for_each(drop);
+        drop(wrapper);
+
+        // This handle and the text system are the only remaining owners. The
+        // pool stores width caches, not wrappers that clone the platform system.
+        assert_eq!(Arc::strong_count(&platform), 2);
+
+        drop(text_system);
+        drop(platform);
+
+        assert!(weak_text_system.upgrade().is_none());
     }
 }
 
