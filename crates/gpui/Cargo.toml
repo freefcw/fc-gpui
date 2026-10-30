@@ -111,7 +111,6 @@ smallvec = { workspace = true, features = ["union", "serde"] }
 smol.workspace = true
 strum.workspace = true
 util.workspace = true
-util_macros.workspace = true
 uuid.workspace = true
 
 [dependencies.accesskit]
@@ -206,6 +205,7 @@ collections = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
+util_macros.workspace = true
 
 [dev-dependencies.postage]
 version = "0.5"
