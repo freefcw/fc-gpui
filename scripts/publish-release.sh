@@ -49,7 +49,8 @@ version_published() {
 # Wait until the sparse index (what cargo resolves against) lists the version.
 wait_for_index() {
     local name="$1" version="$2"
-    local url="https://index.crates.io/$(index_path "$name")"
+    local url
+    url="https://index.crates.io/$(index_path "$name")"
     local attempt
     for attempt in $(seq 1 30); do
         if curl -sf -H "User-Agent: $USER_AGENT" "$url" | grep -F "\"vers\":\"$version\"" >/dev/null; then

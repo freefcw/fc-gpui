@@ -3,6 +3,7 @@
 # order (dependencies before dependents). This is both the safe order for
 # sequential `cargo publish` and the archive verification order.
 # Sourced by scripts/verify-release-archives.sh and scripts/publish-release.sh.
+# shellcheck disable=SC2034
 RELEASE_PACKAGES=(
     fc-gpui-collections
     fc-gpui-perf
