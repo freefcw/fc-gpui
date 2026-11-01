@@ -61,9 +61,14 @@ pub struct WindowsWindowState {
     pub system_settings: WindowsSystemSettings,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
-    /// Last client position seen in `WM_MOUSEMOVE`. Synthetic moves posted when
-    /// the window repaints under the cursor repeat this point with no button held.
-    pub mouse_position: Point<Pixels>,
+    /// Last mouse position dispatched to GPUI, in client logical pixels.
+    ///
+    /// `None` until the first such event, so a real move to `(0, 0)` is not
+    /// treated as a duplicate. Synthetic `WM_MOUSEMOVE` messages repeat this
+    /// point with no button held. Non-client moves, buttons, wheels, and file
+    /// drags store the position they hand to GPUI. Leave clears it. Focus does
+    /// not, because a repaint under a stationary cursor must stay suppressed.
+    pub mouse_position: Option<Point<Pixels>>,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -144,7 +149,7 @@ impl WindowsWindowState {
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
-        let mouse_position = Point::default();
+        let mouse_position = None;
         let fullscreen = None;
         let initial_placement = None;
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
@@ -1163,6 +1168,13 @@ impl WindowsDragDropHandler {
         let mut lock = self.0.state.borrow_mut();
         if let Some(mut func) = lock.callbacks.input.take() {
             drop(lock);
+            if let Some(position) = gpui_mouse_position(&input) {
+                self.0.sync_cached_mouse_position(position);
+            } else if matches!(input, PlatformInput::FileDrop(FileDropEvent::Exited)) {
+                // DragLeave means the pointer left the window. Same as
+                // WM_MOUSELEAVE: the next client move is an entry.
+                self.0.invalidate_cached_mouse_position();
+            }
             func(input);
             self.0.state.borrow_mut().callbacks.input = Some(func);
         }

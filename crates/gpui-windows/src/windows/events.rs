@@ -17,6 +17,9 @@ use windows::{
     core::PCWSTR,
 };
 
+use crate::mouse_move_cache::{
+    MouseCacheUpdate, apply_mouse_cache_update, is_synthetic_client_move,
+};
 use crate::*;
 
 pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
@@ -380,6 +383,18 @@ impl WindowsWindowInner {
         Some(0)
     }
 
+    pub(crate) fn sync_cached_mouse_position(&self, position: Point<Pixels>) {
+        let mut lock = self.state.borrow_mut();
+        lock.mouse_position =
+            apply_mouse_cache_update(lock.mouse_position, MouseCacheUpdate::Sync(position));
+    }
+
+    pub(crate) fn invalidate_cached_mouse_position(&self) {
+        let mut lock = self.state.borrow_mut();
+        lock.mouse_position =
+            apply_mouse_cache_update(lock.mouse_position, MouseCacheUpdate::Invalidate);
+    }
+
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE);
 
@@ -408,10 +423,17 @@ impl WindowsWindowInner {
         // repaints under the cursor (e.g. command palette opening). These are not
         // real mouse movements and should not move the editor cursor or clobber
         // selections. A real move always has a different position OR a button held.
-        if pressed_button.is_none() && new_position == lock.mouse_position {
+        // The cache is `None` until a position is dispatched, so the first move
+        // to `(0, 0)` is not dropped.
+        if is_synthetic_client_move(
+            lock.mouse_position.as_ref(),
+            &new_position,
+            pressed_button.is_some(),
+        ) {
             return Some(1);
         }
-        lock.mouse_position = new_position;
+        lock.mouse_position =
+            apply_mouse_cache_update(lock.mouse_position, MouseCacheUpdate::Sync(new_position));
         let Some(mut func) = lock.callbacks.input.take() else {
             return Some(1);
         };
@@ -429,6 +451,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_mouse_leave_msg(&self) -> Option<isize> {
+        // Client and non-client leave do not change GPUI's mouse position, but
+        // the pointer is no longer at the cached point. The next WM_MOUSEMOVE
+        // is an entry and must be delivered even when the coordinates repeat.
+        self.invalidate_cached_mouse_position();
         let mut lock = self.state.borrow_mut();
         lock.hovered = false;
         if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
@@ -575,6 +601,11 @@ impl WindowsWindowInner {
         button: MouseButton,
         lparam: LPARAM,
     ) -> Option<isize> {
+        // Capture keeps delivering WM_MOUSEMOVE (including outside the client
+        // area), and those moves refresh the cache while a button is held.
+        // WM_CAPTURECHANGED is intentionally ignored: mouse-up already stored
+        // the position, and clearing the cache would let the following
+        // synthetic move through.
         unsafe { SetCapture(handle) };
         let mut lock = self.state.borrow_mut();
         let Some(mut func) = lock.callbacks.input.take() else {
@@ -587,9 +618,11 @@ impl WindowsWindowInner {
         let scale_factor = lock.scale_factor;
         drop(lock);
 
+        let position = logical_point(x as f32, y as f32, scale_factor);
+        self.sync_cached_mouse_position(position);
         let input = PlatformInput::MouseDown(MouseDownEvent {
             button,
-            position: logical_point(x as f32, y as f32, scale_factor),
+            position,
             modifiers: current_modifiers(),
             click_count,
             first_mouse: false,
@@ -617,9 +650,11 @@ impl WindowsWindowInner {
         let scale_factor = lock.scale_factor;
         drop(lock);
 
+        let position = logical_point(x, y, scale_factor);
+        self.sync_cached_mouse_position(position);
         let input = PlatformInput::MouseUp(MouseUpEvent {
             button,
-            position: logical_point(x, y, scale_factor),
+            position,
             modifiers: current_modifiers(),
             click_count,
         });
@@ -673,6 +708,7 @@ impl WindowsWindowInner {
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+        self.sync_cached_mouse_position(position);
         let input = match wheel_scroll_amount {
             None => PlatformInput::Pinch(PinchEvent {
                 position,
@@ -726,8 +762,10 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+        let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+        self.sync_cached_mouse_position(position);
         let event = PlatformInput::ScrollWheel(ScrollEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+            position,
             delta: ScrollDelta::Lines(Point {
                 x: wheel_distance,
                 y: 0.0,
@@ -878,6 +916,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
+        // Activation does not move the pointer. Leave the mouse-position cache
+        // in place so a repaint under a stationary cursor stays suppressed.
         let activated = wparam.loword() > 0;
 
         #[cfg(feature = "accessibility")]
@@ -1129,8 +1169,13 @@ impl WindowsWindowInner {
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+        let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+        // Non-client moves update GPUI but are not WM_MOUSEMOVE. Record the
+        // client position (negative over the title bar) so the move back into
+        // the client area is not discarded as a duplicate.
+        self.sync_cached_mouse_position(position);
         let input = PlatformInput::MouseMove(MouseMoveEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+            position,
             pressed_button: None,
             modifiers: current_modifiers(),
         });
@@ -1159,9 +1204,12 @@ impl WindowsWindowInner {
             let click_count = lock.click_state.update(button, physical_point);
             drop(lock);
 
+            let position =
+                logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+            self.sync_cached_mouse_position(position);
             let input = PlatformInput::MouseDown(MouseDownEvent {
                 button,
-                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+                position,
                 modifiers: current_modifiers(),
                 click_count,
                 first_mouse: false,
@@ -1208,9 +1256,12 @@ impl WindowsWindowInner {
                 y: lparam.signed_hiword().into(),
             };
             unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+            let position =
+                logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
+            self.sync_cached_mouse_position(position);
             let input = PlatformInput::MouseUp(MouseUpEvent {
                 button,
-                position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+                position,
                 modifiers: current_modifiers(),
                 click_count: 1,
             });
@@ -1463,6 +1514,9 @@ impl WindowsWindowInner {
             if let Some(mut func) = lock.callbacks.input.take() {
                 drop(lock);
                 for event in events {
+                    if let Some(position) = gpui_mouse_position(&event) {
+                        self.sync_cached_mouse_position(position);
+                    }
                     func(event);
                 }
                 self.state.borrow_mut().callbacks.input = Some(func);
@@ -1910,6 +1964,31 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+/// Position GPUI stores from this input.
+///
+/// `MouseExited` carries a point but `Window::dispatch_event` does not record
+/// it. Modifier and focus changes do not either. File-drag exit is handled by
+/// the caller as a cache invalidation.
+pub(crate) fn gpui_mouse_position(input: &PlatformInput) -> Option<Point<Pixels>> {
+    match input {
+        PlatformInput::MouseMove(event) => Some(event.position),
+        PlatformInput::MouseDown(event) => Some(event.position),
+        PlatformInput::MouseUp(event) => Some(event.position),
+        PlatformInput::ScrollWheel(event) => Some(event.position),
+        PlatformInput::Pinch(event) => Some(event.position),
+        PlatformInput::FileDrop(
+            FileDropEvent::Entered { position, .. }
+            | FileDropEvent::Pending { position }
+            | FileDropEvent::Submit { position },
+        ) => Some(*position),
+        PlatformInput::FileDrop(FileDropEvent::Exited)
+        | PlatformInput::MouseExited(_)
+        | PlatformInput::ModifiersChanged(_)
+        | PlatformInput::KeyDown(_)
+        | PlatformInput::KeyUp(_) => None,
     }
 }
 
