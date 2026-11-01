@@ -1846,7 +1846,6 @@ dependencies = [
  "rand 0.9.5",
  "raw-window-handle",
  "regex",
- "reqwest",
  "resvg",
  "schemars",
  "seahash",
