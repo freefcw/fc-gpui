@@ -18,6 +18,12 @@ categories = ["gui"]
 license.workspace = true
 repository.workspace = true
 
+# Version ceiling for zed-scap: not referenced from this crate's Rust sources.
+# cargo-machete --with-metadata reports it as unused. See the windows-capture
+# dependency comment below.
+[package.metadata.cargo-machete]
+ignored = ["windows-capture"]
+
 [features]
 accessibility = []
 bench = ["test-support"]

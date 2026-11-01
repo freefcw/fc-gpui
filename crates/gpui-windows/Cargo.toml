@@ -11,6 +11,11 @@ repository.workspace = true
 readme = "README.md"
 description = "Windows platform and DirectX renderer backend for fc-gpui"
 
+# Optional build-dependency of the windows-manifest feature (build.rs).
+# cargo-machete --with-metadata does not see that build-script use.
+[package.metadata.cargo-machete]
+ignored = ["embed-resource"]
+
 [lib]
 name = "gpui_windows"
 path = "src/gpui_windows.rs"
