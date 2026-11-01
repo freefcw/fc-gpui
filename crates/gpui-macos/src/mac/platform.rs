@@ -8,10 +8,10 @@ use crate::{
     CursorStyle, DevicePixels, ForegroundExecutor, GpuResourceBudget, Image, ImageFormat,
     KeyContext, Keymap, MacActivity, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu,
     OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, QuitMode, RendererCacheStats,
-    Result, SemanticVersion, SharedString, Size, SystemMenuType, Task, ThermalState, TrayAnchor,
-    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
-    WindowParams,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, QuitMode,
+    RendererCacheStats, Result, SemanticVersion, SharedString, Size, SystemMenuType, Task,
+    ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
+    TrayMenuItem, WindowAppearance, WindowParams,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -51,9 +51,8 @@ use objc2_foundation::{
     NSActivityOptions, NSArray, NSAttributedString as Objc2NSAttributedString,
     NSBundle as Objc2NSBundle, NSData as Objc2NSData, NSDictionary, NSMutableAttributedString,
     NSNotification, NSNotificationCenter, NSObjectProtocol, NSProcessInfo as Objc2NSProcessInfo,
-    NSProcessInfoThermalState as Objc2NSProcessInfoThermalState,
-    NSProcessInfoThermalStateDidChangeNotification, NSRange as Objc2NSRange, NSSize as Objc2NSSize,
-    NSString as Objc2NSString, NSURL as Objc2NSURL, NSUserDefaults,
+    NSRange as Objc2NSRange, NSSize as Objc2NSSize, NSString as Objc2NSString, NSURL as Objc2NSURL,
+    NSUserDefaults,
 };
 use objc2_user_notifications::{
     UNMutableNotificationContent, UNNotificationRequest, UNUserNotificationCenter,
@@ -414,35 +413,6 @@ define_class!(
             }
         }
 
-        #[unsafe(method(onThermalStateChange:))]
-        fn on_thermal_state_change(&self, _notification: &NSNotification) {
-            let platform_ptr = delegate_platform(self) as *const MacPlatform;
-
-            use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
-
-            unsafe extern "C" fn invoke(context: *mut c_void) {
-                let platform = unsafe { &*(context as *const MacPlatform) };
-                let mut lock = platform.0.lock();
-                if let Some(mut callback) = lock.on_thermal_state_change.take() {
-                    drop(lock);
-                    callback();
-                    platform
-                        .0
-                        .lock()
-                        .on_thermal_state_change
-                        .get_or_insert(callback);
-                }
-            }
-
-            unsafe {
-                dispatch_async_f(
-                    dispatch_get_main_queue(),
-                    platform_ptr as *mut c_void,
-                    Some(invoke),
-                );
-            }
-        }
-
         #[unsafe(method(handleSystemPowerEvent:))]
         fn handle_system_power_event(&self, notification: &NSNotification) {
             let Some(event) = system_power_event_from_notification(notification) else {
@@ -575,19 +545,12 @@ fn unhook_application_delegate(
 fn register_launch_observers(this: &GPUIApplicationDelegate) {
     let notification_center = NSNotificationCenter::defaultCenter();
     let observer = AsRef::<AnyObject>::as_ref(this);
-    let process_info = Objc2NSProcessInfo::processInfo();
     unsafe {
         notification_center.addObserver_selector_name_object(
             observer,
             objc2::sel!(onKeyboardLayoutChange:),
             Some(NSTextInputContextKeyboardSelectionDidChangeNotification),
             None,
-        );
-        notification_center.addObserver_selector_name_object(
-            observer,
-            objc2::sel!(onThermalStateChange:),
-            Some(NSProcessInfoThermalStateDidChangeNotification),
-            Some(AsRef::<AnyObject>::as_ref(&*process_info)),
         );
 
         let workspace_center = Objc2NSWorkspace::sharedWorkspace().notificationCenter();
@@ -649,7 +612,8 @@ pub(crate) struct MacPlatformState {
     metadata_pasteboard_type: Retained<Objc2NSString>,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    on_thermal_state_change: Option<Box<dyn FnMut()>>,
+    thermal_observer: Option<super::process_info::ProcessInfoObserver>,
+    power_mode_observer: Option<super::process_info::ProcessInfoObserver>,
     quit: Option<Box<dyn FnMut() -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -730,7 +694,8 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
-            on_thermal_state_change: None,
+            thermal_observer: None,
+            power_mode_observer: None,
             menus: None,
             keyboard_mapper,
             global_hotkey_mapper,
@@ -1498,17 +1463,23 @@ impl Platform for MacPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().on_thermal_state_change = Some(callback);
+        let observer =
+            super::process_info::observe_thermal_state(&self.foreground_executor(), callback);
+        self.0.lock().thermal_observer = Some(observer);
     }
 
     fn thermal_state(&self) -> ThermalState {
-        match Objc2NSProcessInfo::processInfo().thermalState() {
-            Objc2NSProcessInfoThermalState::Nominal => ThermalState::Nominal,
-            Objc2NSProcessInfoThermalState::Fair => ThermalState::Fair,
-            Objc2NSProcessInfoThermalState::Serious => ThermalState::Serious,
-            Objc2NSProcessInfoThermalState::Critical => ThermalState::Critical,
-            _ => ThermalState::Nominal,
-        }
+        super::process_info::thermal_state()
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        super::process_info::power_mode()
+    }
+
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        let observer =
+            super::process_info::observe_power_mode(&self.foreground_executor(), callback);
+        self.0.lock().power_mode_observer = Some(observer);
     }
 
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {

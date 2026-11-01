@@ -31,6 +31,7 @@ mod os_info;
 mod permissions;
 mod platform;
 mod power;
+mod process_info;
 mod tray;
 mod window;
 mod window_appearance;

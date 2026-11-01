@@ -982,21 +982,65 @@ impl InputRateTracker {
     }
 }
 
-fn frame_throttle_interval(
-    force_render: bool,
-    require_presentation: bool,
-    has_next_frame_callbacks: bool,
-    is_active: bool,
-    has_high_rate_input: bool,
-    is_thermally_constrained: bool,
+const THIRTY_FPS_INTERVAL: Duration = Duration::from_micros(33333);
+const SIXTY_FPS_INTERVAL: Duration = Duration::from_micros(16667);
+const FRAME_INTERVAL_TOLERANCE: Duration = Duration::from_millis(1);
+
+/// Keeps throttled frames on a stable cadence despite callback delivery jitter.
+#[derive(Default)]
+struct FramePacer {
+    last_frame: Option<Instant>,
+}
+
+impl FramePacer {
+    fn should_defer(&mut self, now: Instant, minimum_interval: Option<Duration>) -> bool {
+        if let Some(interval) = minimum_interval
+            && let Some(last_frame) = self.last_frame
+        {
+            let deadline = last_frame + interval;
+            if now + FRAME_INTERVAL_TOLERANCE < deadline {
+                return true;
+            }
+            // Correct small dispatch delays without shifting subsequent deadlines,
+            // but bound the correction to a quarter interval. Larger delays restart
+            // the cadence so recovery cannot produce closely spaced catch-up frames.
+            self.last_frame = Some(if now.saturating_duration_since(deadline) <= interval / 4 {
+                deadline
+            } else {
+                now
+            });
+        } else {
+            self.last_frame = Some(now);
+        }
+        false
+    }
+}
+
+fn minimum_frame_interval(
+    should_throttle: bool,
+    inactive_without_high_rate_input: bool,
     inactive_frame_interval: Option<Duration>,
+    thermal_state: ThermalState,
+    power_mode: crate::PowerMode,
 ) -> Option<Duration> {
-    if require_presentation || (!force_render && !has_next_frame_callbacks) {
+    let low_power_mode_enabled = power_mode == crate::PowerMode::LowPower;
+    if !should_throttle {
         None
-    } else if !is_active && !has_high_rate_input {
-        inactive_frame_interval
-    } else if is_thermally_constrained {
-        Some(Duration::from_micros(16667))
+    } else if inactive_without_high_rate_input {
+        match (inactive_frame_interval, low_power_mode_enabled) {
+            (Some(inactive_frame_interval), true) => {
+                Some(inactive_frame_interval.max(THIRTY_FPS_INTERVAL))
+            }
+            (inactive_frame_interval, false) => inactive_frame_interval,
+            (None, true) => Some(THIRTY_FPS_INTERVAL),
+        }
+    } else if low_power_mode_enabled {
+        Some(THIRTY_FPS_INTERVAL)
+    } else if matches!(
+        thermal_state,
+        ThermalState::Critical | ThermalState::Serious
+    ) {
+        Some(SIXTY_FPS_INTERVAL)
     } else {
         None
     }
@@ -1124,8 +1168,6 @@ pub struct Window {
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "input-latency-histogram")]
     input_latency_tracker: InputLatencyTracker,
-    #[allow(dead_code)]
-    pub(crate) last_frame_time: Rc<Cell<Option<Instant>>>,
     pub(crate) last_input_was_keyboard: Cell<bool>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1445,7 +1487,6 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
-        let last_frame_time = Rc::new(Cell::new(None::<Instant>));
 
         platform_window
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
@@ -1563,8 +1604,8 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
-            let last_frame_time = last_frame_time.clone();
             let mut deferred_force_render = false;
+            let mut frame_pacer = FramePacer::default();
             move |request_frame_options| {
                 // This must be checked before anything else: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
@@ -1592,51 +1633,61 @@ impl Window {
                 let force_render =
                     mem::take(&mut deferred_force_render) || request_frame_options.force_render;
 
-                let thermal_state = handle
-                    .update(&mut cx, |_, _, cx| cx.thermal_state())
+                let power_state = handle
+                    .update(&mut cx, |_, _, cx| (cx.thermal_state(), cx.power_mode()))
                     .log_err();
+
+                // Keep presenting briefly after high-rate input to prevent display
+                // underclocking, but subject to the same power limits as redraws.
+                let high_rate_input = input_rate_tracker.borrow().is_high_rate();
+                let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
+                let has_frame_demand = invalidator.is_dirty()
+                    || force_render
+                    || has_next_frame_callbacks
+                    || request_frame_options.require_presentation
+                    || needs_present.get()
+                    || high_rate_input;
 
                 // Throttle frame rate based on conditions:
                 // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Inactive window (not focused): cap to ~30fps to save energy,
+                // - Low power mode: cap to ~30fps
+                // - Inactive window (not focused): use its configured frame interval,
                 //   unless high-rate input is arriving under the pointer.
-                let has_high_rate_input = input_rate_tracker.borrow().is_high_rate();
-                let min_frame_interval = frame_throttle_interval(
-                    force_render,
-                    request_frame_options.require_presentation,
-                    !next_frame_callbacks.borrow().is_empty(),
-                    active.get(),
-                    has_high_rate_input,
-                    matches!(
-                        thermal_state,
-                        Some(ThermalState::Critical | ThermalState::Serious)
-                    ),
+                // Explicit mandatory platform presentations still bypass the limits.
+                let should_throttle = !request_frame_options.require_presentation;
+                let inactive_without_high_rate_input =
+                    should_throttle && !active.get() && !high_rate_input;
+                let (thermal_state, power_mode) =
+                    power_state.unwrap_or((ThermalState::Nominal, crate::PowerMode::Unknown));
+                let min_frame_interval = minimum_frame_interval(
+                    should_throttle,
+                    inactive_without_high_rate_input,
                     inactive_frame_interval,
+                    thermal_state,
+                    power_mode,
                 );
 
                 let now = Instant::now();
-                if let Some(min_interval) = min_frame_interval {
-                    if let Some(last_frame) = last_frame_time.get() {
-                        if now.duration_since(last_frame) < min_interval {
-                            // Don't lose a pending forced render to throttling.
-                            deferred_force_render |= force_render;
-                            // Deferred by throttling: ask demand-driven platforms to retry.
-                            handle
-                                .update(&mut cx, |_, window, _| {
-                                    window.platform_window.schedule_frame();
-                                })
-                                .log_err();
-                            return;
-                        }
-                    }
+                // Idle display-link ticks must neither consume a frame slot nor
+                // wake a demand-driven frame source.
+                if has_frame_demand && frame_pacer.should_defer(now, min_frame_interval) {
+                    // Don't lose a pending forced render to throttling.
+                    deferred_force_render |= force_render;
+                    // Deferred by throttling: ask demand-driven platforms to retry.
+                    // `schedule_frame` is this fork's demand-driven wakeup.
+                    handle
+                        .update(&mut cx, |_, window, _| {
+                            window.platform_window.schedule_frame();
+                        })
+                        .log_err();
+                    return;
                 }
-                last_frame_time.set(Some(now));
 
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
+                let pending_next_frame_callbacks = next_frame_callbacks.take();
+                if !pending_next_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
+                            for callback in pending_next_frame_callbacks {
                                 callback(window, cx);
                             }
                         })
@@ -1647,7 +1698,7 @@ impl Window {
                 // including while an unfocused window receives pointer input.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || has_high_rate_input;
+                    || high_rate_input;
 
                 if invalidator.is_dirty() || force_render {
                     measure("frame duration", || {
@@ -1934,7 +1985,6 @@ impl Window {
             input_rate_tracker,
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
-            last_frame_time,
             last_input_was_keyboard: Cell::new(false),
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -6651,8 +6701,8 @@ mod tests {
     use super::*;
     use crate::{
         ContentMask, Context, Entity, ExternalPaths, HitboxBehavior, InputEvent as _,
-        MouseMoveEvent, QuitMode, Render, StyleRefinement, TestAppContext, WindowOptions, bounds,
-        canvas, div, hsla, point, px, size,
+        MouseMoveEvent, QuitMode, Render, StyleRefinement, TestAppContext, ThermalState,
+        WindowOptions, bounds, canvas, div, hsla, point, px, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -6662,18 +6712,36 @@ mod tests {
 
     #[test]
     fn high_rate_input_avoids_inactive_window_throttling() {
-        let default_inactive = Some(Duration::from_micros(33333));
+        let default_inactive = Some(super::THIRTY_FPS_INTERVAL);
         assert_eq!(
-            frame_throttle_interval(true, false, false, false, false, false, default_inactive),
+            minimum_frame_interval(
+                true,
+                true,
+                default_inactive,
+                ThermalState::Nominal,
+                crate::PowerMode::Unknown,
+            ),
             default_inactive
         );
         assert_eq!(
-            frame_throttle_interval(true, false, false, false, true, false, default_inactive),
+            minimum_frame_interval(
+                true,
+                false,
+                default_inactive,
+                ThermalState::Nominal,
+                crate::PowerMode::Unknown,
+            ),
             None
         );
         assert_eq!(
-            frame_throttle_interval(true, false, false, false, true, true, default_inactive),
-            Some(Duration::from_micros(16667)),
+            minimum_frame_interval(
+                true,
+                false,
+                default_inactive,
+                ThermalState::Serious,
+                crate::PowerMode::Unknown,
+            ),
+            Some(super::SIXTY_FPS_INTERVAL),
             "thermal pressure still caps high-rate input"
         );
     }
@@ -6682,14 +6750,96 @@ mod tests {
     fn inactive_frame_interval_is_configurable() {
         let custom = Some(Duration::from_millis(16));
         assert_eq!(
-            frame_throttle_interval(true, false, false, false, false, false, custom),
+            minimum_frame_interval(
+                true,
+                true,
+                custom,
+                ThermalState::Nominal,
+                crate::PowerMode::Unknown,
+            ),
             custom
         );
         assert_eq!(
-            frame_throttle_interval(true, false, false, false, false, false, None),
+            minimum_frame_interval(
+                true,
+                true,
+                None,
+                ThermalState::Nominal,
+                crate::PowerMode::Unknown,
+            ),
             None,
             "None disables inactive-window throttling"
         );
+    }
+
+    #[test]
+    fn frame_throttle_tracks_display_refreshes() {
+        let start = super::Instant::now();
+        for (elapsed, interval) in [
+            (Duration::from_micros(16_666), super::SIXTY_FPS_INTERVAL),
+            (Duration::from_micros(33_332), super::THIRTY_FPS_INTERVAL),
+        ] {
+            let mut pacer = super::FramePacer::default();
+            assert!(!pacer.should_defer(start, Some(interval)));
+            assert!(pacer.should_defer(start + elapsed / 2, Some(interval)));
+            assert!(!pacer.should_defer(start + elapsed, Some(interval)));
+        }
+    }
+
+    #[test]
+    fn frame_throttle_preserves_cadence_without_catching_up_after_stalls() {
+        let start = super::Instant::now();
+        let interval = super::THIRTY_FPS_INTERVAL;
+        let mut pacer = super::FramePacer::default();
+        assert!(!pacer.should_defer(start, Some(interval)));
+        let delayed_frame = start + interval + Duration::from_millis(5);
+        assert!(!pacer.should_defer(delayed_frame, Some(interval)));
+        assert!(pacer.should_defer(start + interval + interval / 2, Some(interval)));
+        assert!(!pacer.should_defer(start + interval * 2, Some(interval)));
+
+        // Even a stall just short of another full interval must not cause a burst.
+        let after_stall = start + interval * 4 - Duration::from_millis(1);
+        assert!(!pacer.should_defer(after_stall, Some(interval)));
+        assert!(pacer.should_defer(after_stall + interval / 2, Some(interval)));
+        assert!(!pacer.should_defer(after_stall + interval, Some(interval)));
+        // Mandatory presentation bypasses the limit and establishes a fresh cadence.
+        let mandatory_frame = after_stall + interval + Duration::from_millis(2);
+        assert!(!pacer.should_defer(mandatory_frame, None));
+        assert!(pacer.should_defer(mandatory_frame + interval / 2, Some(interval)));
+    }
+
+    #[test]
+    fn power_modes_preserve_frame_limits() {
+        for (power_mode, active_interval, thermal_interval) in [
+            (
+                crate::PowerMode::LowPower,
+                Some(super::THIRTY_FPS_INTERVAL),
+                super::THIRTY_FPS_INTERVAL,
+            ),
+            (crate::PowerMode::Unknown, None, super::SIXTY_FPS_INTERVAL),
+            (crate::PowerMode::Balanced, None, super::SIXTY_FPS_INTERVAL),
+            (crate::PowerMode::HighPower, None, super::SIXTY_FPS_INTERVAL),
+        ] {
+            assert_eq!(
+                super::minimum_frame_interval(true, false, None, ThermalState::Nominal, power_mode),
+                active_interval,
+            );
+            assert_eq!(
+                super::minimum_frame_interval(true, false, None, ThermalState::Serious, power_mode),
+                Some(thermal_interval),
+            );
+            let inactive_interval = Duration::from_millis(100);
+            assert_eq!(
+                super::minimum_frame_interval(
+                    true,
+                    true,
+                    Some(inactive_interval),
+                    ThermalState::Nominal,
+                    power_mode,
+                ),
+                Some(inactive_interval),
+            );
+        }
     }
 
     #[test]

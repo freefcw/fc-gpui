@@ -9,6 +9,8 @@ mod os_info;
 mod platform;
 mod power;
 #[cfg(any(feature = "wayland", feature = "x11"))]
+mod power_profile;
+#[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 mod tray;
 #[cfg(feature = "wayland")]

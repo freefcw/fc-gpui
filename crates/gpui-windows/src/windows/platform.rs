@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     ffi::{OsStr, OsString},
     mem::ManuallyDrop,
@@ -23,7 +23,18 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
+        System::{
+            Com::*,
+            LibraryLoader::*,
+            Ole::*,
+            Power::{
+                GetSystemPowerStatus, HPOWERNOTIFY, POWERBROADCAST_SETTING,
+                RegisterPowerSettingNotification, SYSTEM_POWER_STATUS,
+                UnregisterPowerSettingNotification,
+            },
+            SystemInformation::*,
+            SystemServices::GUID_POWER_SAVING_STATUS,
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -43,6 +54,7 @@ pub(crate) struct WindowsPlatform {
     drop_target_helper: IDropTargetHelper,
     handle: HWND,
     disable_direct_composition: bool,
+    power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
 }
 
 struct WindowsPlatformInner {
@@ -69,6 +81,7 @@ pub(crate) struct WindowsPlatformState {
     draw_coordinator: Rc<DrawCoordinator>,
     atlas_initial_size: crate::Size<DevicePixels>,
     appearance_override: Option<WindowAppearance>,
+    low_power_mode_enabled: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -85,6 +98,7 @@ struct PlatformCallbacks {
     tray_menu_action: Option<Box<dyn FnMut(SharedString)>>,
     global_hotkey: Option<Box<dyn FnMut(u32)>>,
     system_power: Option<Box<dyn FnMut(SystemPowerEvent)>>,
+    low_power_mode_change: Cell<Option<Box<dyn FnMut()>>>,
     network_status_change: Option<Box<dyn FnMut(NetworkStatus)>>,
     media_key: Option<Box<dyn FnMut(MediaKeyEvent)>>,
     context_menu: Option<Box<dyn FnMut(SharedString)>>,
@@ -111,6 +125,7 @@ impl WindowsPlatformState {
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             atlas_initial_size: crate::AppResourceProfile::default().gpu.atlas_size(),
             appearance_override: None,
+            low_power_mode_enabled: Cell::new(false),
         }
     }
 }
@@ -158,6 +173,15 @@ impl WindowsPlatform {
         };
         let inner = context.inner.take().unwrap()?;
         let handle = result?;
+        let mut power_status = SYSTEM_POWER_STATUS::default();
+        match unsafe { GetSystemPowerStatus(&mut power_status) } {
+            Ok(()) => inner
+                .state
+                .borrow()
+                .low_power_mode_enabled
+                .set(power_status.SystemStatusFlag == 1),
+            Err(error) => log::warn!("Failed to query Windows battery saver status: {error}"),
+        }
 
         unsafe {
             let _ = windows::Win32::System::RemoteDesktop::WTSRegisterSessionNotification(
@@ -194,6 +218,7 @@ impl WindowsPlatform {
             disable_direct_composition,
             windows_version,
             drop_target_helper,
+            power_saving_notification: RefCell::new(None),
         })
     }
 
@@ -860,6 +885,34 @@ impl Platform for WindowsPlatform {
         self.inner.state.borrow_mut().callbacks.system_power = Some(callback);
     }
 
+    fn power_mode(&self) -> PowerMode {
+        if self.inner.state.borrow().low_power_mode_enabled.get() {
+            PowerMode::LowPower
+        } else {
+            PowerMode::HighPower
+        }
+    }
+
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        self.inner
+            .state
+            .borrow()
+            .callbacks
+            .low_power_mode_change
+            .set(Some(callback));
+        let mut notification = self.power_saving_notification.borrow_mut();
+        if notification.is_none() {
+            *notification = unsafe {
+                RegisterPowerSettingNotification(
+                    HANDLE(self.handle.0),
+                    &GUID_POWER_SAVING_STATUS,
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                )
+                .log_err()
+            };
+        }
+    }
+
     fn start_power_save_blocker(&self, kind: PowerSaveBlockerKind) -> Option<u32> {
         let mut state = self.inner.state.borrow_mut();
         let id = state.next_blocker_id;
@@ -1075,7 +1128,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TRAY_ICON => self.handle_tray_icon_event(handle, lparam),
             WM_COMMAND => self.handle_tray_menu_command(wparam),
             WM_HOTKEY => self.handle_global_hotkey(wparam),
-            WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
+            WM_POWERBROADCAST => self.handle_power_broadcast(wparam, lparam),
             super::events::WM_WTSSESSION_CHANGE => self.handle_session_change(wparam),
             WM_GPUI_NETWORK_CHANGE => self.handle_network_change(),
             WM_GPUI_MEDIA_KEY => self.handle_media_key(wparam, lparam),
@@ -1285,9 +1338,33 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
+    fn handle_power_broadcast(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         const PBT_APMSUSPEND: u32 = 0x0004;
         const PBT_APMRESUMEAUTOMATIC: u32 = 0x0012;
+        const PBT_POWERSETTINGCHANGE: u32 = 0x8013;
+
+        if wparam.0 as u32 == PBT_POWERSETTINGCHANGE {
+            let changed = if let Some(enabled) = unsafe { power_saving_status(lparam) } {
+                self.state.borrow().low_power_mode_enabled.replace(enabled) != enabled
+            } else {
+                false
+            };
+            if changed {
+                let callback = self.state.borrow().callbacks.low_power_mode_change.take();
+                if let Some(mut callback) = callback {
+                    callback();
+                    // Keep a callback installed during the notification. A
+                    // reentrant registration replaces this one.
+                    let replacement = self.state.borrow().callbacks.low_power_mode_change.take();
+                    self.state
+                        .borrow()
+                        .callbacks
+                        .low_power_mode_change
+                        .set(replacement.or(Some(callback)));
+                }
+            }
+            return Some(1);
+        }
 
         let event = match wparam.0 as u32 {
             PBT_APMSUSPEND => Some(SystemPowerEvent::Suspend),
@@ -1425,12 +1502,32 @@ impl WindowsPlatformInner {
     }
 }
 
+unsafe fn power_saving_status(lparam: LPARAM) -> Option<bool> {
+    let setting = unsafe { (lparam.0 as *const POWERBROADCAST_SETTING).as_ref()? };
+    if setting.PowerSetting != GUID_POWER_SAVING_STATUS || setting.DataLength != 4 {
+        return None;
+    }
+    let data = unsafe {
+        std::ptr::addr_of!(setting.Data)
+            .cast::<u32>()
+            .read_unaligned()
+    };
+    match data {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
             let _ = windows::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(
                 self.handle,
             );
+            if let Some(notification) = self.power_saving_notification.borrow_mut().take() {
+                UnregisterPowerSettingNotification(notification).log_err();
+            }
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();
