@@ -29,7 +29,7 @@ test-support = ["gpui/test-support"]
 windows-manifest = ["dep:embed-resource"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
-accesskit = { version = "0.25.1", optional = true }
+accesskit = { workspace = true, optional = true }
 accesskit_windows = { version = "0.35.1", optional = true }
 anyhow.workspace = true
 async-task.workspace = true

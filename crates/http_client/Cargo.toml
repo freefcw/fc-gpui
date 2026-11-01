@@ -22,12 +22,27 @@ doctest = true
 
 [dependencies]
 anyhow.workspace = true
+async-fs.workspace = true
 derive_more = { workspace = true, features = ["deref"] }
 futures.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+# NOTE: `socks` is dropped entirely — nothing in this crate or its downstream
+# uses SOCKS proxies. `multipart` stays unconditional: the
+# `send_multipart_form` trait method's signature references
+# `reqwest::multipart::Form`, and its mime/mime_guess deps are compiled anyway
+# via fc-gpui-util→rust-embed→mime_guess, so gating it would add trait
+# complexity for zero build savings.
+reqwest = { workspace = true, features = [
+    "charset",
+    "http2",
+    "multipart",
+    "rustls-tls-native-roots",
+    "stream",
+] }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 util.workspace = true
 
 [dependencies.async-compression]
@@ -36,9 +51,6 @@ features = [
     "gzip",
     "futures-io",
 ]
-
-[dependencies.async-fs]
-version = "2.1"
 
 [dependencies.blocking]
 version = "1"
@@ -52,31 +64,11 @@ version = "1.1"
 [dependencies.http-body]
 version = "1.0"
 
-[dependencies.reqwest]
-version = "0.12.28"
-# NOTE: `socks` is dropped entirely — nothing in this crate or its downstream
-# uses SOCKS proxies. `multipart` stays unconditional: the
-# `send_multipart_form` trait method's signature references
-# `reqwest::multipart::Form`, and its mime/mime_guess deps are compiled anyway
-# via fc-gpui-util→rust-embed→mime_guess, so gating it would add trait
-# complexity for zero build savings.
-features = [
-    "charset",
-    "http2",
-    "multipart",
-    "rustls-tls-native-roots",
-    "stream",
-]
-default-features = false
-
 [dependencies.sha2]
 version = "0.11"
 
 [dependencies.tar]
 version = "0.4"
-
-[dependencies.tempfile]
-version = "3.20.0"
 
 [dependencies.url]
 version = "2.2"

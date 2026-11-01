@@ -105,32 +105,19 @@ collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 futures.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
+lyon = { workspace = true, features = ["extra"] }
 rand.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls-native-roots", "stream"] }
+schemars = { workspace = true, features = ["smallvec1"] }
 serde.workspace = true
 serde_json.workspace = true
 smallvec = { workspace = true, features = ["union", "serde"] }
-unicode-segmentation = "1.10"
+unicode-segmentation.workspace = true
 
 [dev-dependencies.gpui_macros]
 path = "../gpui-macros"
 package = "fc-gpui-macros"
 version = "0.12.0"
-
-[dev-dependencies.lyon]
-version = "1.0"
-features = ["extra"]
-
-[dev-dependencies.reqwest]
-version = "0.12.28"
-features = [
-    "rustls-tls-native-roots",
-    "stream",
-]
-default-features = false
-
-[dev-dependencies.schemars]
-version = "1.0"
-features = ["indexmap2", "smallvec1"]
 
 
 [lints.clippy]

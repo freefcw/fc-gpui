@@ -94,7 +94,12 @@ harness = false
 required-features = ["bench"]
 
 [dependencies]
+accesskit.workspace = true
 anyhow.workspace = true
+ctor.workspace = true
+lyon.workspace = true
+schemars = { workspace = true, features = ["smallvec1"] }
+ttf-parser.workspace = true
 async-task.workspace = true
 collections.workspace = true
 derive_more = { workspace = true, features = ["add", "add_assign", "deref", "deref_mut", "from_str", "mul", "mul_assign", "not"] }
@@ -119,14 +124,8 @@ strum.workspace = true
 util.workspace = true
 uuid.workspace = true
 
-[dependencies.accesskit]
-version = "0.25.1"
-
 [dependencies.async-channel]
 version = "2.5.0"
-
-[dependencies.ctor]
-version = "1.0.13"
 
 [dependencies.hdrhistogram]
 version = "7"
@@ -139,9 +138,6 @@ version = "0.12.0"
 
 [dependencies.inventory]
 version = "0.3.19"
-
-[dependencies.lyon]
-version = "1.0"
 
 [dependencies.postage]
 version = "0.5"
@@ -162,10 +158,6 @@ features = [
     "raster-images",
 ]
 default-features = false
-
-[dependencies.schemars]
-version = "1.0"
-features = ["indexmap2", "smallvec1"]
 
 [dependencies.seahash]
 version = "4.1"
@@ -195,9 +187,6 @@ version = "=0.15.1"
 [dependencies.thiserror]
 version = "2.0.12"
 
-[dependencies.ttf-parser]
-version = "0.25"
-
 [dependencies.usvg]
 version = "0.49"
 default-features = false
@@ -209,6 +198,7 @@ version = "1.2.0"
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+lyon = { workspace = true, features = ["extra"] }
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 util_macros.workspace = true
@@ -219,10 +209,6 @@ features = ["futures-traits"]
 
 [dev-dependencies.criterion]
 version = "0.8.2"
-
-[dev-dependencies.lyon]
-version = "1.0"
-features = ["extra"]
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.bitflags]
 version = "2.6"
@@ -251,10 +237,8 @@ optional = true
 # frames. `display-link` (legacy `block`) is unused: frame pacing is
 # `gpui-macos` `display_link.rs`. Workspace [patch] feature-gates `block`;
 # published manifests still resolve registry 0.5.2 (see vendor/core-video).
-[target.'cfg(target_os = "macos")'.dependencies.core-video]
-version = "0.5.2"
-default-features = false
-features = ["link"]
+[target.'cfg(target_os = "macos")'.dependencies]
+core-video.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"

@@ -23,16 +23,9 @@ package = "fc-gpui-perf"
 version = "0.6.0"
 optional = true
 
-[dependencies.quote]
-version = "1.0.9"
-
-[dependencies.syn]
-version = "2.0.101"
-features = [
-    "full",
-    "extra-traits",
-    "visit-mut",
-]
+[dependencies]
+quote.workspace = true
+syn.workspace = true
 
 
 [lints.clippy]

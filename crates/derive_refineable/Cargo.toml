@@ -14,19 +14,10 @@ path = "src/derive_refineable.rs"
 doctest = false
 proc-macro = true
 
-[dependencies.proc-macro2]
-version = "1.0.93"
-
-[dependencies.quote]
-version = "1.0.9"
-
-[dependencies.syn]
-version = "2.0.101"
-features = [
-    "full",
-    "extra-traits",
-    "visit-mut",
-]
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
 
 
 [lints.clippy]
