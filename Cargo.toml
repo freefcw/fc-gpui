@@ -55,7 +55,7 @@ futures = "0.3"
 image = { version = "0.25.1", default-features = false }
 itertools = "0.15.0"
 libc = "0.2"
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+log = "0.4.16"
 parking = "2.0.0"
 parking_lot = "0.12.1"
 pathfinder_geometry = "0.5"
@@ -69,7 +69,7 @@ serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 smallvec = "1.6"
 smol = "2.0"
 strum = { version = "0.28.0", features = ["derive"] }
-uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 
 # Workspace-only lockfile patches. Published fc-gpui-* manifests still
 # resolve the registry crates; downstream lockfiles without these patches
