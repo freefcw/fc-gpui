@@ -7,6 +7,14 @@
 - **`Styled::cursor_none()` drops its unused argument** — the generated
   method never read the `CursorStyle` it required; drop the argument at call
   sites (`.cursor_none()`).
+- **`fc-gpui-http-client` makes macOS system-proxy detection opt-in** —
+  `reqwest`'s `macos-system-configuration` feature is no longer enabled
+  unconditionally, so proxies configured in System Settings → Network →
+  Proxies are not picked up automatically (env-var proxies still work, as
+  do all platforms besides macOS). Enable the new `macos-system-proxy`
+  feature on `fc-gpui-http-client` — or `macos-system-configuration` on
+  your own `reqwest` dependency — to restore the previous behavior. The
+  `system-configuration`/`core-foundation 0.9` subtree leaves `Cargo.lock`.
 
 ### Deprecated
 
@@ -43,6 +51,9 @@
   the `pattern_slash` packing constants on both the Rust and WGSL sides.
 - `KeyBindingMetaIndex::is_user()` replaces the magic `meta.0 == 0` check in
   keymap dispatch.
+- Shared dependency specs now live in the workspace manifest and the
+  proc-macro crates (`fc-gpui-macros`, `fc-gpui-util-macros`,
+  `fc-gpui-derive-refineable`) moved to `syn` 3.
 - `latest_github_release`/`get_release_by_tag_name` share one request helper;
   the by-tag path no longer reports failures as "latest release".
 
