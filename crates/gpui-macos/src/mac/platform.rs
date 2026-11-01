@@ -1718,7 +1718,7 @@ impl Platform for MacPlatform {
 
                 // First, check if there are already credentials for the given server. If so, then
                 // update the username and password.
-                let mut verb = "updating";
+                let mut operation = KeychainOperation::Update;
                 let mut query_attrs = CFMutableDictionary::with_capacity(2);
                 query_attrs.set(kSecClass as *const _, kSecClassInternetPassword as *const _);
                 query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
@@ -1736,10 +1736,10 @@ impl Platform for MacPlatform {
 
                 // If there were no existing credentials for the given server, then create them.
                 if status == errSecItemNotFound {
-                    verb = "creating";
+                    operation = KeychainOperation::Create;
                     status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
                 }
-                anyhow::ensure!(status == errSecSuccess, "{verb} password failed: {status}");
+                check_status(operation, status)?;
             }
             Ok(())
         })
@@ -1772,10 +1772,7 @@ impl Platform for MacPlatform {
                 if status == errSecDuplicateItem {
                     return Ok(false);
                 }
-                anyhow::ensure!(
-                    status == errSecSuccess,
-                    "creating password failed: {status}"
-                );
+                check_status(KeychainOperation::Create, status)?;
             }
             Ok(true)
         })
@@ -1799,10 +1796,10 @@ impl Platform for MacPlatform {
 
                 let mut result = CFTypeRef::from(ptr::null());
                 let status = SecItemCopyMatching(attrs.as_concrete_TypeRef(), &mut result);
-                match status {
-                    security::errSecSuccess => {}
-                    security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
-                    _ => anyhow::bail!("reading password failed: {status}"),
+                // Absence is `Ok(None)`. A cancelled prompt is an error so callers
+                // do not treat it as missing credentials and overwrite a secret.
+                if !read_status(status)? {
+                    return Ok(None);
                 }
 
                 let result = CFType::wrap_under_create_rule(result)
@@ -1989,7 +1986,7 @@ impl Platform for MacPlatform {
                 query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
 
                 let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
-                anyhow::ensure!(status == errSecSuccess, "delete password failed: {status}");
+                check_status(KeychainOperation::Delete, status)?;
             }
             Ok(())
         })
@@ -2597,6 +2594,79 @@ mod security {
     pub const errSecDuplicateItem: OSStatus = -25299;
     pub const errSecUserCanceled: OSStatus = -128;
     pub const errSecItemNotFound: OSStatus = -25300;
+    #[cfg(test)]
+    pub(super) const errSecAuthFailed: OSStatus = -25293;
+
+    /// Which Keychain call produced a [`KeychainError`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum KeychainOperation {
+        Read,
+        Update,
+        Create,
+        Delete,
+    }
+
+    /// Failure from the Security framework credential calls.
+    ///
+    /// `UserCanceled` is distinct from a missing item: reads return
+    /// `Ok(None)` only for `errSecItemNotFound`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum KeychainError {
+        UserCanceled {
+            operation: KeychainOperation,
+        },
+        Security {
+            operation: KeychainOperation,
+            status: OSStatus,
+        },
+    }
+
+    impl std::fmt::Display for KeychainError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                // The operation stays on the error value so callers can match
+                // which prompt was cancelled. The text matches upstream.
+                Self::UserCanceled { operation } => {
+                    let _ = operation;
+                    f.write_str("Keychain access was cancelled.")
+                }
+                Self::Security { operation, status } => match operation {
+                    KeychainOperation::Read => write!(f, "reading password failed: {status}"),
+                    KeychainOperation::Update => write!(f, "updating password failed: {status}"),
+                    KeychainOperation::Create => write!(f, "creating password failed: {status}"),
+                    KeychainOperation::Delete => write!(f, "delete password failed: {status}"),
+                },
+            }
+        }
+    }
+
+    impl std::error::Error for KeychainError {}
+
+    /// `Ok(true)` when the item was copied, `Ok(false)` when it does not exist.
+    ///
+    /// `Result` here is `std::result::Result`. The platform module imports
+    /// `anyhow::Result`, which only has one type parameter.
+    pub(super) fn read_status(status: OSStatus) -> std::result::Result<bool, KeychainError> {
+        if status == errSecItemNotFound {
+            Ok(false)
+        } else {
+            check_status(KeychainOperation::Read, status)?;
+            Ok(true)
+        }
+    }
+
+    pub(super) fn check_status(
+        operation: KeychainOperation,
+        status: OSStatus,
+    ) -> std::result::Result<(), KeychainError> {
+        if status == errSecSuccess {
+            Ok(())
+        } else if status == errSecUserCanceled {
+            Err(KeychainError::UserCanceled { operation })
+        } else {
+            Err(KeychainError::Security { operation, status })
+        }
+    }
 }
 
 impl From<ImageFormat> for UTType {
@@ -2668,6 +2738,56 @@ mod tests {
     use crate::ClipboardItem;
 
     use super::*;
+
+    #[test]
+    fn read_distinguishes_absence_and_cancellation_from_errors() {
+        use super::security::{
+            KeychainError, KeychainOperation, check_status, errSecAuthFailed, errSecItemNotFound,
+            errSecSuccess, errSecUserCanceled, read_status,
+        };
+
+        assert!(read_status(errSecSuccess).unwrap());
+        assert!(!read_status(errSecItemNotFound).unwrap());
+        assert_eq!(
+            read_status(errSecUserCanceled),
+            Err(KeychainError::UserCanceled {
+                operation: KeychainOperation::Read,
+            })
+        );
+        assert_eq!(
+            read_status(errSecAuthFailed),
+            Err(KeychainError::Security {
+                operation: KeychainOperation::Read,
+                status: errSecAuthFailed,
+            })
+        );
+
+        let cancelled: anyhow::Error = read_status(errSecUserCanceled).unwrap_err().into();
+        assert_eq!(cancelled.to_string(), "Keychain access was cancelled.");
+        assert_eq!(
+            cancelled.downcast_ref::<KeychainError>(),
+            Some(&KeychainError::UserCanceled {
+                operation: KeychainOperation::Read,
+            })
+        );
+
+        assert_eq!(
+            check_status(KeychainOperation::Delete, errSecSuccess),
+            Ok(())
+        );
+        assert_eq!(
+            check_status(KeychainOperation::Delete, errSecUserCanceled),
+            Err(KeychainError::UserCanceled {
+                operation: KeychainOperation::Delete,
+            })
+        );
+        assert_eq!(
+            check_status(KeychainOperation::Delete, errSecItemNotFound)
+                .unwrap_err()
+                .to_string(),
+            format!("delete password failed: {errSecItemNotFound}")
+        );
+    }
 
     #[test]
     fn mac_platform_new_requires_main_thread() {
