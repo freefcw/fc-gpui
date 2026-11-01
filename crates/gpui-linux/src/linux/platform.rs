@@ -23,7 +23,7 @@ use anyhow::{Context as _, anyhow};
 use ashpd::{
     desktop::{
         Request,
-        inhibit::{InhibitFlags, InhibitProxy},
+        inhibit::{InhibitFlags, InhibitOptions, InhibitProxy},
     },
     enumflags2::BitFlags,
 };
@@ -655,7 +655,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                         response
                             .uris()
                             .iter()
-                            .filter_map(|uri| uri.to_file_path().ok())
+                            .filter_map(portal_uri_to_path)
                             .collect::<Vec<_>>(),
                     )),
                     Err(ashpd::Error::Response(_)) => Ok(None),
@@ -714,10 +714,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                     };
 
                     let result = match request.response() {
-                        Ok(response) => Ok(response
-                            .uris()
-                            .first()
-                            .and_then(|uri| uri.to_file_path().ok())),
+                        Ok(response) => Ok(response.uris().first().and_then(portal_uri_to_path)),
                         Err(ashpd::Error::Response(_)) => Ok(None),
                         Err(e) => Err(e.into()),
                     };
@@ -1145,13 +1142,22 @@ pub(crate) fn keysym_to_media_key(keysym: xkbcommon::xkb::Keysym) -> Option<Medi
     }
 }
 
+/// `ashpd` 0.13 replaced `url::Url` with [`ashpd::Uri`], which does not convert
+/// `file:` URIs into paths. Keep using `url::Url::to_file_path` for that.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn portal_uri_to_path(uri: &ashpd::Uri) -> Option<PathBuf> {
+    http_client::Url::parse(uri.as_str())
+        .ok()
+        .and_then(|url| url.to_file_path().ok())
+}
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn open_uri_internal(
     executor: BackgroundExecutor,
     uri: &str,
     activation_token: Option<String>,
 ) {
-    if let Some(uri) = ashpd::url::Url::parse(uri).log_err() {
+    if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
             .spawn(async move {
                 match ashpd::desktop::open_uri::OpenFileRequest::default()
@@ -1614,7 +1620,11 @@ async fn inhibit_idle_sleep(reason: String, executor: BackgroundExecutor) -> Res
         .await
         .context("Idle sleep prevention portal is unavailable")?;
     let request = proxy
-        .inhibit(None, BitFlags::from(InhibitFlags::Suspend), reason.as_str())
+        .inhibit(
+            None,
+            BitFlags::from(InhibitFlags::Suspend),
+            InhibitOptions::default().set_reason(reason.as_str()),
+        )
         .await
         .context("Failed to request idle sleep prevention")?;
     request
