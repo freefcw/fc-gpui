@@ -218,14 +218,6 @@ version = "0.8.2"
 version = "1.0"
 features = ["extra"]
 
-[dev-dependencies.reqwest]
-version = "0.12.28"
-features = [
-    "rustls-tls-native-roots",
-    "stream",
-]
-default-features = false
-
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.bitflags]
 version = "2.6"
 optional = true
