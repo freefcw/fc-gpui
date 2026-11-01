@@ -61,6 +61,9 @@ pub struct WindowsWindowState {
     pub system_settings: WindowsSystemSettings,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
+    /// Last client position seen in `WM_MOUSEMOVE`. Synthetic moves posted when
+    /// the window repaints under the cursor repeat this point with no button held.
+    pub mouse_position: Point<Pixels>,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -141,6 +144,7 @@ impl WindowsWindowState {
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
+        let mouse_position = Point::default();
         let fullscreen = None;
         let initial_placement = None;
         let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
@@ -169,6 +173,7 @@ impl WindowsWindowState {
             system_settings,
             current_cursor,
             nc_button_pressed,
+            mouse_position,
             display,
             fullscreen,
             initial_placement,
