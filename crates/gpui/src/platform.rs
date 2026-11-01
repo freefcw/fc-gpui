@@ -328,6 +328,14 @@ pub trait Platform: 'static {
     }
     fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
 
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    fn power_mode(&self) -> PowerMode {
+        PowerMode::Unknown
+    }
+    /// Registers a callback invoked when the reported power mode changes.
+    fn on_power_mode_change(&self, _callback: Box<dyn FnMut()>) {}
+
     /// Prevents idle sleep while the returned guard is held.
     ///
     /// Dropping the guard restores the previous sleep policy.
@@ -516,6 +524,20 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, window_size)
     }
+}
+
+/// The operating system's preference for energy use versus performance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerMode {
+    /// The platform cannot determine the mode, or cannot distinguish the
+    /// active mode from other non-low-power modes.
+    Unknown,
+    /// The system prioritizes reducing energy use.
+    LowPower,
+    /// The system balances energy use and performance.
+    Balanced,
+    /// The system prioritizes performance over energy use.
+    HighPower,
 }
 
 /// Thermal state of the system.

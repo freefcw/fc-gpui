@@ -44,8 +44,9 @@ use gpui::{
     ForegroundExecutor, GpuResourceBudget, Keymap, Keystroke, MediaKeyEvent, Menu, MenuItem,
     NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
-    PowerSaveBlockerKind, Result, SharedString, SystemPowerEvent, Task, TrayIconClickEvent,
-    TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance, WindowParams, px,
+    PowerMode, PowerSaveBlockerKind, Result, SharedString, SystemPowerEvent, Task,
+    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
+    WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -289,6 +290,14 @@ pub(crate) struct LinuxCommon {
     pub(crate) last_network_status: NetworkStatus,
     pub(crate) attention_window: Option<AnyWindowHandle>,
     pub(crate) gpu_resource_budget: GpuResourceBudget,
+    power_mode: Rc<RefCell<PowerModeSlot>>,
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    power_mode_listener: Option<Task<()>>,
+}
+
+struct PowerModeSlot {
+    mode: PowerMode,
+    on_change: Option<Box<dyn FnMut()>>,
 }
 
 impl LinuxCommon {
@@ -322,6 +331,12 @@ impl LinuxCommon {
             last_network_status: NetworkStatus::Online,
             attention_window: None,
             gpu_resource_budget: gpui::AppResourceProfile::default().gpu,
+            power_mode: Rc::new(RefCell::new(PowerModeSlot {
+                mode: PowerMode::Unknown,
+                on_change: None,
+            })),
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            power_mode_listener: None,
         };
 
         (common, main_receiver)
@@ -333,6 +348,21 @@ impl Drop for LinuxCommon {
         for (_, handle) in self.power_save_blockers.drain() {
             crate::linux::power::release_blocker(handle);
         }
+    }
+}
+
+fn apply_power_mode(slot: &RefCell<PowerModeSlot>, mode: PowerMode) {
+    let callback = {
+        let mut slot = slot.borrow_mut();
+        if slot.mode == mode {
+            return;
+        }
+        slot.mode = mode;
+        slot.on_change.take()
+    };
+    if let Some(mut callback) = callback {
+        callback();
+        slot.borrow_mut().on_change.get_or_insert(callback);
     }
 }
 
@@ -1068,6 +1098,45 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         );
     }
 
+    fn power_mode(&self) -> PowerMode {
+        self.with_common(|common| common.power_mode.borrow().mode)
+    }
+
+    fn on_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| {
+            common.power_mode.borrow_mut().on_change = Some(callback);
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            if common.power_mode_listener.is_none() {
+                use futures::StreamExt as _;
+                let slot = common.power_mode.clone();
+                let (sender, mut receiver) = futures::channel::mpsc::unbounded();
+                common
+                    .foreground_executor
+                    .spawn(async move {
+                        while let Some(mode) = receiver.next().await {
+                            apply_power_mode(&slot, mode);
+                        }
+                    })
+                    .detach();
+                let background = common.background_executor.clone();
+                common.power_mode_listener = Some(background.spawn(async move {
+                    let result = async {
+                        let connection = ashpd::zbus::Connection::system().await?;
+                        crate::linux::power_profile::monitor_power_mode(&connection, |mode| {
+                            sender.unbounded_send(mode)?;
+                            Ok(())
+                        })
+                        .await
+                    }
+                    .await;
+                    if let Err(error) = result {
+                        log::debug!("failed to monitor system power mode: {error:?}");
+                    }
+                }));
+            }
+        });
+    }
+
     fn on_media_key_event(&self, callback: Box<dyn FnMut(MediaKeyEvent)>) {
         self.with_common(|common| common.callbacks.media_key = Some(callback));
     }
@@ -1668,6 +1737,40 @@ async fn await_idle_sleep_prevention(
 mod tests {
     use super::*;
     use gpui::{Point, px};
+
+    #[test]
+    fn power_mode_callbacks_can_reenter_and_replace_themselves() -> anyhow::Result<()> {
+        let event_loop = calloop::EventLoop::<()>::try_new()?;
+        let (common, _) = LinuxCommon::new(event_loop.get_signal());
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        {
+            let slot = common.power_mode.clone();
+            let calls = calls.clone();
+            common.power_mode.borrow_mut().on_change = Some(Box::new(move || {
+                let mode = slot.borrow().mode;
+                calls.borrow_mut().push((mode, false));
+                let next_slot = Rc::clone(&slot);
+                let next_calls = Rc::clone(&calls);
+                slot.borrow_mut().on_change = Some(Box::new(move || {
+                    let mode = next_slot.borrow().mode;
+                    next_calls.borrow_mut().push((mode, true));
+                }));
+            }));
+        }
+        // Repeated reports of the same mode must not invoke the callback again.
+        for mode in [
+            PowerMode::LowPower,
+            PowerMode::LowPower,
+            PowerMode::Balanced,
+        ] {
+            apply_power_mode(&common.power_mode, mode);
+        }
+        assert_eq!(
+            *calls.borrow(),
+            [(PowerMode::LowPower, false), (PowerMode::Balanced, true)]
+        );
+        Ok(())
+    }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]

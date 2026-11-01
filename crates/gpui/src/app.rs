@@ -39,12 +39,12 @@ use crate::{
     KeyContext, Keymap, Keystroke, LayoutId, MediaKeyEvent, Menu, MenuItem, MissingGlyph,
     NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, PermissionRequestStatus, PermissionStatus,
     Pixels, Platform, PlatformDisplay, PlatformInfo, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, PowerSaveBlockerKind, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, Size, SubscriberSet, Subscription, SvgRenderer, SystemPowerEvent, Task,
-    TextSystem, ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
-    TrayMenuItem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
-    WindowPosition,
+    PlatformKeyboardMapper, Point, PowerMode, PowerSaveBlockerKind, PromptBuilder, PromptButton,
+    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
+    ScreenCaptureSource, SharedString, Size, SubscriberSet, Subscription, SvgRenderer,
+    SystemPowerEvent, Task, TextSystem, ThermalState, TrayAnchor, TrayIconClickEvent,
+    TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, Window, WindowAppearance, WindowHandle,
+    WindowId, WindowInvalidator, WindowPosition,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, point, px, size,
 };
@@ -726,6 +726,7 @@ pub struct App {
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    power_mode: PowerMode,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -772,6 +773,7 @@ impl App {
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
+        let power_mode = platform.power_mode();
 
         let app = Rc::new_cyclic(|this| AppCell {
             borrow_origin: Cell::new(None),
@@ -814,6 +816,7 @@ impl App {
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
                 thermal_state_observers: SubscriberSet::new(),
+                power_mode,
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -860,6 +863,16 @@ impl App {
                     cx.thermal_state_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_power_mode_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let power_mode = app.borrow().platform.power_mode();
+                    app.borrow_mut().power_mode = power_mode;
                 }
             }
         }));
@@ -938,6 +951,12 @@ impl App {
     /// Returns the current thermal state of the system.
     pub fn thermal_state(&self) -> ThermalState {
         self.platform.thermal_state()
+    }
+
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    pub fn power_mode(&self) -> PowerMode {
+        self.power_mode
     }
 
     /// Prevents idle sleep while the returned guard is held.
