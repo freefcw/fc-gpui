@@ -65,13 +65,20 @@ mod tests {
         let text_app = TestApp::with_platform_text_system(platform.clone());
         let line_shaper = WindowTextSystem::new(line_app.text_system().clone());
         let text_shaper = WindowTextSystem::new(text_app.text_system().clone());
-        let family = platform
+        // `all_font_names` enumerates CoreText family-name attributes, which
+        // are not guaranteed to resolve through font-kit's family selection
+        // (name-table mismatch, or every face filtered by load_family). Pick
+        // the first family that actually yields a FontId.
+        let (font, font_id) = platform
             .all_font_names()
             .into_iter()
-            .find(|name| !name.starts_with('.'))
-            .unwrap_or_else(|| ".SystemUIFont".to_string());
-        let font = font(family);
-        let font_id = platform.font_id(&font).unwrap();
+            .filter(|name| !name.starts_with('.'))
+            .chain([".SystemUIFont".to_string()])
+            .find_map(|family| {
+                let font = font(family);
+                platform.font_id(&font).ok().map(|id| (font, id))
+            })
+            .expect("no loadable system font");
 
         let glyphs = |layout: &LineLayout| {
             layout
