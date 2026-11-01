@@ -212,18 +212,18 @@ jobs:
             linux-native: true
             command: cargo check -p fc-gpui --lib --no-default-features --features accessibility,font-kit,wayland --locked
           - name: macOS / workspace tests
-            os: macos-14
+            os: macos-15
             cache-key: macos-workspace-tests
             linux-native: false
             examples: true
             command: cargo test --workspace --lib --tests --locked -- --test-threads=1
           - name: macOS / no default features
-            os: macos-14
+            os: macos-15
             cache-key: macos-no-default
             linux-native: false
             command: cargo check -p fc-gpui --lib --no-default-features --locked
           - name: macOS / real visual smoke
-            os: macos-14
+            os: macos-15
             cache-key: macos-real-visual
             linux-native: false
             require_real_visual: true
