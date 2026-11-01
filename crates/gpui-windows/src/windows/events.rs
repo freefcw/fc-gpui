@@ -383,13 +383,6 @@ impl WindowsWindowInner {
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE);
 
-        let mut lock = self.state.borrow_mut();
-        let Some(mut func) = lock.callbacks.input.take() else {
-            return Some(1);
-        };
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-
         let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
             flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
             flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
@@ -404,8 +397,28 @@ impl WindowsWindowInner {
         };
         let x = lparam.signed_loword() as f32;
         let y = lparam.signed_hiword() as f32;
+
+        // Read and update the stored point, then drop the `RefCell` before
+        // `current_modifiers` and the input callback. Both can re-enter the
+        // window procedure (Win32 state queries, and GPUI handlers that pump
+        // messages), which would panic if this borrow were still held.
+        let mut lock = self.state.borrow_mut();
+        let new_position = logical_point(x, y, lock.scale_factor);
+        // Suppress synthetic WM_MOUSEMOVE events that Windows fires when a window
+        // repaints under the cursor (e.g. command palette opening). These are not
+        // real mouse movements and should not move the editor cursor or clobber
+        // selections. A real move always has a different position OR a button held.
+        if pressed_button.is_none() && new_position == lock.mouse_position {
+            return Some(1);
+        }
+        lock.mouse_position = new_position;
+        let Some(mut func) = lock.callbacks.input.take() else {
+            return Some(1);
+        };
+        drop(lock);
+
         let input = PlatformInput::MouseMove(MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
+            position: new_position,
             pressed_button,
             modifiers: current_modifiers(),
         });
