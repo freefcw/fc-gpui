@@ -6645,8 +6645,9 @@ pub fn outline(
 mod tests {
     use super::*;
     use crate::{
-        ContentMask, Context, ExternalPaths, HitboxBehavior, InputEvent as _, QuitMode, Render,
-        TestAppContext, WindowOptions, bounds, canvas, div, hsla, point, px, size,
+        ContentMask, Context, Entity, ExternalPaths, HitboxBehavior, InputEvent as _,
+        MouseMoveEvent, QuitMode, Render, StyleRefinement, TestAppContext, WindowOptions, bounds,
+        canvas, div, hsla, point, px, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -7431,5 +7432,132 @@ mod tests {
         // platforms the default is to quit when the last window closes.
         let expected = cfg!(not(target_os = "macos"));
         assert_eq!(*cx.test_platform().did_quit.lock(), expected);
+    }
+
+    #[gpui::test]
+    fn cached_view_follows_inherited_opacity(cx: &mut TestAppContext) {
+        struct Child {
+            renders: usize,
+        }
+
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders += 1;
+                div().size_full().bg(crate::rgb(0xff0000))
+            }
+        }
+
+        struct Root {
+            opacity: f32,
+            width: Pixels,
+            child: Entity<Child>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(self.width)
+                    .h(px(200.))
+                    .opacity(self.opacity)
+                    .hover(|style| style.opacity(1.))
+                    .child(
+                        AnyView::from(self.child.clone())
+                            .cached(StyleRefinement::default().size(px(100.))),
+                    )
+            }
+        }
+
+        /// Updates the root, draws until no more frames are requested, and returns the
+        /// child's painted alpha and how many times it has rendered.
+        fn update_and_draw(
+            window: WindowHandle<Root>,
+            child: &Entity<Child>,
+            cx: &mut TestAppContext,
+            update: impl FnOnce(&mut Root, &mut Window, &mut Context<Root>),
+        ) -> (f32, usize) {
+            window
+                .update(cx, |root, window, cx| {
+                    update(root, window, cx);
+                    cx.notify();
+                })
+                .expect("update root");
+            for _ in 0..3 {
+                let (alpha, renders, requested_frames) = cx
+                    .update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear();
+                        let quads = &window.rendered_frame.scene.quads;
+                        assert_eq!(quads.len(), 1);
+                        let alpha = quads.first().expect("child quad").background.solid.a;
+                        (
+                            alpha,
+                            child.read(cx).renders,
+                            simulate_next_frame(window, cx),
+                        )
+                    })
+                    .expect("draw window");
+                if requested_frames == 0 {
+                    return (alpha, renders);
+                }
+            }
+            panic!("cached child kept requesting frames");
+        }
+
+        // Tests have no platform frame loop. Run callbacks scheduled by
+        // `Window::request_animation_frame` and report how many ran.
+        fn simulate_next_frame(window: &mut Window, cx: &mut App) -> usize {
+            let callbacks = window.next_frame_callbacks.take();
+            let count = callbacks.len();
+            for callback in callbacks {
+                callback(window, cx);
+            }
+            count
+        }
+
+        fn simulate_mouse_move(window: &mut Window, position: Point<Pixels>, cx: &mut App) {
+            let _ = window.dispatch_event(
+                MouseMoveEvent {
+                    position,
+                    modifiers: window.modifiers(),
+                    pressed_button: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        }
+
+        let child = cx.new(|_| Child { renders: 0 });
+        let window = cx.add_window(|_, _| Root {
+            opacity: 1.,
+            width: px(200.),
+            child: child.clone(),
+        });
+        let outside = point(px(500.), px(500.));
+        let inside = point(px(50.), px(50.));
+        let beside = point(px(250.), px(50.));
+
+        // Changing the wrapper's opacity redraws the child; unchanged opacity reuses it.
+        let move_outside = |_: &mut Root, window: &mut Window, cx: &mut Context<Root>| {
+            simulate_mouse_move(window, outside, cx)
+        };
+        assert_eq!(update_and_draw(window, &child, cx, move_outside), (1., 1));
+        assert_eq!(update_and_draw(window, &child, cx, |_, _, _| {}), (1., 1));
+        let fade = |root: &mut Root, _: &mut Window, _: &mut Context<Root>| root.opacity = 0.5;
+        assert_eq!(update_and_draw(window, &child, cx, fade), (0.5, 2));
+        assert_eq!(update_and_draw(window, &child, cx, |_, _, _| {}), (0.5, 2));
+
+        // Hover opacity applies when the mouse enters and leaves.
+        let move_inside = |_: &mut Root, window: &mut Window, cx: &mut Context<Root>| {
+            simulate_mouse_move(window, inside, cx)
+        };
+        assert_eq!(update_and_draw(window, &child, cx, move_inside).0, 1.);
+        let move_beside = |_: &mut Root, window: &mut Window, cx: &mut Context<Root>| {
+            simulate_mouse_move(window, beside, cx)
+        };
+        assert_eq!(update_and_draw(window, &child, cx, move_beside).0, 0.5);
+
+        // Widening the wrapper puts it under a still mouse, so only paint's hit test sees
+        // the hover.
+        let widen = |root: &mut Root, _: &mut Window, _: &mut Context<Root>| root.width = px(300.);
+        assert_eq!(update_and_draw(window, &child, cx, widen).0, 1.);
     }
 }
