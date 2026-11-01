@@ -3,18 +3,18 @@
 [![Crates.io](https://img.shields.io/crates/v/fc-gpui.svg)](https://crates.io/crates/fc-gpui)
 [![License](https://img.shields.io/crates/l/fc-gpui.svg)](LICENSE-APACHE)
 
-> `fc-gpui` 0.12.0 is published on crates.io.
+> `fc-gpui` 0.13.0 is published on crates.io.
 
 A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github.com/zed-industries/zed). fc-gpui extends the original framework with daemon-mode capabilities, system tray integration, global hotkeys, native notifications, and more — making it suitable for background apps, menu bar utilities, and overlay tools.
 
 ## Getting Started
 
-`fc-gpui` 0.12.0 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
+`fc-gpui` 0.13.0 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
 the upstream [Augani](https://github.com/Augani/adabraka-gpui) crate at `0.5.1` and does not
 carry this fork's releases. Depend on the crates.io package:
 
 ```toml
-fc-gpui = "0.12.0"
+fc-gpui = "0.13.0"
 ```
 
 Building requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml): Rust
@@ -24,7 +24,7 @@ To trim image decoder footprint, disable default features and list only the plat
 formats you need:
 
 ```toml
-fc-gpui = { version = "0.12.0", default-features = false, features = [
+fc-gpui = { version = "0.13.0", default-features = false, features = [
     "font-kit",
     "wayland",
     "x11",
@@ -52,7 +52,7 @@ Renaming the dependency is also supported — the GPUI macros (derives, `registe
 
 ```toml
 [dependencies]
-gpui = { package = "fc-gpui", version = "0.12.0" }
+gpui = { package = "fc-gpui", version = "0.13.0" }
 ```
 
 The utility crates (`fc-gpui-util`, `fc-gpui-http-client`, …) import under their matching
@@ -74,14 +74,13 @@ The value must be the Rust dependency identifier visible to that package. It app
 to derive macros, `register_action!`, and `#[gpui::test]`. An ambiguous direct dependency graph
 without this override fails with an actionable macro error instead of guessing a crate.
 
-### Upgrading from 0.11.3
+### Upgrading from 0.12.0
 
-The `0.12.0` release contains breaking API changes after `0.11.3`:
-`ScrollWheelEvent` is now `ScrollEvent`, custom `Platform` implementations must
-provide `platform_info()`, and `Modifiers::secondary` / `secondary_key` now take
-the current `&App`. The macOS-only `write_credentials_if_not_exists` method is
-additive. See the [downstream migration notes](docs/downstream-migration-0.11.3-post-release.md)
-when upgrading.
+The `0.13.0` release contains breaking API changes after `0.12.0`:
+`Styled::cursor_none()` no longer takes its unused `CursorStyle` argument
+(call it as `.cursor_none()`), and `fc-gpui-http-client` no longer enables
+macOS system-proxy detection by default — enable its `macos-system-proxy`
+feature to restore it. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Platform Support
 

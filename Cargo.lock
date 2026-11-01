@@ -1765,7 +1765,7 @@ checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
 
 [[package]]
 name = "fc-gpui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -1863,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-derive-refineable"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1887,7 +1887,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-http-client"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-linux"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-macos"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-macros"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "fc-gpui-core",
  "heck",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-media"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -2048,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-platform"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "fc-gpui-core",
  "fc-gpui-linux",
@@ -2137,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-util-macros"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "fc-gpui-perf",
  "quote",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-wgpu"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2165,7 +2165,7 @@ dependencies = [
 
 [[package]]
 name = "fc-gpui-windows"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "accesskit",
  "accesskit_windows",

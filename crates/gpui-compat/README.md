@@ -4,12 +4,12 @@ A GPU-accelerated UI framework for Rust, forked from [Zed's GPUI](https://github
 
 ## Getting Started
 
-`fc-gpui` 0.12.0 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
+`fc-gpui` 0.13.0 is published on crates.io. The unrelated `adabraka-gpui` registry crate is
 the upstream [Augani](https://github.com/Augani/adabraka-gpui) crate at `0.5.1` and does not
 carry this fork's releases. Depend on the crates.io package:
 
 ```toml
-fc-gpui = "0.12.0"
+fc-gpui = "0.13.0"
 ```
 
 Building requires the toolchain pinned in
@@ -19,7 +19,7 @@ Rust `1.97.1` with edition 2024.
 To keep the build small, disable default features and opt into only the image formats you need:
 
 ```toml
-fc-gpui = { version = "0.12.0", default-features = false, features = [
+fc-gpui = { version = "0.13.0", default-features = false, features = [
     "font-kit",
     "wayland",
     "x11",
@@ -50,19 +50,19 @@ Renaming the dependency is also supported — the GPUI macros (derives, `registe
 
 ```toml
 [dependencies]
-gpui = { package = "fc-gpui", version = "0.12.0" }
+gpui = { package = "fc-gpui", version = "0.13.0" }
 ```
 
 The utility crates (`fc-gpui-util`, `fc-gpui-http-client`, …) import under their matching
 `fc_gpui_*` library names.
 
-### Upgrading from 0.11.3
+### Upgrading from 0.12.0
 
-The `0.12.0` release renames `ScrollWheelEvent` to `ScrollEvent`,
-adds the required `Platform::platform_info()` method, and changes
-`Modifiers::secondary` / `secondary_key` to receive the current `&App`.
-macOS also adds the optional `write_credentials_if_not_exists` API. See the
-[downstream migration notes](https://github.com/freefcw/fc-gpui/blob/main/docs/downstream-migration-0.11.3-post-release.md)
+The `0.13.0` release drops the unused `CursorStyle` argument from
+`Styled::cursor_none()` (call it as `.cursor_none()`), and
+`fc-gpui-http-client` makes macOS system-proxy detection opt-in via its
+`macos-system-proxy` feature. See the
+[changelog](https://github.com/freefcw/fc-gpui/blob/main/CHANGELOG.md)
 before upgrading.
 
 ### Macro Dependency Override

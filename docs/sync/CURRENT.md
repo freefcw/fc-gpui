@@ -4,10 +4,10 @@
 
 ## 当前基线
 
-- 当前开发分支：`develop/0.11`
-- 已发布：GPUI 八个发布包 `0.12.0`；`fc-gpui-http-client` `0.5.3`；utility crates `0.6.0`（`fc-gpui-util` / `fc-gpui-util-macros` `0.7.0`）
-- 当前发布版本：`0.12.0`；本轮公开 API 迁移已随该版本发布
-- `0.12.0` 包含 `ScrollEvent` 重命名、`Platform::platform_info` 新必需方法，以及 `Modifiers::secondary` API 变化。迁移说明见 [`docs/downstream-migration-0.11.3-post-release.md`](../downstream-migration-0.11.3-post-release.md)
+- 当前开发分支：`develop/0.12`
+- 已发布：GPUI 八个发布包 `0.13.0`；`fc-gpui-http-client` `0.6.0`；utility crates `0.6.1`（`fc-gpui-util` `0.7.0` / `fc-gpui-util-macros` `0.7.1`）
+- 当前发布版本：`0.13.0`；本轮公开 API 迁移已随该版本发布
+- `0.13.0` 包含 `Styled::cursor_none()` 参数移除与 `fc-gpui-http-client` macOS 系统代理探测改为 opt-in。详见 [`CHANGELOG.md`](../../CHANGELOG.md)
 - 兼容基线：GPUI `0.8.1`、utility crates `0.5.1`；breaking API/feature 变化必须在 `CHANGELOG.md` 提供迁移映射
 - 永久兼容入口：`Application::new/headless`；不在任何版本安排弃用或删除
 - 上游仓库默认位置：`../zed`
@@ -16,13 +16,12 @@
 
 ## 发布后同步批次
 
-`v0.12.0` 相比 `v0.11.3` 增加了 13 个独立本地提交。对下游有影响的变化是：
+`v0.13.0` 相比 `v0.12.0` 对下游有影响的变化是：
 
-- `ScrollWheelEvent` 重命名为 `ScrollEvent`；`PlatformInput::ScrollWheel` 保持不变。
-- `Platform` trait 增加必需的 `platform_info()`，所有自定义 platform 实现都要补上。
-- `App::platform_info()` 暴露运行时 host OS 和 application target。
-- `Modifiers::secondary(&App)` 与 `Modifiers::secondary_key(&App)` 需要传入当前 App。
-- macOS 增加 `App::write_credentials_if_not_exists`；其他凭据 API 保持不变。
+- `Styled::cursor_none()` 移除未使用的 `CursorStyle` 参数，调用方改为 `.cursor_none()`。
+- `fc-gpui-http-client` 不再默认开启 reqwest `macos-system-configuration`；macOS 系统代理探测改为 opt-in 的 `macos-system-proxy` feature。
+- `FollowRedirects` 弃用，改用 `RedirectPolicy`（保留源码兼容）。
+- `fc-gpui` 门面增加 `Application::with_restart_arguments`。
 - Taffy 内部依赖升级到 `0.15.0`。
 
 其余渲染、字体缓存、focus cleanup 和 macOS marker 改动不要求下游改源码。
