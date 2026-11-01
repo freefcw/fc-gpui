@@ -443,7 +443,7 @@ impl<E: IntoElement + 'static> Element for SpringAnimationElement<E> {
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
-            let now = Instant::now();
+            let now = cx.background_executor().now();
             let initial = self.initial.unwrap_or(self.target);
             let mut state = state.unwrap_or_else(|| SpringElementState {
                 spring: SpringState {
@@ -565,8 +565,11 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
+            // One sample for this layout. Progress, chain handoff, and the
+            // delay/frame timer all have to agree, including under the test clock.
+            let now = cx.background_executor().now();
             let mut state = state.unwrap_or_else(|| AnimationState {
-                start: Instant::now(),
+                start: now,
                 animation_ix: 0,
                 repaint_pending: Rc::new(Cell::new(false)),
                 repaint_generation: Rc::new(Cell::new(0)),
@@ -580,7 +583,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let (delta, done) = if cancelled {
                 (1.0_f32, true)
             } else {
-                let elapsed = state.start.elapsed();
+                let elapsed = now - state.start;
                 match animation_pass(&animation, elapsed) {
                     AnimationPass::Delayed => ((animation.easing)(0.0), false),
                     AnimationPass::Running { cycle_delta } => {
@@ -590,7 +593,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                         if animation_ix >= self.animations.len() - 1 {
                             ((animation.easing)(1.0), true)
                         } else {
-                            state.start = Instant::now();
+                            state.start = now;
                             state.animation_ix += 1;
                             ((animation.easing)(1.0), false)
                         }
@@ -613,7 +616,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
 
             if !done {
                 let animation = &self.animations[state.animation_ix];
-                let elapsed = state.start.elapsed();
+                let elapsed = now - state.start;
                 if elapsed < animation.delay {
                     let remaining = animation.delay - elapsed;
                     schedule_repaint(
@@ -728,7 +731,12 @@ mod easing {
 
 #[cfg(test)]
 mod tests {
-    use crate::{InteractiveElement, Styled, div, px};
+    use std::{cell::RefCell, rc::Rc};
+
+    use crate::{
+        Context, InteractiveElement, IntoElement, Pixels, Render, SpringPlayback, Styled,
+        TestAppContext, Window, WindowHandle, div, px,
+    };
 
     use super::*;
 
@@ -902,5 +910,155 @@ mod tests {
             animation_pass(&animation.repeat(), Duration::from_secs(1)),
             AnimationPass::Finished
         );
+    }
+
+    struct AnimationTestView {
+        rendered_deltas: Rc<RefCell<Vec<f32>>>,
+        max_fps: Option<f32>,
+    }
+
+    struct SpringAnimationTestView {
+        target: Pixels,
+        initial: Option<Pixels>,
+        playback: SpringPlayback,
+        rendered_values: Rc<RefCell<Vec<Pixels>>>,
+    }
+
+    impl Render for SpringAnimationTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let rendered_values = self.rendered_values.clone();
+            let mut animation = SpringAnimation::new(SpringConfig::new(100.0, 2.0, 1.0))
+                .to(self.target)
+                .with_epsilon(0.01)
+                .playback(self.playback);
+            if let Some(initial) = self.initial {
+                animation = animation.from(initial);
+            }
+            div().with_spring("spring-animation", animation, move |this, value| {
+                rendered_values.borrow_mut().push(value);
+                this.left(value)
+            })
+        }
+    }
+
+    impl Render for AnimationTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let rendered_deltas = self.rendered_deltas.clone();
+            let mut animation = Animation::new(Duration::from_secs(1)).repeat();
+            if let Some(max_fps) = self.max_fps {
+                animation = animation.with_max_fps(max_fps);
+            }
+            div().size_full().child(div().with_animation(
+                "repeating-animation",
+                animation,
+                move |this, delta| {
+                    rendered_deltas.borrow_mut().push(delta);
+                    this
+                },
+            ))
+        }
+    }
+
+    fn open_test_window_with_max_fps(
+        cx: &mut TestAppContext,
+        max_fps: Option<f32>,
+    ) -> (Rc<RefCell<Vec<f32>>>, WindowHandle<AnimationTestView>) {
+        let rendered_deltas = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let rendered_deltas = rendered_deltas.clone();
+            move |_, _| AnimationTestView {
+                rendered_deltas,
+                max_fps,
+            }
+        });
+        cx.run_until_parked();
+        (rendered_deltas, window)
+    }
+
+    /// This fork's test windows do not pump `request_animation_frame` callbacks.
+    /// Notifying the root view redraws it on the executor clock instead.
+    fn redraw<V: Render>(window: &WindowHandle<V>, cx: &mut TestAppContext) {
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+    }
+
+    /// Upstream `test_max_fps_schedules_timer_driven_frames`, without synced
+    /// animations. A capped repeating animation follows the test scheduler.
+    #[gpui::test]
+    fn test_max_fps_schedules_timer_driven_frames(cx: &mut TestAppContext) {
+        let (rendered_deltas, _window) = open_test_window_with_max_fps(cx, Some(10.0));
+
+        let assert_deltas_approx_eq = |expected: &[f32]| {
+            let actual = rendered_deltas.borrow();
+            assert_eq!(actual.len(), expected.len(), "deltas: {actual:?}");
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() < 1e-2,
+                    "expected {expected}, got {actual}"
+                );
+            }
+        };
+
+        assert_deltas_approx_eq(&[0.0]);
+
+        // The cap is a timer, so parking without moving the clock adds no frame.
+        cx.run_until_parked();
+        assert_deltas_approx_eq(&[0.0]);
+
+        // The timer is due at 100ms. This scheduler renders at that deadline,
+        // then parks the clock at the requested 105ms.
+        cx.executor().advance_clock(Duration::from_millis(105));
+        cx.run_until_parked();
+        assert_deltas_approx_eq(&[0.0, 0.1]);
+
+        cx.executor().advance_clock(Duration::from_millis(105));
+        cx.run_until_parked();
+        assert_deltas_approx_eq(&[0.0, 0.1, 0.2]);
+    }
+
+    /// Upstream `test_spring_animation_preserves_velocity_when_retargeted`.
+    /// Stepping uses the executor clock, so advancing it moves the spring
+    /// instead of however much wall time passed between frames.
+    #[gpui::test]
+    fn test_spring_animation_preserves_velocity_when_retargeted(cx: &mut TestAppContext) {
+        let rendered_values = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let rendered_values = rendered_values.clone();
+            move |_, _| SpringAnimationTestView {
+                target: px(0.0),
+                initial: None,
+                playback: SpringPlayback::Running,
+                rendered_values,
+            }
+        });
+        cx.run_until_parked();
+        assert_eq!(*rendered_values.borrow(), vec![px(0.0)]);
+
+        window
+            .update(cx, |view, _, cx| {
+                view.target = px(100.0);
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.executor().advance_clock(Duration::from_millis(50));
+        redraw(&window, cx);
+        let value_before_retargeting = *rendered_values.borrow().last().unwrap();
+        assert!(value_before_retargeting > px(0.0));
+        assert!(value_before_retargeting < px(100.0));
+
+        window
+            .update(cx, |view, _, cx| {
+                view.target = px(0.0);
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.executor().advance_clock(Duration::from_millis(5));
+        redraw(&window, cx);
+        let value_after_retargeting = *rendered_values.borrow().last().unwrap();
+        assert!(value_after_retargeting > value_before_retargeting);
     }
 }
