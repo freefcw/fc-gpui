@@ -81,7 +81,13 @@ pub(crate) struct WindowsPlatformState {
     draw_coordinator: Rc<DrawCoordinator>,
     atlas_initial_size: crate::Size<DevicePixels>,
     appearance_override: Option<WindowAppearance>,
-    low_power_mode_enabled: Cell<bool>,
+    /// Battery Saver status.
+    ///
+    /// `Some(true)` is on, `Some(false)` is confirmed off, and `None` means the
+    /// status could not be read or the flag was unrecognized. Only `Some(true)`
+    /// is [`PowerMode::LowPower`]; every other value is [`PowerMode::Unknown`]
+    /// and does not enable the low-power frame cap.
+    low_power_mode_enabled: Cell<Option<bool>>,
 }
 
 #[derive(Default)]
@@ -125,7 +131,7 @@ impl WindowsPlatformState {
             draw_coordinator: Rc::new(DrawCoordinator::new()),
             atlas_initial_size: crate::AppResourceProfile::default().gpu.atlas_size(),
             appearance_override: None,
-            low_power_mode_enabled: Cell::new(false),
+            low_power_mode_enabled: Cell::new(None),
         }
     }
 }
@@ -179,8 +185,12 @@ impl WindowsPlatform {
                 .state
                 .borrow()
                 .low_power_mode_enabled
-                .set(power_status.SystemStatusFlag == 1),
-            Err(error) => log::warn!("Failed to query Windows battery saver status: {error}"),
+                .set(battery_saver_enabled(u32::from(
+                    power_status.SystemStatusFlag,
+                ))),
+            Err(error) => {
+                log::warn!("Failed to query Windows battery saver status: {error}")
+            }
         }
 
         unsafe {
@@ -886,10 +896,11 @@ impl Platform for WindowsPlatform {
     }
 
     fn power_mode(&self) -> PowerMode {
-        if self.inner.state.borrow().low_power_mode_enabled.get() {
-            PowerMode::LowPower
-        } else {
-            PowerMode::HighPower
+        // Battery Saver is the only power preference Windows reports here. A
+        // balanced plan with Saver off is not HighPower.
+        match self.inner.state.borrow().low_power_mode_enabled.get() {
+            Some(true) => PowerMode::LowPower,
+            Some(false) | None => PowerMode::Unknown,
         }
     }
 
@@ -1502,7 +1513,21 @@ impl WindowsPlatformInner {
     }
 }
 
-unsafe fn power_saving_status(lparam: LPARAM) -> Option<bool> {
+/// `Some(true)` is Battery Saver on, `Some(false)` is confirmed off, and
+/// `None` is an unrecognized flag.
+fn battery_saver_enabled(flag: u32) -> Option<bool> {
+    match flag {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
+/// Battery Saver from a `GUID_POWER_SAVING_STATUS` notification.
+///
+/// The outer `None` means this broadcast is not that setting. The inner
+/// `None` is an unrecognized flag and is stored as an unknown status.
+unsafe fn power_saving_status(lparam: LPARAM) -> Option<Option<bool>> {
     let setting = unsafe { (lparam.0 as *const POWERBROADCAST_SETTING).as_ref()? };
     if setting.PowerSetting != GUID_POWER_SAVING_STATUS || setting.DataLength != 4 {
         return None;
@@ -1512,11 +1537,7 @@ unsafe fn power_saving_status(lparam: LPARAM) -> Option<bool> {
             .cast::<u32>()
             .read_unaligned()
     };
-    match data {
-        0 => Some(false),
-        1 => Some(true),
-        _ => None,
-    }
+    Some(battery_saver_enabled(data))
 }
 
 impl Drop for WindowsPlatform {
