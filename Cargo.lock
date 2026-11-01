@@ -1973,7 +1973,6 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
- "wayland-scanner",
  "x11rb",
  "xkbcommon",
  "zed-font-kit",
