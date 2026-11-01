@@ -5,6 +5,12 @@ edition = "2024"
 publish = false
 license.workspace = true
 
+# Dev-dependency present so gpui-macros' proc-macro-crate probe sees both
+# fc-gpui (facade_ui) and fc-gpui-core (core_ui). Nothing in this crate
+# imports facade_ui by path, so cargo-machete reports it as unused.
+[package.metadata.cargo-machete]
+ignored = ["facade_ui"]
+
 [package.metadata.gpui-macros]
 crate = "core_ui"
 

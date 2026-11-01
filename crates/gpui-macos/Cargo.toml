@@ -11,6 +11,11 @@ repository.workspace = true
 readme = "README.md"
 description = "macOS platform and Metal renderer backend for fc-gpui"
 
+# Used only from build.rs (dispatch bindings and the shader header).
+# cargo-machete --with-metadata does not see those build-script references.
+[package.metadata.cargo-machete]
+ignored = ["bindgen", "cbindgen"]
+
 [lib]
 name = "gpui_macos"
 path = "src/gpui_macos.rs"

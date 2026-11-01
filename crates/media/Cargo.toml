@@ -10,6 +10,11 @@ repository.workspace = true
 readme = false
 license.workspace = true
 
+# Used only from build.rs, and only when the host is macOS.
+# cargo-machete --with-metadata does not see that cfg-gated build script.
+[package.metadata.cargo-machete]
+ignored = ["bindgen"]
+
 [lib]
 path = "src/media.rs"
 doctest = false
