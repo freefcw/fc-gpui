@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- 当前开发分支：`develop/0.12`
+- 当前开发分支：`develop/0.13`
 - 已发布：GPUI 八个发布包 `0.13.0`；`fc-gpui-http-client` `0.6.0`；utility crates `0.6.1`（`fc-gpui-util` `0.7.0` / `fc-gpui-util-macros` `0.7.1`）
 - 当前发布版本：`0.13.0`；本轮公开 API 迁移已随该版本发布
 - `0.13.0` 包含 `Styled::cursor_none()` 参数移除与 `fc-gpui-http-client` macOS 系统代理探测改为 opt-in。详见 [`CHANGELOG.md`](../../CHANGELOG.md)
