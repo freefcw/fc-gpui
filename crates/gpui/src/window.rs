@@ -1023,27 +1023,25 @@ fn minimum_frame_interval(
     thermal_state: ThermalState,
     power_mode: crate::PowerMode,
 ) -> Option<Duration> {
-    let low_power_mode_enabled = power_mode == crate::PowerMode::LowPower;
     if !should_throttle {
-        None
-    } else if inactive_without_high_rate_input {
-        match (inactive_frame_interval, low_power_mode_enabled) {
-            (Some(inactive_frame_interval), true) => {
-                Some(inactive_frame_interval.max(THIRTY_FPS_INTERVAL))
-            }
-            (inactive_frame_interval, false) => inactive_frame_interval,
-            (None, true) => Some(THIRTY_FPS_INTERVAL),
-        }
-    } else if low_power_mode_enabled {
-        Some(THIRTY_FPS_INTERVAL)
-    } else if matches!(
-        thermal_state,
-        ThermalState::Critical | ThermalState::Serious
-    ) {
-        Some(SIXTY_FPS_INTERVAL)
-    } else {
-        None
+        return None;
     }
+
+    // The longest applicable interval wins, so a short inactive-window
+    // interval cannot outrun the low-power or thermal cap. `PowerMode::Unknown`
+    // does not enable the low-power cap.
+    [
+        inactive_frame_interval.filter(|_| inactive_without_high_rate_input),
+        (power_mode == crate::PowerMode::LowPower).then_some(THIRTY_FPS_INTERVAL),
+        matches!(
+            thermal_state,
+            ThermalState::Critical | ThermalState::Serious
+        )
+        .then_some(SIXTY_FPS_INTERVAL),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
 }
 
 /// A point-in-time snapshot of the input latency histograms for a window.
@@ -6840,6 +6838,75 @@ mod tests {
                 Some(inactive_interval),
             );
         }
+    }
+
+    #[test]
+    fn thermal_and_low_power_caps_raise_short_inactive_intervals() {
+        let short = Some(Duration::from_millis(10));
+        let long = Some(Duration::from_millis(100));
+        assert_eq!(
+            super::minimum_frame_interval(
+                true,
+                true,
+                short,
+                ThermalState::Serious,
+                crate::PowerMode::Unknown,
+            ),
+            Some(super::SIXTY_FPS_INTERVAL),
+        );
+        assert_eq!(
+            super::minimum_frame_interval(
+                true,
+                true,
+                None,
+                ThermalState::Critical,
+                crate::PowerMode::Unknown,
+            ),
+            Some(super::SIXTY_FPS_INTERVAL),
+            "a missing inactive interval does not disable the thermal cap"
+        );
+        assert_eq!(
+            super::minimum_frame_interval(
+                true,
+                true,
+                short,
+                ThermalState::Nominal,
+                crate::PowerMode::LowPower,
+            ),
+            Some(super::THIRTY_FPS_INTERVAL),
+        );
+        assert_eq!(
+            super::minimum_frame_interval(
+                true,
+                true,
+                short,
+                ThermalState::Serious,
+                crate::PowerMode::LowPower,
+            ),
+            Some(super::THIRTY_FPS_INTERVAL),
+            "low power is the longer of the two caps"
+        );
+        assert_eq!(
+            super::minimum_frame_interval(
+                true,
+                true,
+                long,
+                ThermalState::Critical,
+                crate::PowerMode::LowPower,
+            ),
+            long,
+        );
+        assert_eq!(
+            super::minimum_frame_interval(
+                true,
+                false,
+                None,
+                ThermalState::Nominal,
+                crate::PowerMode::Unknown,
+            ),
+            None,
+            "unknown power mode does not enable the low-power cap"
+        );
     }
 
     #[test]
