@@ -11,6 +11,10 @@ license.workspace = true
 
 [features]
 test-support = []
+# Opt-in macOS System Settings proxy auto-detection. Off by default: env-var
+# proxies (HTTP_PROXY/HTTPS_PROXY/...) work without it. Downstream can also
+# re-enable via their own `reqwest` dep (features unify).
+macos-system-proxy = ["reqwest/macos-system-configuration"]
 
 [lib]
 path = "src/http_client.rs"
@@ -59,7 +63,6 @@ version = "0.12.28"
 features = [
     "charset",
     "http2",
-    "macos-system-configuration",
     "multipart",
     "rustls-tls-native-roots",
     "stream",
