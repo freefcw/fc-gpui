@@ -202,6 +202,12 @@ impl RendererCacheStats {
     }
 }
 
+/// Error returned by the [`Platform`] trait's default implementations for
+/// operations that a backend does not support; see the individual methods.
+fn unsupported(what: &str) -> anyhow::Error {
+    anyhow::anyhow!("{what} is not supported on this platform")
+}
+
 /// Low-level operating-system integration contract implemented by GPUI backends.
 #[allow(missing_docs)]
 pub trait Platform: 'static {
@@ -215,10 +221,33 @@ pub trait Platform: 'static {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
-    fn activate(&self, ignoring_other_apps: bool);
-    fn hide(&self);
-    fn hide_other_apps(&self);
-    fn unhide_other_apps(&self);
+    /// Brings the application to the foreground. The default implementation
+    /// does nothing on platforms without a notion of app activation.
+    fn activate(&self, _ignoring_other_apps: bool) {
+        log::warn!("Platform::activate is not supported on this platform, ignoring the call");
+    }
+
+    /// Hides the application. The default implementation does nothing on
+    /// platforms without a notion of hiding an app.
+    fn hide(&self) {
+        log::warn!("Platform::hide is not supported on this platform, ignoring the call");
+    }
+
+    /// Hides all other applications. The default implementation does nothing
+    /// on platforms without this capability.
+    fn hide_other_apps(&self) {
+        log::warn!(
+            "Platform::hide_other_apps is not supported on this platform, ignoring the call"
+        );
+    }
+
+    /// Unhides all other applications. The default implementation does
+    /// nothing on platforms without this capability.
+    fn unhide_other_apps(&self) {
+        log::warn!(
+            "Platform::unhide_other_apps is not supported on this platform, ignoring the call"
+        );
+    }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -284,25 +313,59 @@ pub trait Platform: 'static {
     /// for [`Platform::window_appearance`] without changing native chrome.
     fn set_window_appearance(&self, _appearance: Option<WindowAppearance>) {}
 
-    fn open_url(&self, url: &str);
-    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
-    fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
+    /// Opens the given URL with the system's default handler. The default
+    /// implementation does nothing on platforms without URL support.
+    fn open_url(&self, _url: &str) {
+        log::warn!("Platform::open_url is not supported on this platform, ignoring the call");
+    }
+    /// Registers a handler for URLs the app was asked to open at launch. On
+    /// platforms that never deliver URLs, the default implementation accepts
+    /// the callback but never invokes it.
+    fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {
+        log::debug!(
+            "Platform::on_open_urls accepted a callback that this platform will never invoke"
+        );
+    }
+    fn register_url_scheme(&self, _url: &str) -> Task<Result<()>> {
+        Task::ready(Err(unsupported("Registering URL schemes")))
+    }
 
     fn prompt_for_paths(
         &self,
-        options: PathPromptOptions,
-    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+        _options: PathPromptOptions,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        let (tx, rx) = oneshot::channel();
+        tx.send(Err(unsupported("Path prompts"))).ok();
+        rx
+    }
     fn prompt_for_new_path(
         &self,
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>>;
     fn can_select_mixed_files_and_dirs(&self) -> bool;
-    fn reveal_path(&self, path: &Path);
-    fn open_with_system(&self, path: &Path);
+    /// Reveals the given path in the system file manager. The default
+    /// implementation does nothing on platforms without file-manager
+    /// integration.
+    fn reveal_path(&self, _path: &Path) {
+        log::warn!("Platform::reveal_path is not supported on this platform, ignoring the call");
+    }
+    /// Opens the given path with the system's default application for it.
+    /// The default implementation does nothing on platforms without this
+    /// capability.
+    fn open_with_system(&self, _path: &Path) {
+        log::warn!(
+            "Platform::open_with_system is not supported on this platform, ignoring the call"
+        );
+    }
 
     fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
-    fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    /// Registers a handler for the app reopen event (e.g. clicking the dock
+    /// icon on macOS). Currently only macOS ever invokes this callback; other
+    /// backends accept the registration but never fire it.
+    fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
+        log::debug!("Platform::on_reopen accepted a callback that this platform will never invoke");
+    }
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -344,8 +407,12 @@ pub trait Platform: 'static {
     fn compositor_name(&self) -> &'static str {
         ""
     }
-    fn app_path(&self) -> Result<PathBuf>;
-    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
+    fn app_path(&self) -> Result<PathBuf> {
+        Err(unsupported("App path"))
+    }
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
+        Err(unsupported("Auxiliary executables"))
+    }
 
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
@@ -866,8 +933,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
-    fn minimize(&self);
-    fn zoom(&self);
+    /// Minimizes the window. The default implementation does nothing on
+    /// platforms without a minimize concept.
+    fn minimize(&self) {}
+    /// Zooms the window. The default implementation does nothing on
+    /// platforms without a zoom concept.
+    fn zoom(&self) {}
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);

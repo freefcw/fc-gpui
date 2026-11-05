@@ -7128,6 +7128,37 @@ mod tests {
         assert!(cx.read(|cx| cx.windows().is_empty()));
     }
 
+    #[test]
+    fn unsupported_window_operations_allow_maximized_window_initialization() {
+        let mut cx = TestAppContext::single();
+        let initial_bounds = bounds(point(px(40.), px(30.)), size(px(640.), px(480.)));
+        let window = cx
+            .update(|cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Maximized(initial_bounds)),
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| EmptyView),
+                )
+            })
+            .expect("maximized test window should open without native zoom support");
+
+        cx.update_window(window.into(), |_, window, cx| {
+            assert_eq!(window.viewport_size(), initial_bounds.size);
+
+            window.minimize_window();
+            window.zoom_window();
+            window.show_character_palette();
+            window.show_window_menu(point(px(10.), px(10.)));
+            window.start_window_move();
+
+            assert_eq!(window.viewport_size(), initial_bounds.size);
+            window.draw(cx).clear();
+        })
+        .unwrap();
+    }
+
     struct OpensWindowOnPaint {
         opened: Rc<Cell<bool>>,
     }

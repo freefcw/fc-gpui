@@ -440,22 +440,6 @@ impl Platform for TestPlatform {
         }
     }
 
-    fn activate(&self, _ignoring_other_apps: bool) {
-        //
-    }
-
-    fn hide(&self) {
-        unimplemented!()
-    }
-
-    fn hide_other_apps(&self) {
-        unimplemented!()
-    }
-
-    fn unhide_other_apps(&self) {
-        unimplemented!()
-    }
-
     fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
         vec![self.active_display.clone()]
     }
@@ -536,17 +520,6 @@ impl Platform for TestPlatform {
         *self.opened_url.borrow_mut() = Some(url.to_string())
     }
 
-    fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {
-        unimplemented!()
-    }
-
-    fn prompt_for_paths(
-        &self,
-        _options: crate::PathPromptOptions,
-    ) -> oneshot::Receiver<Result<Option<Vec<std::path::PathBuf>>>> {
-        unimplemented!()
-    }
-
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
@@ -566,15 +539,7 @@ impl Platform for TestPlatform {
         true
     }
 
-    fn reveal_path(&self, _path: &std::path::Path) {
-        unimplemented!()
-    }
-
     fn on_quit(&self, _callback: Box<dyn FnMut() -> bool>) {}
-
-    fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
@@ -586,14 +551,6 @@ impl Platform for TestPlatform {
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
-
-    fn app_path(&self) -> Result<std::path::PathBuf> {
-        unimplemented!()
-    }
-
-    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<std::path::PathBuf> {
-        unimplemented!()
-    }
 
     fn set_cursor_style(&self, style: crate::CursorStyle) {
         *self.active_cursor.lock() = style;
@@ -631,14 +588,6 @@ impl Platform for TestPlatform {
 
     fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-
-    fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
-        unimplemented!()
-    }
-
-    fn open_with_system(&self, _path: &Path) {
-        unimplemented!()
     }
 }
 
@@ -690,7 +639,7 @@ impl TestScreenCaptureSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PermissionRequestStatus, PermissionStatus, TestDispatcher};
+    use crate::{PathPromptOptions, PermissionRequestStatus, PermissionStatus, TestDispatcher};
     use rand::{SeedableRng, rngs::StdRng};
     use std::sync::{Arc, mpsc};
     #[cfg(feature = "screen-capture")]
@@ -726,6 +675,37 @@ mod tests {
 
         assert_eq!(request_status, PermissionRequestStatus::Unavailable);
         assert!(!receiver.recv().unwrap());
+    }
+
+    #[test]
+    fn unsupported_platform_operations_degrade_instead_of_panicking() {
+        let platform = test_platform();
+
+        // These used to be `unimplemented!()` stubs; they must degrade via the
+        // trait's documented defaults instead of killing the test process.
+        platform.activate(false);
+        platform.hide();
+        platform.hide_other_apps();
+        platform.unhide_other_apps();
+        platform.reveal_path(Path::new("/tmp"));
+        platform.open_with_system(Path::new("/tmp"));
+        platform.on_open_urls(Box::new(|_| {
+            unreachable!("test platform never delivers URLs")
+        }));
+        platform.on_reopen(Box::new(|| unreachable!("test platform never reopens")));
+
+        assert!(platform.app_path().is_err());
+        assert!(platform.path_for_auxiliary_executable("helper").is_err());
+
+        assert!(futures::executor::block_on(platform.register_url_scheme("example")).is_err());
+        let rx = platform.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        let result = futures::executor::block_on(rx).unwrap();
+        assert!(result.is_err());
     }
 
     #[cfg(feature = "screen-capture")]

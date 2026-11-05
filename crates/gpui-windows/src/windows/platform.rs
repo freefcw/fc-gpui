@@ -497,20 +497,6 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    fn activate(&self, _ignoring_other_apps: bool) {}
-
-    fn hide(&self) {}
-
-    // todo(windows)
-    fn hide_other_apps(&self) {
-        unimplemented!()
-    }
-
-    // todo(windows)
-    fn unhide_other_apps(&self) {
-        unimplemented!()
-    }
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         WindowsDisplay::displays()
     }

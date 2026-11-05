@@ -363,18 +363,6 @@ impl PlatformWindow for TestWindow {
         self.0.lock().edited = edited;
     }
 
-    fn show_character_palette(&self) {
-        unimplemented!()
-    }
-
-    fn minimize(&self) {
-        unimplemented!()
-    }
-
-    fn zoom(&self) {
-        unimplemented!()
-    }
-
     fn toggle_fullscreen(&self) {
         let mut lock = self.0.lock();
         lock.is_fullscreen = !lock.is_fullscreen;
@@ -451,14 +439,6 @@ impl PlatformWindow for TestWindow {
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND {
-        unimplemented!()
-    }
-
-    fn show_window_menu(&self, _position: Point<Pixels>) {
-        unimplemented!()
-    }
-
-    fn start_window_move(&self) {
         unimplemented!()
     }
 
