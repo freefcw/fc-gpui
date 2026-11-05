@@ -267,6 +267,13 @@ impl ShellKind {
             .file_stem()
             .unwrap_or_else(|| program.as_os_str())
             .to_string_lossy();
+        // Windows executables are case-insensitive (`CMD.EXE`, `PowerShell.exe`).
+        // Unix paths stay case-sensitive so `NU` is not treated as nushell.
+        let program = if is_windows {
+            Cow::Owned(program.to_ascii_lowercase())
+        } else {
+            program
+        };
 
         if program == "powershell" || program == "pwsh" {
             ShellKind::PowerShell
@@ -491,6 +498,48 @@ impl ShellKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shell_kind_windows_case_insensitive() {
+        for (program, expected) in [
+            ("CMD.EXE", ShellKind::Cmd),
+            ("PowerShell.exe", ShellKind::PowerShell),
+            // `pwsh` stays PowerShell; this fork has no separate Pwsh kind.
+            ("PwSh.ExE", ShellKind::PowerShell),
+            ("NU.EXE", ShellKind::Nushell),
+            ("FISH.EXE", ShellKind::Fish),
+            ("CSH.EXE", ShellKind::Csh),
+            ("TCSH.EXE", ShellKind::Tcsh),
+            ("RC.EXE", ShellKind::Rc),
+            ("XONSH.EXE", ShellKind::Xonsh),
+            ("SH.EXE", ShellKind::Posix),
+            ("BASH.EXE", ShellKind::Posix),
+            // zsh is not classified on its own, so Windows still falls back to PowerShell.
+            ("ZSH.EXE", ShellKind::PowerShell),
+            ("C:/Windows/System32/CMD.EXE", ShellKind::Cmd),
+            (
+                "C:/Program Files/PowerShell/7/PWSH.EXE",
+                ShellKind::PowerShell,
+            ),
+            ("unknown.exe", ShellKind::PowerShell),
+        ] {
+            assert_eq!(ShellKind::new(program, true), expected, "{program}");
+        }
+    }
+
+    #[test]
+    fn test_shell_kind_unix_case_sensitive() {
+        for (program, expected) in [
+            ("/bin/nu", ShellKind::Nushell),
+            ("/bin/NU", ShellKind::Posix),
+            ("/bin/pwsh", ShellKind::PowerShell),
+            ("/bin/PWSH", ShellKind::Posix),
+            ("/bin/bash", ShellKind::Posix),
+            ("/bin/unknown", ShellKind::Posix),
+        ] {
+            assert_eq!(ShellKind::new(program, false), expected, "{program}");
+        }
+    }
 
     fn git_for_windows_layout() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
