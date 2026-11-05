@@ -1778,6 +1778,7 @@ dependencies = [
  "log",
  "lyon",
  "rand 0.9.5",
+ "raw-window-handle",
  "reqwest",
  "schemars",
  "serde",

@@ -79,6 +79,37 @@ fn run() -> anyhow::Result<()> {
             let window =
                 cx.open_offscreen_window(requested_size, |_, app| app.new(|_| PaintedView))?;
             let window = window.into();
+            cx.update_window(window, |_, window, _| -> anyhow::Result<()> {
+                use raw_window_handle::{
+                    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+                };
+
+                let window_handle = HasWindowHandle::window_handle(window)
+                    .map_err(|error| anyhow::anyhow!("failed to get native window handle: {error}"))?
+                    .as_raw();
+                let display_handle = HasDisplayHandle::display_handle(window)
+                    .map_err(|error| anyhow::anyhow!("failed to get native display handle: {error}"))?
+                    .as_raw();
+
+                let matches_platform = match (window_handle, display_handle) {
+                    (RawWindowHandle::Win32(_), RawDisplayHandle::Windows(_)) => {
+                        cfg!(target_os = "windows")
+                    }
+                    (RawWindowHandle::AppKit(_), RawDisplayHandle::AppKit(_)) => {
+                        cfg!(target_os = "macos")
+                    }
+                    (RawWindowHandle::Xcb(_), RawDisplayHandle::Xcb(_))
+                    | (RawWindowHandle::Wayland(_), RawDisplayHandle::Wayland(_)) => {
+                        cfg!(any(target_os = "linux", target_os = "freebsd"))
+                    }
+                    _ => false,
+                };
+                anyhow::ensure!(
+                    matches_platform,
+                    "unexpected native handles: window={window_handle:?}, display={display_handle:?}"
+                );
+                Ok(())
+            })??;
             let (bounds, scale_factor, artifact) = cx.update_window(window, |_, window, app| {
                 let clear = window.draw(app);
                 let artifact = window.visual_render_artifact();

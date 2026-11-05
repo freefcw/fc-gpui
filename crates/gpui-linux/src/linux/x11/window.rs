@@ -393,36 +393,80 @@ pub(crate) struct X11WindowStatePtr {
     pub(crate) x_window: xproto::Window,
 }
 
-impl rwh::HasWindowHandle for RawWindow {
-    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+impl RawWindow {
+    /// The raw XCB window handle, without the lifetime wrapper, so callers
+    /// holding a [`RawWindow`] snapshot can wrap it themselves.
+    fn xcb_window_handle(&self) -> Result<rwh::XcbWindowHandle, rwh::HandleError> {
         let Some(non_zero) = NonZeroU32::new(self.window_id) else {
             log::error!("RawWindow.window_id zero when getting window handle.");
             return Err(rwh::HandleError::Unavailable);
         };
         let mut handle = rwh::XcbWindowHandle::new(non_zero);
         handle.visual_id = NonZeroU32::new(self.visual_id);
-        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
+        Ok(handle)
     }
-}
-impl rwh::HasDisplayHandle for RawWindow {
-    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+
+    /// The raw XCB display handle, without the lifetime wrapper.
+    fn xcb_display_handle(&self) -> Result<rwh::XcbDisplayHandle, rwh::HandleError> {
         let Some(non_zero) = NonNull::new(self.connection) else {
             log::error!("Null RawWindow.connection when getting display handle.");
             return Err(rwh::HandleError::Unavailable);
         };
-        let handle = rwh::XcbDisplayHandle::new(Some(non_zero), self.screen_id as i32);
-        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
+        Ok(rwh::XcbDisplayHandle::new(
+            Some(non_zero),
+            self.screen_id as i32,
+        ))
+    }
+}
+
+impl rwh::HasWindowHandle for RawWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+        // SAFETY: the window and visual ids are plain values that stay valid
+        // for as long as `self` does.
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(self.xcb_window_handle()?.into()) })
+    }
+}
+impl rwh::HasDisplayHandle for RawWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+        // SAFETY: the connection pointer stays valid for as long as `self`.
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(self.xcb_display_handle()?.into()) })
+    }
+}
+
+impl X11Window {
+    /// A snapshot [`RawWindow`] for the underlying X window, so raw window
+    /// handle lookups can be served without panicking.
+    fn raw_window(&self) -> Result<RawWindow, rwh::HandleError> {
+        // The state is mutably borrowed while a frame is being drawn; failing
+        // the lookup beats panicking on a re-entrant borrow.
+        let inner = self.0.state.try_borrow().map_err(|_| {
+            log::warn!("X11 window state is borrowed; cannot serve raw window handle right now");
+            rwh::HandleError::Unavailable
+        })?;
+        Ok(RawWindow {
+            connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+                &*self.0.xcb,
+            ) as *mut _,
+            screen_id: inner.x_screen_index,
+            window_id: self.0.x_window,
+            visual_id: inner.visual_id,
+        })
     }
 }
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let raw_window = self.raw_window()?;
+        // SAFETY: the X window id stays valid while `self` is alive.
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw_window.xcb_window_handle()?.into()) })
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let raw_window = self.raw_window()?;
+        // SAFETY: `self` holds an `Rc` to the XCB connection, keeping it
+        // alive for as long as the returned handle.
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(raw_window.xcb_display_handle()?.into()) })
     }
 }
 

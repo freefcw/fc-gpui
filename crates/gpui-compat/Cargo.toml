@@ -107,6 +107,7 @@ futures.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
 lyon = { workspace = true, features = ["extra"] }
 rand.workspace = true
+raw-window-handle.workspace = true
 reqwest = { workspace = true, features = ["rustls-tls-native-roots", "stream"] }
 schemars = { workspace = true, features = ["smallvec1"] }
 serde.workspace = true
