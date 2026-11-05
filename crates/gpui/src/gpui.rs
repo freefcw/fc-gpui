@@ -175,7 +175,14 @@ pub trait AppContext {
     where
         T: 'static;
 
-    /// Update a entity in the app context.
+    /// Mutably borrow an entity in the app context without running a closure.
+    ///
+    /// # Fallibility by context
+    /// Concrete contexts disagree on whether this is supported: `App` and
+    /// `Context` return the borrow, `AsyncApp` returns an `Err` (async
+    /// contexts cannot hand out borrows), and `TestAppContext` panics with
+    /// guidance to call `update` instead. Prefer [`AppContext::update_entity`]
+    /// in context-generic code.
     fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<GpuiBorrow<'a, T>>
     where
         T: 'static;

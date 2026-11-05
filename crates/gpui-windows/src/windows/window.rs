@@ -1009,7 +1009,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
-        // There is no such thing on Windows.
+        // todo(windows): position the TSF candidate window. Windows does have
+        // IME candidate positioning (ITextInputPanel / ITfContextView); it is
+        // just not wired up yet, so the candidate window follows the caret.
     }
 
     fn play_system_bell(&self) {
