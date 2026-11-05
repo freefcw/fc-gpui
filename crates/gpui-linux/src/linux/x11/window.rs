@@ -1565,6 +1565,7 @@ impl PlatformWindow for X11Window {
         _detail: Option<&str>,
         _answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
+        log::warn!("Native X11 prompts are unsupported; using the GPUI fallback");
         None
     }
 

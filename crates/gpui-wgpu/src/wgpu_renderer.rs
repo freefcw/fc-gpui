@@ -1223,9 +1223,13 @@ impl WgpuRenderer {
                         batch_instance_range(&scene.polychrome_sprites, sprites),
                         &mut pass,
                     )?,
-                    // Surfaces are macOS-only for video playback and are not
-                    // implemented by the WGPU renderer.
-                    PrimitiveBatch::Surfaces(_) => {}
+                    // Surfaces are used for video playback and are currently
+                    // only drawn by the Metal renderer.
+                    PrimitiveBatch::Surfaces(surfaces) => {
+                        if !surfaces.is_empty() {
+                            Self::warn_surfaces_unsupported_once();
+                        }
+                    }
                 }
             }
         }
@@ -1234,6 +1238,17 @@ impl WgpuRenderer {
             .queue
             .submit(std::iter::once(encoder.finish()));
         Ok(())
+    }
+
+    /// Warns once that [`PrimitiveBatch::Surfaces`] is skipped, so a per-frame
+    /// log isn't emitted for every rendered frame.
+    fn warn_surfaces_unsupported_once() {
+        static SURFACES_UNSUPPORTED: std::sync::Once = std::sync::Once::new();
+        SURFACES_UNSUPPORTED.call_once(|| {
+            log::warn!(
+                "PaintSurface primitives are not supported by the WGPU renderer; skipping surface batches"
+            );
+        });
     }
 
     pub fn draw(&mut self, scene: &Scene) -> bool {

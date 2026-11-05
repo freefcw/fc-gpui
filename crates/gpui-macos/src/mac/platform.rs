@@ -1071,8 +1071,15 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         use std::os::unix::process::CommandExt as _;
+
+        if let Some(binary_path) = &binary_path {
+            log::warn!(
+                "restart on macOS ignores the given binary_path ({binary_path:?}) \
+                 and restarts the app bundle instead"
+            );
+        }
 
         let app_pid = std::process::id().to_string();
         let app_path = self

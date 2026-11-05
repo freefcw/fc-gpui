@@ -1502,6 +1502,7 @@ impl PlatformWindow for WaylandWindow {
         _detail: Option<&str>,
         _answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
+        log::warn!("Native Wayland prompts are unsupported; using the GPUI fallback");
         None
     }
 
