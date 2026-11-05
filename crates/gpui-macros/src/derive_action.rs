@@ -76,7 +76,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                 } else {
                     return Err(meta.error(format!(
                         "'{:?}' argument not recognized, expected \
-                        'namespace', 'no_json', 'no_register, 'deprecated_aliases', or 'deprecated'",
+                        'name', 'namespace', 'no_json', 'no_register', 'deprecated_aliases', or 'deprecated'",
                         meta.path
                     )));
                 }
