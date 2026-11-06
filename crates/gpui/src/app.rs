@@ -244,7 +244,8 @@ impl Application {
         let mut context_lock = self.0.borrow_mut();
         let asset_source = Arc::new(asset_source);
         context_lock.asset_source = asset_source.clone();
-        context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        context_lock.svg_renderer =
+            SvgRenderer::with_fonts(asset_source, context_lock.text_system.svg_fonts.clone());
         drop(context_lock);
         self
     }
@@ -301,10 +302,8 @@ impl Application {
         );
         let mut context_lock = self.0.borrow_mut();
         context_lock.platform.configure_gpu_resources(&profile.gpu);
-        context_lock.text_system = Arc::new(TextSystem::new(
-            context_lock.platform.text_system(),
-            &profile.text,
-        ));
+        context_lock.text_system =
+            Arc::new(context_lock.text_system.with_resource_budget(&profile.text));
         context_lock.resource_profile = profile;
         drop(context_lock);
         self
@@ -803,6 +802,8 @@ impl App {
             platform.text_system(),
             &resource_profile.text,
         ));
+        let svg_renderer =
+            SvgRenderer::with_fonts(asset_source.clone(), text_system.svg_fonts.clone());
         platform.configure_gpu_resources(&resource_profile.gpu);
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
@@ -823,7 +824,7 @@ impl App {
                 active_drag: None,
                 background_executor: executor,
                 foreground_executor,
-                svg_renderer: SvgRenderer::new(asset_source.clone()),
+                svg_renderer,
                 loading_assets: Default::default(),
                 asset_source,
                 http_client,
@@ -3530,6 +3531,39 @@ mod test {
         .inaccessible();
 
         assert!(application.0.borrow().accessibility_force_disabled);
+    }
+
+    #[test]
+    fn configured_application_keeps_registered_svg_fonts() -> anyhow::Result<()> {
+        let dispatcher = Arc::new(TestDispatcher::new(StdRng::seed_from_u64(0)));
+        let platform = TestPlatform::new(
+            BackgroundExecutor::new(dispatcher.clone()),
+            ForegroundExecutor::new(dispatcher),
+        );
+        let application = Application::with_platform(platform);
+        let text_system = application.text_system();
+        let renderer = application.0.borrow().svg_renderer();
+        let before = renderer.render_single_frame(crate::svg_renderer::SVG_TEST_TEXT, 1.0)?;
+        text_system.add_fonts(vec![std::borrow::Cow::Owned(
+            crate::svg_renderer::svg_test_font(),
+        )])?;
+        let expected = renderer.render_single_frame(crate::svg_renderer::SVG_TEST_TEXT, 1.0)?;
+        assert_ne!(before.as_bytes(0), expected.as_bytes(0));
+
+        let mut profile = AppResourceProfile::default();
+        profile.element_arena_size =
+            crate::window::ELEMENT_ARENA_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+        let application = application.with_assets(()).with_resource_profile(profile);
+        let rebuilt_renderer = application.0.borrow().svg_renderer();
+        let actual =
+            rebuilt_renderer.render_single_frame(crate::svg_renderer::SVG_TEST_TEXT, 1.0)?;
+        assert_eq!(expected.as_bytes(0), actual.as_bytes(0));
+        assert!(Arc::ptr_eq(
+            &text_system.svg_fonts,
+            &application.text_system().svg_fonts
+        ));
+        assert_eq!(application.text_system().font_generation(), 1);
+        Ok(())
     }
 
     #[test]

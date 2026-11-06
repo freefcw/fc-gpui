@@ -1123,6 +1123,8 @@ pub struct Window {
     pub(crate) a11y: A11y,
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    svg_atlas_keys: FxHashSet<RenderSvgParams>,
+    svg_font_generation: usize,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
     /// The stack of override values for the window's rem size.
@@ -2080,6 +2082,8 @@ impl Window {
             a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
             display_id,
             sprite_atlas,
+            svg_atlas_keys: FxHashSet::default(),
+            svg_font_generation: cx.text_system().font_generation(),
             text_system,
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
@@ -2971,6 +2975,16 @@ impl Window {
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         let arena_scope = ElementArenaScope::enter();
+        let font_generation = cx.text_system().font_generation();
+        if self.svg_font_generation != font_generation {
+            for key in self.svg_atlas_keys.drain() {
+                self.sprite_atlas.remove(&key.into());
+            }
+            self.svg_font_generation = font_generation;
+            // Cached views contain atlas tiles, so replaying them would retain
+            // text resolved before the new fonts were installed.
+            self.refreshing = true;
+        }
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -4326,6 +4340,7 @@ impl Window {
         else {
             return Ok(());
         };
+        self.svg_atlas_keys.insert(params);
         let content_mask = self.snapped_content_mask();
         let svg_bounds = Bounds {
             origin: bounds.center()
@@ -6868,6 +6883,53 @@ mod tests {
         path::PathBuf,
         rc::Rc,
     };
+
+    #[test]
+    fn registered_fonts_invalidate_svg_tiles_and_cached_views() -> Result<()> {
+        struct Child(Rc<Cell<usize>>);
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.0.set(self.0.get() + 1);
+                crate::svg()
+                    .data(crate::svg_renderer::SVG_TEST_TEXT)
+                    .text_color(crate::rgb(0x000000))
+                    .size_full()
+            }
+        }
+        struct Root(Entity<Child>);
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                AnyView::from(self.0.clone()).cached(StyleRefinement::default().size(px(100.)))
+            }
+        }
+        let mut cx = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let child = cx.new(|_| Child(renders.clone()));
+        let window = cx.add_window(|_, _| Root(child));
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear();
+                assert_eq!(window.svg_atlas_keys.len(), 1);
+                window.rendered_frame.scene.monochrome_sprites[0].tile
+            })
+            .unwrap()
+        };
+        let original_tile = draw(&mut cx);
+        let original_renders = renders.get();
+        assert_eq!(draw(&mut cx), original_tile);
+        assert_eq!(renders.get(), original_renders);
+
+        cx.update(|cx| {
+            cx.text_system()
+                .add_fonts(vec![Cow::Owned(crate::svg_renderer::svg_test_font())])
+        })?;
+
+        let refreshed_tile = draw(&mut cx);
+        assert_ne!(refreshed_tile, original_tile);
+        assert!(renders.get() > original_renders);
+        assert_eq!(draw(&mut cx), refreshed_tile);
+        Ok(())
+    }
 
     #[test]
     fn high_rate_input_avoids_inactive_window_throttling() {

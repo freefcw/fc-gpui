@@ -239,6 +239,7 @@ pub struct TextSystemCacheStats {
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
+    pub(crate) svg_fonts: Arc<crate::SvgFontRegistry>,
     global_line_layout_cache: Arc<GlobalLineLayoutCache>,
     font_ids_by_font: RwLock<FxHashMap<Font, CachedFont>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
@@ -275,6 +276,7 @@ impl TextSystem {
         platform_text_system.set_missing_glyph_sink(missing_glyph_reporter.clone());
         TextSystem {
             platform_text_system,
+            svg_fonts: Arc::default(),
             global_line_layout_cache: Arc::new(GlobalLineLayoutCache::new(
                 text_budget.line_layout_cache_max_entries,
                 text_budget.line_layout_cache_low_watermark,
@@ -310,6 +312,13 @@ impl TextSystem {
     pub(crate) fn resource_budget_for_test(&self) -> (usize, usize, Option<usize>) {
         let (max_entries, low_watermark) = self.global_line_layout_cache.budget_for_test();
         (max_entries, low_watermark, self.raster_bounds_max_entries)
+    }
+
+    pub(crate) fn with_resource_budget(&self, budget: &crate::TextResourceBudget) -> Self {
+        let mut text_system = Self::new(self.platform_text_system.clone(), budget);
+        text_system.svg_fonts = self.svg_fonts.clone();
+        text_system.font_generation = self.font_generation.clone();
+        text_system
     }
 
     /// Drop every entry held by the long-lived text caches.
@@ -355,12 +364,23 @@ impl TextSystem {
     ///
     /// Cached font resolution and line layouts are invalidated after installation.
     /// Layouts already in progress may complete against the previous font set.
+    /// The application's SVG renderer also uses these fonts for subsequent parses.
+    /// Existing [`crate::ParsedSvg`] and decoded images retain their resolved text.
+    /// Prefer installing fonts before creating windows. After runtime registration,
+    /// call [`crate::App::refresh`] to redraw text and `svg()` elements. For SVGs
+    /// loaded by `img()`, first evict the decoded image using
+    /// [`crate::ImageSource::remove_asset`] or clear its custom image cache.
     pub fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.platform_text_system.add_fonts(fonts)?;
+        self.platform_text_system.add_fonts(fonts.clone())?;
+        self.svg_fonts.add_fonts(fonts);
         self.font_ids_by_font.write().clear();
         self.missing_glyph_reporter.reset();
         self.font_generation.fetch_add(1, Ordering::Release);
         Ok(())
+    }
+
+    pub(crate) fn font_generation(&self) -> usize {
+        self.font_generation.load(Ordering::Acquire)
     }
 
     /// Takes the receiver for missing-glyph reports.
@@ -1306,6 +1326,7 @@ mod tests {
         noop: NoopTextSystem,
         pending_glyph_images: Mutex<HashSet<RenderGlyphParams>>,
         missing_glyph_sink_installed: AtomicBool,
+        reject_fonts: AtomicBool,
     }
 
     impl TrackingTextSystem {
@@ -1314,6 +1335,7 @@ mod tests {
                 noop: NoopTextSystem::new(),
                 pending_glyph_images: Mutex::default(),
                 missing_glyph_sink_installed: AtomicBool::new(false),
+                reject_fonts: AtomicBool::new(false),
             }
         }
 
@@ -1329,6 +1351,7 @@ mod tests {
         }
 
         fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+            anyhow::ensure!(!self.reject_fonts.load(Ordering::Relaxed), "font rejected");
             self.noop.add_fonts(fonts)
         }
 
@@ -1380,6 +1403,26 @@ mod tests {
         fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
             self.noop.layout_line(text, font_size, runs)
         }
+    }
+
+    #[test]
+    fn rejected_fonts_do_not_change_svg_output_or_font_generation() -> Result<()> {
+        let platform = Arc::new(TrackingTextSystem::new());
+        platform.reject_fonts.store(true, Ordering::Relaxed);
+        let text_system = TextSystem::new(platform, &AppResourceProfile::default().text);
+        let renderer = crate::SvgRenderer::with_fonts(Arc::new(()), text_system.svg_fonts.clone());
+        let before = renderer.render_single_frame(crate::svg_renderer::SVG_TEST_TEXT, 1.0)?;
+
+        assert!(
+            text_system
+                .add_fonts(vec![Cow::Owned(crate::svg_renderer::svg_test_font())])
+                .is_err()
+        );
+
+        assert_eq!(text_system.font_generation(), 0);
+        let after = renderer.render_single_frame(crate::svg_renderer::SVG_TEST_TEXT, 1.0)?;
+        assert_eq!(before.as_bytes(0), after.as_bytes(0));
+        Ok(())
     }
 
     fn glyph_params(glyph_id: u32) -> RenderGlyphParams {

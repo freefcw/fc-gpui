@@ -3,12 +3,52 @@ use crate::{
     swap_rgba_pa_to_bgra,
 };
 use image::Frame;
+use parking_lot::RwLock;
 use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     hash::Hash,
     sync::{Arc, LazyLock},
 };
+
+/// Font data shared by an application's text and SVG renderers.
+/// Database snapshots keep in-flight parses independent of later registrations.
+#[derive(Default)]
+pub(crate) struct SvgFontRegistry {
+    database: RwLock<Option<Arc<usvg::fontdb::Database>>>,
+}
+
+impl SvgFontRegistry {
+    fn snapshot(&self) -> Arc<usvg::fontdb::Database> {
+        if let Some(database) = self.database.read().as_ref() {
+            return database.clone();
+        }
+        self.database
+            .write()
+            .get_or_insert_with(default_font_database)
+            .clone()
+    }
+
+    pub(crate) fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) {
+        let mut database = self.database.write();
+        let database = Arc::make_mut(database.get_or_insert_with(default_font_database));
+        for font in fonts {
+            database.load_font_source(usvg::fontdb::Source::Binary(Arc::new(font)));
+        }
+    }
+}
+
+fn default_font_database() -> Arc<usvg::fontdb::Database> {
+    static SYSTEM_FONT_DB: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
+        let mut database = usvg::fontdb::Database::new();
+        database.load_system_fonts();
+        load_bundled_fonts(&mut database);
+        fix_generic_font_families(&mut database);
+        Arc::new(database)
+    });
+    SYSTEM_FONT_DB.clone()
+}
 
 #[cfg(target_os = "macos")]
 const EMOJI_FONT_FAMILIES: &[&str] = &["Apple Color Emoji", ".AppleColorEmojiUI"];
@@ -103,6 +143,7 @@ pub struct SvgRenderer {
 /// [`SvgRenderer::render_parsed`]. Parsing resolves fonts and converts text
 /// to paths, so callers that need to rasterize the same SVG at multiple
 /// scales should retain this value to avoid re-paying the parse cost.
+/// It is a snapshot: registering fonts later does not change its resolved text.
 pub struct ParsedSvg(usvg::Tree);
 
 /// The size in which to rasterize the SVG.
@@ -124,24 +165,18 @@ impl From<f32> for SvgSize {
 
 impl SvgRenderer {
     pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
-        static SYSTEM_FONT_DB: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
-            let mut db = usvg::fontdb::Database::new();
-            db.load_system_fonts();
-            Arc::new(db)
-        });
+        Self::with_fonts(asset_source, Arc::default())
+    }
 
-        let fontdb = {
-            let mut db = (**SYSTEM_FONT_DB).clone();
-            load_bundled_fonts(&mut db);
-            fix_generic_font_families(&mut db);
-            Arc::new(db)
-        };
-
+    pub(crate) fn with_fonts(
+        asset_source: Arc<dyn AssetSource>,
+        fonts: Arc<SvgFontRegistry>,
+    ) -> Self {
         let default_font_resolver = usvg::FontResolver::default_font_selector();
         let font_resolver = Box::new(
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
                 if db.is_empty() {
-                    *db = fontdb.clone();
+                    *db = fonts.snapshot();
                 }
                 if let Some(id) = default_font_resolver(font, db) {
                     return Some(id);
@@ -182,6 +217,8 @@ impl SvgRenderer {
     }
 
     /// Parses SVG data into a [`ParsedSvg`] that can be rasterized at any scale.
+    /// Application renderers use fonts installed through [`crate::TextSystem::add_fonts`].
+    /// A renderer created with [`Self::new`] uses system and bundled fonts only.
     pub fn parse_svg(&self, bytes: &[u8]) -> std::result::Result<ParsedSvg, usvg::Error> {
         usvg::Tree::from_data(bytes, &self.usvg_options).map(ParsedSvg)
     }
@@ -340,9 +377,60 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 }
 
 #[cfg(test)]
+pub(crate) fn svg_test_font() -> Vec<u8> {
+    // Give the bundled monospace font a family absent from system/bundled fonts.
+    // Equal-length replacements preserve the sfnt table offsets.
+    let mut bytes = LILEX_REGULAR.to_vec();
+    for (old, new) in [
+        (b"Lilex".as_slice(), b"GPUIX".as_slice()),
+        (b"\0L\0i\0l\0e\0x".as_slice(), b"\0G\0P\0U\0I\0X".as_slice()),
+    ] {
+        for offset in 0..=bytes.len() - old.len() {
+            if &bytes[offset..offset + old.len()] == old {
+                bytes[offset..offset + old.len()].copy_from_slice(new);
+            }
+        }
+    }
+    bytes
+}
+
+#[cfg(test)]
+pub(crate) const SVG_TEST_TEXT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40"><text x="0" y="30" font-size="24" font-family="GPUIX">iiiiWWWW</text></svg>"#;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use usvg::fontdb::{Database, Family, Query};
+
+    #[test]
+    fn registered_fonts_affect_new_parses_but_not_existing_snapshots() -> Result<()> {
+        let text_system = crate::TextSystem::new(
+            Arc::new(crate::NoopTextSystem::new()),
+            &crate::AppResourceProfile::default().text,
+        );
+        let renderer = SvgRenderer::with_fonts(Arc::new(()), text_system.svg_fonts.clone());
+        let renderer_clone = renderer.clone();
+        let before = renderer.parse_svg(SVG_TEST_TEXT)?;
+        let original_image = renderer.render_parsed(&before, 1.0)?;
+        let query = Query {
+            families: &[Family::Name("GPUIX")],
+            ..Default::default()
+        };
+        assert!(before.0.fontdb().query(&query).is_none());
+
+        text_system.add_fonts(vec![Cow::Owned(svg_test_font())])?;
+
+        let after = renderer_clone.parse_svg(SVG_TEST_TEXT)?;
+        assert!(after.0.fontdb().query(&query).is_some());
+        let changed_image = renderer_clone.render_parsed(&after, 1.0)?;
+        assert_ne!(original_image.as_bytes(0), changed_image.as_bytes(0));
+        let old_snapshot_image = renderer.render_parsed(&before, 1.0)?;
+        assert_eq!(original_image.as_bytes(0), old_snapshot_image.as_bytes(0));
+        assert!(before.0.fontdb().query(&query).is_none());
+        let independent = SvgRenderer::new(Arc::new(())).parse_svg(SVG_TEST_TEXT)?;
+        assert!(independent.0.fontdb().query(&query).is_none());
+        Ok(())
+    }
 
     #[test]
     fn renders_parsed_svg_at_requested_size() -> Result<()> {
