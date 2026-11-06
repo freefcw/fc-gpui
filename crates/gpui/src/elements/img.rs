@@ -803,6 +803,7 @@ mod tests {
         Context, ParentElement as _, Render, TestAppContext, Window, canvas, div, point, px, size,
     };
     use image::{Frame, ImageBuffer, Rgba};
+    use smallvec::SmallVec;
 
     const TEST_IMG_ID: &str = "test-img";
 
