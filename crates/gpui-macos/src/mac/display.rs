@@ -174,6 +174,18 @@ impl PlatformDisplay for MacDisplay {
         }
     }
 
+    fn global_bounds(&self) -> Bounds<Pixels> {
+        let bounds = unsafe { CGDisplayBounds(self.0) };
+        Bounds::new(
+            point(px(bounds.origin.x as f32), px(bounds.origin.y as f32)),
+            size(px(bounds.size.width as f32), px(bounds.size.height as f32)),
+        )
+    }
+
+    fn display_local_to_window_position(&self, position: Point<Pixels>) -> Point<Pixels> {
+        position
+    }
+
     fn visible_bounds(&self) -> Bounds<Pixels> {
         unsafe {
             let Some(screen) = self.ns_screen() else {

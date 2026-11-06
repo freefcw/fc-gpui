@@ -1371,10 +1371,10 @@ impl App {
         let displays = self.displays();
         let display = displays
             .iter()
-            .find(|display| display.bounds().contains(&position))
+            .find(|display| display.global_bounds().contains(&position))
             .cloned()
             .or_else(|| self.primary_display())?;
-        let display_bounds = display.bounds();
+        let display_bounds = display.global_bounds();
         let half_size = APPROXIMATE_TRAY_ICON_SIZE * 0.5;
         let local_position = position - display_bounds.origin;
 
@@ -4095,6 +4095,41 @@ mod test {
         assert_eq!(anchor.bounds.origin, point(px(108.0), px(12.0)));
         assert_eq!(anchor.bounds.size.width, px(24.0));
         assert_eq!(anchor.bounds.size.height, px(24.0));
+    }
+
+    #[test]
+    fn runtime_tray_anchor_uses_global_bounds_for_secondary_displays() {
+        #[derive(Debug)]
+        struct OffsetDisplay(crate::DisplayId, crate::Bounds<crate::Pixels>);
+
+        impl crate::PlatformDisplay for OffsetDisplay {
+            fn id(&self) -> crate::DisplayId {
+                self.0
+            }
+            fn uuid(&self) -> anyhow::Result<uuid::Uuid> {
+                Ok(uuid::Uuid::nil())
+            }
+            fn bounds(&self) -> crate::Bounds<crate::Pixels> {
+                crate::Bounds::new(crate::Point::default(), self.1.size)
+            }
+            fn global_bounds(&self) -> crate::Bounds<crate::Pixels> {
+                self.1
+            }
+        }
+
+        let cx = TestAppContext::single();
+        for origin in [point(px(1920.), px(120.)), point(px(-1600.), px(-900.))] {
+            let display_id = crate::DisplayId::new(2);
+            cx.test_platform()
+                .set_additional_displays(vec![Rc::new(OffsetDisplay(
+                    display_id,
+                    crate::Bounds::new(origin, crate::size(px(1600.), px(900.))),
+                ))]);
+            let hint = origin + point(px(120.), px(24.));
+            let anchor = cx.read(|cx| cx.tray_anchor_for_position(hint)).unwrap();
+            assert_eq!(anchor.display_id, display_id);
+            assert_eq!(anchor.bounds.origin, point(px(108.), px(12.)));
+        }
     }
 
     #[test]

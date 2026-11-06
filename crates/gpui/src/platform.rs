@@ -583,10 +583,35 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     /// across system restarts.
     fn uuid(&self) -> Result<Uuid>;
 
-    /// Get the bounds for this display
+    /// Returns the display bounds in the backend's window-placement coordinates.
+    ///
+    /// macOS uses display-local coordinates for compatibility. Other desktop
+    /// backends use logical desktop coordinates. Use [`Self::global_bounds`]
+    /// when comparing positions supplied in global screen coordinates.
     fn bounds(&self) -> Bounds<Pixels>;
 
+    /// Returns the display bounds in logical desktop coordinates, with a
+    /// top-left origin relative to the primary display.
+    ///
+    /// This is the coordinate space of global screen-position hints, such as
+    /// tray click positions. The default matches [`Self::bounds`]; backends
+    /// with display-local window placement must override it.
+    fn global_bounds(&self) -> Bounds<Pixels> {
+        self.bounds()
+    }
+
+    /// Converts a display-local point to the coordinates accepted by
+    /// [`WindowParams::bounds`] when [`WindowParams::display_id`] selects this
+    /// display. The point uses a top-left origin and logical pixels.
+    ///
+    /// The default adds the display's desktop offset. Backends that accept
+    /// display-local window placement override this with the identity mapping.
+    fn display_local_to_window_position(&self, position: Point<Pixels>) -> Point<Pixels> {
+        self.bounds().origin + position
+    }
+
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
+    /// Uses the same window-placement coordinates as [`Self::bounds`].
     /// Defaults to the full display bounds if the platform does not expose a
     /// separate work area.
     fn visible_bounds(&self) -> Bounds<Pixels> {

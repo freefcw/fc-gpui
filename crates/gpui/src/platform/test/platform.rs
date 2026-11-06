@@ -34,6 +34,7 @@ pub(crate) struct TestPlatform {
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
+    additional_displays: RefCell<Vec<Rc<dyn PlatformDisplay>>>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     pub(crate) gpu_resource_budget: Mutex<GpuResourceBudget>,
@@ -187,6 +188,7 @@ impl TestPlatform {
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
+            additional_displays: RefCell::new(Vec::new()),
             active_window: Default::default(),
             current_clipboard_item: Mutex::new(None),
             gpu_resource_budget: Mutex::new(crate::AppResourceProfile::default().gpu),
@@ -330,6 +332,11 @@ impl TestPlatform {
         self.tray_icon.lock().clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_additional_displays(&self, displays: Vec<Rc<dyn PlatformDisplay>>) {
+        *self.additional_displays.borrow_mut() = displays;
+    }
+
     pub(crate) fn tray_icon_rendering_mode(&self) -> TrayIconRenderingMode {
         *self.tray_icon_rendering_mode.lock()
     }
@@ -446,7 +453,9 @@ impl Platform for TestPlatform {
     }
 
     fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        vec![self.active_display.clone()]
+        std::iter::once(self.active_display.clone())
+            .chain(self.additional_displays.borrow().iter().cloned())
+            .collect()
     }
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {

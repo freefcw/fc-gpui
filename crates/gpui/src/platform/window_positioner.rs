@@ -39,7 +39,14 @@ pub fn compute_window_bounds(
             let tray_bounds = anchor.bounds;
             let x = tray_bounds.origin.x + (tray_bounds.size.width - size.width) * 0.5;
             let y = tray_bounds.origin.y + tray_bounds.size.height;
-            Bounds::new(point(x, y), size)
+            let local_position = point(x, y);
+            let position = displays
+                .iter()
+                .find(|display| display.id() == anchor.display_id)
+                .map_or(local_position, |display| {
+                    display.display_local_to_window_position(local_position)
+                });
+            Bounds::new(position, size)
         }
         WindowPosition::TopRight { margin } => {
             corner_position(size, primary_display, *margin, true, false)
@@ -157,5 +164,92 @@ mod tests {
             bounds,
             Bounds::new(point(px(790.), px(630.)), size(px(200.), px(100.)))
         );
+    }
+
+    #[test]
+    fn tray_anchors_use_the_selected_displays_window_coordinates() {
+        for origin in [point(px(1920.), px(0.)), point(px(-1280.), px(-900.))] {
+            let primary = display();
+            let secondary: Rc<dyn PlatformDisplay> = Rc::new(FakeDisplay {
+                id: DisplayId::new(2),
+                bounds: Bounds::new(origin, size(px(1280.), px(900.))),
+                visible_bounds: Bounds::new(origin, size(px(1280.), px(860.))),
+            });
+            let anchor = crate::TrayAnchor {
+                display_id: secondary.id(),
+                bounds: Bounds::new(point(px(950.), px(30.)), size(px(24.), px(24.))),
+            };
+
+            let bounds = compute_window_bounds(
+                size(px(200.), px(100.)),
+                &WindowPosition::TrayAnchored(anchor),
+                &[primary.clone(), secondary],
+                Some(&primary),
+            );
+
+            assert_eq!(bounds.origin, origin + point(px(862.), px(54.)));
+        }
+    }
+
+    #[derive(Debug)]
+    struct LocalPlacementDisplay;
+
+    impl PlatformDisplay for LocalPlacementDisplay {
+        fn id(&self) -> DisplayId {
+            DisplayId::new(2)
+        }
+
+        fn uuid(&self) -> Result<Uuid> {
+            Ok(Uuid::nil())
+        }
+
+        fn bounds(&self) -> Bounds<Pixels> {
+            Bounds::new(Point::default(), size(px(1600.), px(1000.)))
+        }
+
+        fn global_bounds(&self) -> Bounds<Pixels> {
+            Bounds::new(point(px(-1600.), px(200.)), self.bounds().size)
+        }
+
+        fn display_local_to_window_position(&self, position: Point<Pixels>) -> Point<Pixels> {
+            position
+        }
+    }
+
+    #[test]
+    fn tray_anchors_preserve_display_local_window_placement() {
+        let display: Rc<dyn PlatformDisplay> = Rc::new(LocalPlacementDisplay);
+        let anchor = crate::TrayAnchor {
+            display_id: display.id(),
+            bounds: Bounds::new(point(px(950.), px(30.)), size(px(24.), px(24.))),
+        };
+
+        let bounds = compute_window_bounds(
+            size(px(200.), px(100.)),
+            &WindowPosition::TrayAnchored(anchor),
+            std::slice::from_ref(&display),
+            Some(&display),
+        );
+
+        assert_eq!(bounds.origin, point(px(862.), px(54.)));
+        assert_eq!(display.bounds().origin, Point::default());
+        assert_eq!(display.global_bounds().origin, point(px(-1600.), px(200.)));
+    }
+
+    #[test]
+    fn tray_anchors_keep_the_local_position_when_the_display_disappears() {
+        let anchor = crate::TrayAnchor {
+            display_id: DisplayId::new(2),
+            bounds: Bounds::new(point(px(950.), px(30.)), size(px(24.), px(24.))),
+        };
+
+        let bounds = compute_window_bounds(
+            size(px(200.), px(100.)),
+            &WindowPosition::TrayAnchored(anchor),
+            &[],
+            None,
+        );
+
+        assert_eq!(bounds.origin, point(px(862.), px(54.)));
     }
 }
