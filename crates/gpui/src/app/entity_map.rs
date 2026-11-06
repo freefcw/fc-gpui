@@ -65,7 +65,8 @@ pub(crate) struct EntityMap {
 /// accesses are added to the one around it when it ends. Each scope therefore
 /// collects exactly what was accessed inside it, without copying what the
 /// draw accessed before it began, and `frame` ends up with every access.
-struct AccessedEntities {
+#[derive(Default)]
+pub(crate) struct AccessedEntities {
     /// Every entity accessed during the draw: the window subscribes to
     /// exactly this set when the draw ends. Accesses outside any scope land
     /// here directly, and a scope's accesses reach it when the outermost open
@@ -190,10 +191,20 @@ impl EntityMap {
     }
 
     /// Clears the accessed entities and ends any scope left open.
+    #[cfg(test)]
     pub fn clear_accessed(&mut self) {
         let accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.scopes.clear();
         accessed_entities.frame.clear();
+    }
+
+    /// Isolates one window draw from any outer draw and its open cache scopes.
+    pub fn start_access_frame(&mut self) -> AccessedEntities {
+        mem::take(self.accessed_entities.get_mut())
+    }
+
+    pub fn end_access_frame(&mut self, previous: AccessedEntities) {
+        *self.accessed_entities.get_mut() = previous;
     }
 
     pub fn push_access_scope(&mut self) {
@@ -215,8 +226,7 @@ impl EntityMap {
         scope
     }
 
-    /// Takes every entity accessed during the draw, to be handed back with
-    /// [`Self::restore_accessed`].
+    /// Takes every entity accessed during the current draw.
     pub fn take_accessed(&mut self) -> FxHashSet<EntityId> {
         let accessed_entities = self.accessed_entities.get_mut();
         debug_assert!(
@@ -224,10 +234,6 @@ impl EntityMap {
             "access scope left open"
         );
         mem::take(&mut accessed_entities.frame)
-    }
-
-    pub fn restore_accessed(&mut self, entities: FxHashSet<EntityId>) {
-        self.accessed_entities.get_mut().frame = entities;
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
@@ -963,6 +969,33 @@ mod test {
             entity_map.take_accessed(),
             FxHashSet::from_iter([first.entity_id()]),
             "a released entity shouldn't be recorded again"
+        );
+    }
+
+    #[test]
+    fn nested_access_frames_preserve_outer_cache_scopes() {
+        let mut map = EntityMap::new();
+        let slot = map.reserve::<usize>();
+        let outer = map.insert(slot, 1usize);
+        let slot = map.reserve::<usize>();
+        let inner = map.insert(slot, 2usize);
+        map.clear_accessed();
+        map.push_access_scope();
+        map.read(&outer);
+        let previous = map.start_access_frame();
+        map.read(&inner);
+        assert_eq!(
+            map.take_accessed(),
+            FxHashSet::from_iter([inner.entity_id()])
+        );
+        map.end_access_frame(previous);
+        assert_eq!(
+            map.pop_access_scope(),
+            FxHashSet::from_iter([outer.entity_id()])
+        );
+        assert_eq!(
+            map.take_accessed(),
+            FxHashSet::from_iter([outer.entity_id()])
         );
     }
 

@@ -947,6 +947,8 @@ impl App {
 
         self.windows.clear();
         self.window_handles.clear();
+        self.tracked_entities.clear();
+        self.window_invalidators_by_entity.clear();
         self.flush_effects();
         self.quitting = true;
 
@@ -1114,15 +1116,7 @@ impl App {
         invalidator: WindowInvalidator,
         entities: &FxHashSet<EntityId>,
     ) {
-        let mut tracked_entities =
-            std::mem::take(self.tracked_entities.entry(window_handle.id).or_default());
-        for entity in tracked_entities.iter() {
-            self.window_invalidators_by_entity
-                .entry(*entity)
-                .and_modify(|windows| {
-                    windows.remove(&window_handle.id);
-                });
-        }
+        let mut tracked_entities = self.remove_window_dependencies(window_handle.id);
         for entity in entities.iter() {
             self.window_invalidators_by_entity
                 .entry(*entity)
@@ -1133,6 +1127,31 @@ impl App {
         tracked_entities.extend(entities.iter().copied());
         self.tracked_entities
             .insert(window_handle.id, tracked_entities);
+    }
+
+    fn remove_window_dependencies(&mut self, window: WindowId) -> FxHashSet<EntityId> {
+        let entities = self.tracked_entities.remove(&window).unwrap_or_default();
+        for entity in &entities {
+            if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                self.window_invalidators_by_entity.entry(*entity)
+            {
+                entry.get_mut().remove(&window);
+                if entry.get().is_empty() {
+                    entry.remove();
+                }
+            }
+        }
+        entities
+    }
+
+    fn remove_entity_dependencies(&mut self, entity: EntityId) {
+        if let Some(windows) = self.window_invalidators_by_entity.remove(&entity) {
+            for window in windows.keys() {
+                if let Some(entities) = self.tracked_entities.get_mut(window) {
+                    entities.remove(&entity);
+                }
+            }
+        }
     }
 
     pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {
@@ -1975,6 +1994,7 @@ impl App {
             }
 
             for (entity_id, mut entity) in dropped {
+                self.remove_entity_dependencies(entity_id);
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
                 for release_callback in self.release_listeners.remove(&entity_id) {
@@ -2092,6 +2112,7 @@ impl App {
             cx.window_update_stack.pop();
 
             if window.removed {
+                cx.remove_window_dependencies(id);
                 cx.window_handles.remove(&id);
                 cx.windows.remove(id);
 
@@ -2790,11 +2811,10 @@ impl App {
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     pub fn notify(&mut self, entity_id: EntityId) {
-        let window_invalidators = mem::take(
-            self.window_invalidators_by_entity
-                .entry(entity_id)
-                .or_default(),
-        );
+        let window_invalidators = self
+            .window_invalidators_by_entity
+            .remove(&entity_id)
+            .unwrap_or_default();
 
         if window_invalidators.is_empty() {
             if self.pending_notifications.insert(entity_id) {
@@ -2807,8 +2827,10 @@ impl App {
             }
         }
 
-        self.window_invalidators_by_entity
-            .insert(entity_id, window_invalidators);
+        if !window_invalidators.is_empty() {
+            self.window_invalidators_by_entity
+                .insert(entity_id, window_invalidators);
+        }
     }
 
     /// Returns the name for this [`App`].
@@ -3263,6 +3285,126 @@ mod test {
             cx.defer(move |_| deferred.set(true));
         });
         assert!(deferred.get());
+    }
+
+    struct RuntimeNestedDraw {
+        renders: Rc<Cell<usize>>,
+        open_window: Rc<Cell<bool>>,
+        dependency: crate::Entity<usize>,
+    }
+
+    impl Render for RuntimeNestedDraw {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let _ = self.dependency.read(cx);
+            let open_window = self.open_window.clone();
+            crate::canvas(
+                |_, _, _| (),
+                move |_, _, _, cx| {
+                    if open_window.replace(false) {
+                        cx.open_window(crate::WindowOptions::default(), |_, cx| cx.new(|_| Empty))
+                            .unwrap();
+                    }
+                },
+            )
+        }
+    }
+
+    #[test]
+    fn runtime_nested_draw_preserves_outer_dependencies() {
+        let mut cx = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let open_window = Rc::new(Cell::new(true));
+        let dependency = cx.new(|_| 1usize);
+        let window = cx.add_window(|_, _| RuntimeNestedDraw {
+            renders: renders.clone(),
+            open_window,
+            dependency: dependency.clone(),
+        });
+        let root_id = window.entity(&cx).unwrap().entity_id();
+        cx.read(|cx| {
+            let tracked = &cx.tracked_entities[&window.window_id()];
+            assert!(tracked.contains(&root_id));
+            assert!(tracked.contains(&dependency.entity_id()));
+        });
+        let before = renders.get();
+        window.update(&mut cx, |_, _, cx| cx.notify()).unwrap();
+        assert!(renders.get() > before);
+    }
+
+    #[test]
+    fn runtime_closed_windows_release_dependency_indices() {
+        let mut cx = TestAppContext::single();
+        let dependency = cx.new(|_| 1usize);
+        for _ in 0..3 {
+            let window = cx.add_window(|_, _| RuntimeNestedDraw {
+                renders: Rc::new(Cell::new(0)),
+                open_window: Rc::new(Cell::new(false)),
+                dependency: dependency.clone(),
+            });
+            window
+                .update(&mut cx, |_, window, _| window.remove_window())
+                .unwrap();
+            cx.read(|cx| {
+                assert!(cx.tracked_entities.is_empty());
+                assert!(cx.window_invalidators_by_entity.is_empty());
+            });
+        }
+    }
+
+    #[test]
+    fn runtime_released_entities_leave_no_dependency_indices() {
+        struct WeakDependency(crate::WeakEntity<usize>);
+        impl Render for WeakDependency {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                if let Some(dependency) = self.0.upgrade() {
+                    let _ = dependency.read(cx);
+                }
+                Empty
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let dependency = cx.new(|_| 1usize);
+        let id = dependency.entity_id();
+        let window = cx.add_window(|_, _| WeakDependency(dependency.downgrade()));
+        cx.read(|cx| assert!(cx.window_invalidators_by_entity.contains_key(&id)));
+        drop(dependency);
+        cx.update(|_| {});
+        cx.read(|cx| {
+            assert!(!cx.window_invalidators_by_entity.contains_key(&id));
+            assert!(!cx.tracked_entities[&window.window_id()].contains(&id));
+        });
+        cx.update(|cx| cx.notify(id));
+        cx.read(|cx| assert!(!cx.window_invalidators_by_entity.contains_key(&id)));
+    }
+
+    #[test]
+    fn runtime_closing_window_preserves_other_window_dependencies() {
+        let mut cx = TestAppContext::single();
+        let dependency = cx.new(|_| 1usize);
+        let first = cx.add_window(|_, _| RuntimeNestedDraw {
+            renders: Rc::new(Cell::new(0)),
+            open_window: Rc::new(Cell::new(false)),
+            dependency: dependency.clone(),
+        });
+        let renders = Rc::new(Cell::new(0));
+        let second = cx.add_window(|_, _| RuntimeNestedDraw {
+            renders: renders.clone(),
+            open_window: Rc::new(Cell::new(false)),
+            dependency: dependency.clone(),
+        });
+        first
+            .update(&mut cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.read(|cx| {
+            let windows = &cx.window_invalidators_by_entity[&dependency.entity_id()];
+            assert_eq!(windows.len(), 1);
+            assert!(windows.contains_key(&second.window_id()));
+        });
+        let before = renders.get();
+        dependency.update(&mut cx, |_, cx| cx.notify());
+        assert!(renders.get() > before);
     }
 
     crate::actions!(global_dispatch_test, [DispatchProbe]);

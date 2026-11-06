@@ -2986,7 +2986,7 @@ impl Window {
             self.refreshing = true;
         }
         self.invalidate_entities();
-        cx.entities.clear_accessed();
+        let previous_access_frame = cx.entities.start_access_frame();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
@@ -3062,6 +3062,7 @@ impl Window {
 
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
+        cx.entities.end_access_frame(previous_access_frame);
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
@@ -3108,7 +3109,6 @@ impl Window {
             self.invalidator.clone(),
             &entities,
         );
-        cx.entities.restore_accessed(entities);
     }
 
     fn invalidate_entities(&mut self) {
