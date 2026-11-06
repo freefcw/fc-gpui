@@ -15,9 +15,14 @@ doctest = false
 proc-macro = true
 
 [dependencies]
+proc-macro-crate = "3.4"
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
+
+[dev-dependencies]
+renamed_refineable = { package = "fc-gpui-refineable", path = "../refineable", version = "0.6.0" }
 
 
 [lints.clippy]

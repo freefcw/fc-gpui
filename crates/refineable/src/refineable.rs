@@ -1,3 +1,5 @@
+extern crate self as fc_gpui_refineable;
+
 pub use derive_refineable::Refineable;
 
 /// A trait for types that can be refined with partial updates.
@@ -12,8 +14,8 @@ pub use derive_refineable::Refineable;
 /// implements this trait. For a struct `Style`, it creates `StyleRefinement` where each field is
 /// wrapped appropriately:
 ///
-/// - **Refineable fields** (marked with `#[refineable]`): Become the corresponding refinement type
-///   (e.g., `Bar` becomes `BarRefinement`)
+/// - **Refineable fields** (marked with `#[refineable]`): Use the field type's
+///   [`Refineable::Refinement`] associated type, including qualified types and aliases
 /// - **Optional fields** (`Option<T>`): Remain as `Option<T>`
 /// - **Regular fields**: Become `Option<T>`
 ///

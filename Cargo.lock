@@ -1866,9 +1866,12 @@ dependencies = [
 name = "fc-gpui-derive-refineable"
 version = "0.6.1"
 dependencies = [
+ "fc-gpui-refineable",
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+ "toml_edit",
 ]
 
 [[package]]

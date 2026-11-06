@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use std::{env, fs, path::PathBuf};
 use syn::{
     DeriveInput, Field, FieldsNamed, PredicateType, TraitBound, Type, TypeParamBound, WhereClause,
     WherePredicate, parse_macro_input, parse_quote,
@@ -15,6 +17,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         attrs,
         ..
     } = parse_macro_input!(input);
+    let refineable = refineable_crate_path();
 
     let refineable_attr = attrs.iter().find(|attr| attr.path().is_ident("refineable"));
 
@@ -38,6 +41,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
     let refinement_ident = format_ident!("{}Refinement", ident);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let struct_where_clause = where_clause;
 
     let fields = match data {
         syn::Data::Struct(syn::DataStruct {
@@ -49,14 +53,24 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
     let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
     let field_visibilities: Vec<_> = fields.iter().map(|f| &f.vis).collect();
-    let wrapped_types: Vec<_> = fields.iter().map(|f| get_wrapper_type(f, &f.ty)).collect();
+    let wrapped_types: Vec<_> = fields
+        .iter()
+        .map(|f| get_wrapper_type(f, &f.ty, &refineable))
+        .collect();
+    let is_empty_path = syn::LitStr::new(
+        &format!(
+            "{}::IsEmpty::is_empty",
+            refineable.to_string().replace(' ', "")
+        ),
+        proc_macro2::Span::call_site(),
+    );
 
     let field_attributes: Vec<TokenStream2> = fields
         .iter()
         .map(|f| {
             if derives_serialize {
                 if is_refineable_field(f) {
-                    quote! { #[serde(default, skip_serializing_if = "::refineable::IsEmpty::is_empty")] }
+                    quote! { #[serde(default, skip_serializing_if = #is_empty_path)] }
                 } else {
                     quote! { #[serde(skip_serializing_if = "::std::option::Option::is_none")] }
                 }
@@ -82,7 +96,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                         modifiers: syn::TraitBoundModifiers::default(),
                         maybe: None,
                         lifetimes: None,
-                        path: parse_quote!(Clone),
+                        path: parse_quote!(::core::clone::Clone),
                     }));
 
                     punctuated
@@ -112,7 +126,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    self.#name.refine(&refinement.#name);
+                    #refineable::Refineable::refine(&mut self.#name, &refinement.#name);
                 }
             } else if is_optional {
                 quote! {
@@ -139,7 +153,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    self.#name = self.#name.refined(refinement.#name);
+                    self.#name = #refineable::Refineable::refined(self.#name, refinement.#name);
                 }
             } else if is_optional {
                 quote! {
@@ -165,7 +179,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    self.#name.refine(&refinement.#name);
+                    #refineable::Refineable::refine(&mut self.#name, &refinement.#name);
                 }
             } else {
                 quote! {
@@ -185,7 +199,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    self.#name = self.#name.refined(refinement.#name);
+                    self.#name = #refineable::Refineable::refined(self.#name, refinement.#name);
                 }
             } else {
                 quote! {
@@ -225,8 +239,13 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             .iter()
             .map(|field| {
                 let name = &field.ident;
+                let is_some = if is_refineable_field(field) {
+                    quote! { !#refineable::IsEmpty::is_empty(&self.#name) }
+                } else {
+                    quote! { self.#name.is_some() }
+                };
                 quote! {
-                    if self.#name.is_some() {
+                    if #is_some {
                         debug_struct.field(stringify!(#name), &self.#name);
                     } else {
                         all_some = false;
@@ -262,7 +281,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             let name = &field.ident;
 
             let condition = if is_refineable_field(field) {
-                quote! { self.#name.is_empty() }
+                quote! { #refineable::IsEmpty::is_empty(&self.#name) }
             } else {
                 quote! { self.#name.is_none() }
             };
@@ -284,7 +303,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    if !self.#name.is_superset_of(&refinement.#name) {
+                    if !#refineable::Refineable::is_superset_of(&self.#name, &refinement.#name) {
                         return false;
                     }
                 }
@@ -314,7 +333,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    if !self.#name.is_superset_of(&refinement.#name) {
+                    if !#refineable::Refineable::is_superset_of(&self.#name, &refinement.#name) {
                         return false;
                     }
                 }
@@ -337,7 +356,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    #name: self.#name.subtract(&refinement.#name),
+                    #name: #refineable::Refineable::subtract(&self.#name, &refinement.#name),
                 }
             } else if is_optional {
                 quote! {
@@ -371,7 +390,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             if is_refineable {
                 quote! {
-                    #name: self.#name.subtract(&refinement.#name),
+                    #name: #refineable::Refineable::subtract(&self.#name, &refinement.#name),
                 }
             } else {
                 quote! {
@@ -389,12 +408,20 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     for trait_to_derive in refinement_traits_to_derive {
         derive_stream.extend(quote! { #[derive(#trait_to_derive)] })
     }
+    let is_some_conditions = fields.iter().map(|field| {
+        let name = &field.ident;
+        if is_refineable_field(field) {
+            quote! { !#refineable::IsEmpty::is_empty(&self.#name) }
+        } else {
+            quote! { self.#name.is_some() }
+        }
+    });
 
     let r#gen = quote! {
         /// A refinable version of [`#ident`], see that documentation for details.
         #[derive(Clone)]
         #derive_stream
-        pub struct #refinement_ident #impl_generics {
+        pub struct #refinement_ident #impl_generics #struct_where_clause {
             #(
                 #[allow(missing_docs)]
                 #field_attributes
@@ -402,7 +429,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             ),*
         }
 
-        impl #impl_generics Refineable for #ident #ty_generics
+        impl #impl_generics #refineable::Refineable for #ident #ty_generics
             #where_clause
         {
             type Refinement = #refinement_ident #ty_generics;
@@ -430,7 +457,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics Refineable for #refinement_ident #ty_generics
+        impl #impl_generics #refineable::Refineable for #refinement_ident #ty_generics
             #where_clause
         {
             type Refinement = #refinement_ident #ty_generics;
@@ -458,7 +485,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics ::refineable::IsEmpty for #refinement_ident #ty_generics
+        impl #impl_generics #refineable::IsEmpty for #refinement_ident #ty_generics
             #where_clause
         {
             fn is_empty(&self) -> bool {
@@ -466,7 +493,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics From<#refinement_ident #ty_generics> for #ident #ty_generics
+        impl #impl_generics ::core::convert::From<#refinement_ident #ty_generics> for #ident #ty_generics
             #where_clause
         {
             fn from(value: #refinement_ident #ty_generics) -> Self {
@@ -481,7 +508,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         {
             fn default() -> Self {
                 #refinement_ident {
-                    #( #field_names: Default::default() ),*
+                    #( #field_names: ::core::default::Default::default() ),*
                 }
             }
         }
@@ -492,7 +519,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             /// Returns `true` if any field is `Some`
             pub fn is_some(&self) -> bool {
                 #(
-                    if self.#field_names.is_some() {
+                    if #is_some_conditions {
                         return true;
                     }
                 )*
@@ -515,31 +542,84 @@ fn is_optional_field(f: &Field) -> bool {
     if let Type::Path(typepath) = &f.ty
         && typepath.qself.is_none()
     {
-        let segments = &typepath.path.segments;
-        if segments.len() == 1 && segments.iter().any(|s| s.ident == "Option") {
-            return true;
-        }
+        let segments = typepath
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>();
+        return matches!(segments.as_slice(), [option] if option == "Option")
+            || matches!(segments.as_slice(), [root, module, option] if (root == "std" || root == "core") && module == "option" && option == "Option");
     }
     false
 }
 
-fn get_wrapper_type(field: &Field, ty: &Type) -> syn::Type {
+fn get_wrapper_type(field: &Field, ty: &Type, refineable: &TokenStream2) -> syn::Type {
     if is_refineable_field(field) {
-        let struct_name = if let Type::Path(tp) = ty {
-            tp.path.segments.last().unwrap().ident.clone()
-        } else {
-            panic!("Expected struct type for a refineable field");
-        };
-        let refinement_struct_name = format_ident!("{}Refinement", struct_name);
-        let generics = if let Type::Path(tp) = ty {
-            &tp.path.segments.last().unwrap().arguments
-        } else {
-            &syn::PathArguments::None
-        };
-        parse_quote!(#refinement_struct_name #generics)
+        parse_quote!(<#ty as #refineable::Refineable>::Refinement)
     } else if is_optional_field(field) {
         ty.clone()
     } else {
-        parse_quote!(Option<#ty>)
+        parse_quote!(::core::option::Option<#ty>)
+    }
+}
+
+fn refineable_crate_path() -> TokenStream2 {
+    if let Ok(found) = crate_name("fc-gpui-refineable") {
+        return dependency_path(found, "fc_gpui_refineable", "fc_gpui_refineable");
+    }
+
+    // The facade and core re-export this derive. Honor the same explicit crate
+    // selection as GPUI's other derives when both packages or an underscore alias exist.
+    let configured_path = env::var_os("CARGO_MANIFEST_DIR")
+        .and_then(|directory| fs::read_to_string(PathBuf::from(directory).join("Cargo.toml")).ok())
+        .and_then(|manifest| manifest.parse::<toml_edit::DocumentMut>().ok())
+        .and_then(|manifest| {
+            manifest
+                .get("package")?
+                .get("metadata")?
+                .get("gpui-macros")?
+                .get("crate")?
+                .as_str()
+                .map(str::to_owned)
+        });
+    if let Some(path) = configured_path {
+        let path = syn::parse_str::<syn::Path>(&path)
+            .expect("package.metadata.gpui-macros.crate must be a Rust crate path");
+        return quote!(::#path);
+    }
+    for (package, package_identifier, library_identifier) in [
+        ("fc-gpui", "fc_gpui", "gpui"),
+        ("fc-gpui-core", "fc_gpui_core", "gpui_core"),
+    ] {
+        if let Ok(found) = crate_name(package) {
+            return dependency_path(found, package_identifier, library_identifier);
+        }
+    }
+    quote!(::refineable)
+}
+
+fn dependency_path(
+    found: FoundCrate,
+    package_identifier: &str,
+    library_identifier: &str,
+) -> TokenStream2 {
+    match found {
+        FoundCrate::Itself => {
+            if package_identifier == "fc_gpui_refineable" {
+                quote!(::fc_gpui_refineable)
+            } else {
+                quote!(::gpui)
+            }
+        }
+        FoundCrate::Name(name) => {
+            let name = if name == package_identifier {
+                library_identifier
+            } else {
+                &name
+            };
+            let ident = syn::Ident::new(&name.replace('-', "_"), proc_macro2::Span::call_site());
+            quote!(::#ident)
+        }
     }
 }
