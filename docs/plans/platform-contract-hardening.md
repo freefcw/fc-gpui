@@ -1,5 +1,9 @@
 # Goal Document: Platform Contract Hardening
 
+The current cross-platform behavior matrix is maintained in
+[`docs/platform-capabilities.md`](../platform-capabilities.md). Update it when
+this plan changes a backend capability or fallback contract.
+
 ## Go / No-Go
 - **Judgment**: Go
 - **Reason**: The three changes have bounded code paths, concrete static evidence, and focused test seams. They can be implemented without the deferred Wayland frame-transaction redesign.

@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Cached drawing preserves primitive identity after batch sorting and replays
+  accessibility hierarchy, focus/action mappings, and native window-control hitboxes.
+- Recycled atlas allocations cannot be mistaken for the original image, including
+  reuse within the same texture. Cached views rebuild after allocation invalidation.
+- Image-cache providers are resolved once per frame and retained across layout,
+  prepaint, paint, and deferred drawing. Container queries and image-cache containers
+  apply visibility, opacity, backgrounds, clipping, and inherited text styles.
+- Platform callbacks and embedded application updates flush their effects. Nested
+  window draws preserve the outer window's dependencies; closed windows and released
+  entities are removed from dependency indices.
+- Windows quit callbacks release platform-state borrows before invoking application
+  cleanup. Tray-anchored windows convert display-local positions explicitly, preserving
+  macOS placement conventions and correctly handling offset displays.
+- Test dispatchers stop and join their worker/timer threads, and explicit shutdown
+  cancels local tasks on the creating thread while workers finish.
+- Refineable derives follow dependency aliases and facade/core re-exports, and use
+  nested types' associated refinements instead of guessing companion type names.
+- Style helper macros resolve generated parameter types through the consumer's
+  dependency alias without requiring extra type imports.
+
+### Changed
+
+- `fc-gpui` and `fc-gpui-core` expose a default-enabled `http-client-reqwest` feature.
+  Builds with default features disabled keep the neutral HTTP request/response API
+  without reqwest. Enable this feature for multipart/body compatibility methods;
+  direct `fc-gpui-http-client` users select its default-enabled `reqwest` feature.
+- Platform displays expose global bounds separately from legacy window-placement
+  coordinates. Recycling custom atlases can implement `epoch` and `is_tile_live` to
+  participate in cache invalidation and stale-allocation filtering; the GPU tile
+  layout is unchanged.
+
 ## 0.13.0 (2026-11-02)
 
 ### Breaking changes
