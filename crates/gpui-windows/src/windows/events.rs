@@ -39,6 +39,37 @@ pub(crate) const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
 
+pub(crate) fn set_ime_position(handle: HWND, bounds: Bounds<Pixels>, scale_factor: f32) {
+    let (x, y) = crate::ime_position::physical_ime_position(
+        (bounds.origin.x.into(), bounds.origin.y.into()),
+        bounds.size.height.into(),
+        scale_factor,
+    );
+    let position = POINT { x, y };
+
+    unsafe {
+        let ctx = ImmGetContext(handle);
+        if ctx.is_invalid() {
+            return;
+        }
+
+        let composition = COMPOSITIONFORM {
+            dwStyle: CFS_POINT,
+            ptCurrentPos: position,
+            ..Default::default()
+        };
+        ImmSetCompositionWindow(ctx, &composition).ok().log_err();
+
+        let candidate = CANDIDATEFORM {
+            dwStyle: CFS_CANDIDATEPOS,
+            ptCurrentPos: position,
+            ..Default::default()
+        };
+        ImmSetCandidateWindow(ctx, &candidate).ok().log_err();
+        ImmReleaseContext(handle, ctx).ok().log_err();
+    }
+}
+
 /// Coordinates window draws on the UI thread. Owned by the platform and
 /// shared with every window, because the coordination is inherently
 /// cross-window: while window A is drawing, a re-entrant paint request for
@@ -779,45 +810,16 @@ impl WindowsWindowInner {
         if handled { Some(0) } else { Some(1) }
     }
 
-    fn retrieve_caret_position(&self) -> Option<POINT> {
-        self.with_input_handler_and_scale_factor(|input_handler, scale_factor| {
-            let caret_range = input_handler.selected_text_range(false)?;
-            let caret_position = input_handler.bounds_for_range(caret_range.range)?;
-            Some(POINT {
-                // logical to physical
-                x: (f32::from(caret_position.origin.x) * scale_factor) as i32,
-                y: (f32::from(caret_position.origin.y) * scale_factor) as i32
-                    + ((f32::from(caret_position.size.height) * scale_factor) as i32 / 2),
-            })
-        })
-    }
-
     fn handle_ime_position(&self, handle: HWND) -> Option<isize> {
-        unsafe {
-            let ctx = ImmGetContext(handle);
-
-            let Some(caret_position) = self.retrieve_caret_position() else {
-                return Some(0);
-            };
-            {
-                let config = COMPOSITIONFORM {
-                    dwStyle: CFS_POINT,
-                    ptCurrentPos: caret_position,
-                    ..Default::default()
-                };
-                ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
-            }
-            {
-                let config = CANDIDATEFORM {
-                    dwStyle: CFS_CANDIDATEPOS,
-                    ptCurrentPos: caret_position,
-                    ..Default::default()
-                };
-                ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
-            }
-            ImmReleaseContext(handle, ctx).ok().log_err();
-            Some(0)
+        let caret = self.with_input_handler_and_scale_factor(|input_handler, scale_factor| {
+            let caret_range = input_handler.selected_text_range(false)?;
+            let bounds = input_handler.bounds_for_range(caret_range.range)?;
+            Some((bounds, scale_factor))
+        });
+        if let Some((bounds, scale_factor)) = caret {
+            set_ime_position(handle, bounds, scale_factor);
         }
+        Some(0)
     }
 
     fn handle_ime_composition(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {

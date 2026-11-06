@@ -2,6 +2,7 @@
 // False positives in platform-specific state handling.
 #![cfg_attr(target_os = "windows", allow(unused_mut))]
 
+mod ime_position;
 mod mouse_move_cache;
 
 #[cfg(target_os = "windows")]

@@ -1008,10 +1008,9 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().renderer.gpu_specs().log_err()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
-        // The IMM path in `events.rs::handle_ime_position` positions the
-        // composition and candidate windows when composition starts. This
-        // hook still ignores later bounds updates supplied by GPUI.
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let scale_factor = self.0.state.borrow().scale_factor;
+        set_ime_position(self.0.hwnd, bounds, scale_factor);
     }
 
     fn play_system_bell(&self) {
