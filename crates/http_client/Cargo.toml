@@ -10,11 +10,13 @@ readme = false
 license.workspace = true
 
 [features]
+default = ["reqwest"]
+reqwest = ["dep:reqwest"]
 test-support = []
 # Opt-in macOS System Settings proxy auto-detection. Off by default: env-var
 # proxies (HTTP_PROXY/HTTPS_PROXY/...) work without it. Downstream can also
 # re-enable via their own `reqwest` dep (features unify).
-macos-system-proxy = ["reqwest/macos-system-configuration"]
+macos-system-proxy = ["reqwest", "reqwest/macos-system-configuration"]
 
 [lib]
 path = "src/http_client.rs"
@@ -27,13 +29,9 @@ derive_more = { workspace = true, features = ["deref"] }
 futures.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-# NOTE: `socks` is dropped entirely — nothing in this crate or its downstream
-# uses SOCKS proxies. `multipart` stays unconditional: the
-# `send_multipart_form` trait method's signature references
-# `reqwest::multipart::Form`, and its mime/mime_guess deps are compiled anyway
-# via fc-gpui-util→rust-embed→mime_guess, so gating it would add trait
-# complexity for zero build savings.
-reqwest = { workspace = true, features = [
+# Retained by default for the reqwest-specific multipart and body-conversion
+# APIs. Protocol-only clients can disable default features.
+reqwest = { workspace = true, optional = true, features = [
     "charset",
     "http2",
     "multipart",

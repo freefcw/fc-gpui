@@ -32,6 +32,12 @@ fc-gpui = { version = "0.13.0", default-features = false, features = [
 `image-format-*` features map to the underlying `image` crate decoder features. `image-rayon`
 re-enables parallel decoding. SVG support is handled separately through `resvg`.
 
+The default `http-client-reqwest` feature keeps the HTTP methods accepting reqwest multipart
+forms and bodies. With default features disabled, the HTTP request/response protocol remains
+available for an injected client without pulling in reqwest. Add `"http-client-reqwest"` to the
+feature list if your client uses those compatibility methods. Direct `fc-gpui-http-client`
+dependencies expose this choice through their default-enabled `reqwest` feature.
+
 Note that `keyring` (Linux Secret Service credentials storage) and `accessibility` are also
 default features; add `"keyring"` back to the list above if your app calls
 `write_credentials` / `read_credentials` / `delete_credentials`.

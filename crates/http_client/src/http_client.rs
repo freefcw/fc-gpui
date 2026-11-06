@@ -153,6 +153,7 @@ pub trait HttpClient: 'static + Send + Sync {
         panic!("called as_fake on {}", type_name::<Self>())
     }
 
+    #[cfg(feature = "reqwest")]
     fn send_multipart_form<'a>(
         &'a self,
         _url: &str,
@@ -212,6 +213,7 @@ impl HttpClient for HttpClientWithProxy {
         self.client.as_fake()
     }
 
+    #[cfg(feature = "reqwest")]
     fn send_multipart_form<'a>(
         &'a self,
         url: &str,
@@ -362,6 +364,7 @@ impl HttpClient for HttpClientWithUrl {
         self.client.as_fake()
     }
 
+    #[cfg(feature = "reqwest")]
     fn send_multipart_form<'a>(
         &'a self,
         url: &str,
@@ -532,8 +535,160 @@ impl HttpClient for FakeHttpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{HttpRequestExt, RequestTimeout};
-    use std::time::Duration;
+    use super::{
+        AsyncBody, HttpClient, HttpClientWithProxy, HttpClientWithUrl, HttpRequestExt,
+        RedirectPolicy, Request, RequestTimeout, Response, Url,
+    };
+    use futures::{AsyncReadExt, future::BoxFuture};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    struct RecordingClient {
+        requests: Arc<Mutex<Vec<Request<AsyncBody>>>>,
+        user_agent: http::HeaderValue,
+    }
+
+    impl HttpClient for RecordingClient {
+        fn type_name(&self) -> &'static str {
+            std::any::type_name::<Self>()
+        }
+
+        fn user_agent(&self) -> Option<&http::HeaderValue> {
+            Some(&self.user_agent)
+        }
+
+        fn send(
+            &self,
+            request: Request<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            self.requests.lock().unwrap().push(request);
+            Box::pin(async { Ok(Response::new("response".into())) })
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        #[cfg(feature = "reqwest")]
+        fn send_multipart_form<'a>(
+            &'a self,
+            url: &str,
+            _: reqwest::multipart::Form,
+        ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+            self.send(
+                Request::builder()
+                    .uri(url)
+                    .body(AsyncBody::empty())
+                    .unwrap(),
+            )
+        }
+    }
+
+    fn recording_clients() -> (
+        Vec<Arc<dyn HttpClient>>,
+        Arc<Mutex<Vec<Request<AsyncBody>>>>,
+    ) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let backend = Arc::new(RecordingClient {
+            requests: requests.clone(),
+            user_agent: http::HeaderValue::from_static("contract-test"),
+        });
+        let proxy = Url::parse("http://proxy.example:8080").unwrap();
+        let clients: Vec<Arc<dyn HttpClient>> = vec![
+            backend.clone(),
+            Arc::new(HttpClientWithProxy::new_url(
+                backend.clone(),
+                Some(proxy.clone()),
+            )),
+            Arc::new(HttpClientWithUrl::new_url(
+                backend,
+                "https://example.com",
+                Some(proxy),
+            )),
+        ];
+        (clients, requests)
+    }
+
+    #[test]
+    fn protocol_clients_preserve_request_metadata_and_bodies() {
+        let (clients, requests) = recording_clients();
+        for client in clients {
+            let request = Request::builder()
+                .method(http::Method::PUT)
+                .uri("https://example.com/resource")
+                .header("x-contract", "preserved")
+                .follow_redirects(RedirectPolicy::FollowLimit(2))
+                .timeout(Duration::from_secs(3))
+                .body(AsyncBody::from("request"))
+                .unwrap();
+            let mut response = futures::executor::block_on(client.send(request)).unwrap();
+            let mut body = String::new();
+            futures::executor::block_on(response.body_mut().read_to_string(&mut body)).unwrap();
+            assert_eq!(body, "response");
+            assert_eq!(client.user_agent().unwrap(), "contract-test");
+
+            let mut request = requests.lock().unwrap().pop().unwrap();
+            assert_eq!(request.method(), http::Method::PUT);
+            assert_eq!(request.uri(), "https://example.com/resource");
+            assert_eq!(request.headers()["x-contract"], "preserved");
+            assert_eq!(
+                request.extensions().get::<RedirectPolicy>(),
+                Some(&RedirectPolicy::FollowLimit(2))
+            );
+            assert_eq!(
+                RequestTimeout::from_request(&request),
+                Some(Duration::from_secs(3))
+            );
+            body.clear();
+            futures::executor::block_on(request.body_mut().read_to_string(&mut body)).unwrap();
+            assert_eq!(body, "request");
+        }
+    }
+
+    #[test]
+    fn protocol_clients_support_get_and_json_without_backend_types() {
+        let (clients, requests) = recording_clients();
+        for client in clients {
+            futures::executor::block_on(client.get(
+                "https://example.com",
+                AsyncBody::empty(),
+                true,
+            ))
+            .unwrap();
+            let request = requests.lock().unwrap().pop().unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            assert_eq!(
+                request.extensions().get::<RedirectPolicy>(),
+                Some(&RedirectPolicy::FollowAll)
+            );
+
+            futures::executor::block_on(client.post_json("https://example.com", "{}".into()))
+                .unwrap();
+            let request = requests.lock().unwrap().pop().unwrap();
+            assert_eq!(request.method(), http::Method::POST);
+            assert_eq!(
+                request.headers()[http::header::CONTENT_TYPE],
+                "application/json"
+            );
+        }
+    }
+
+    #[cfg(feature = "reqwest")]
+    #[test]
+    fn reqwest_multipart_api_is_forwarded_by_wrappers() {
+        let (clients, requests) = recording_clients();
+        for client in clients {
+            futures::executor::block_on(client.send_multipart_form(
+                "https://example.com/upload",
+                reqwest::multipart::Form::new().text("name", "value"),
+            ))
+            .unwrap();
+            let request = requests.lock().unwrap().pop().unwrap();
+            assert_eq!(request.uri(), "https://example.com/upload");
+        }
+    }
 
     #[test]
     #[allow(deprecated)]

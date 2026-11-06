@@ -30,6 +30,7 @@ bench = ["test-support"]
 default = [
     "accessibility",
     "font-kit",
+    "http-client-reqwest",
     "wayland",
     "x11",
     "windows-manifest",
@@ -62,6 +63,8 @@ image-format-tiff = ["image/tiff"]
 image-format-webp = ["image/webp"]
 image-rayon = ["image/rayon"]
 font-kit = []
+# Compatibility APIs whose signatures use reqwest multipart/body types.
+http-client-reqwest = ["http_client/reqwest"]
 inspector = ["gpui_macros/inspector"]
 input-latency-histogram = ["dep:hdrhistogram"]
 # Tracks every entity handle so tests can assert nothing leaked. Also enabled

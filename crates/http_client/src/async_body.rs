@@ -88,6 +88,7 @@ impl From<&'static str> for AsyncBody {
     }
 }
 
+#[cfg(feature = "reqwest")]
 impl TryFrom<reqwest::Body> for AsyncBody {
     type Error = anyhow::Error;
 
@@ -145,5 +146,19 @@ impl Body for AsyncBody {
             Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[cfg(all(test, feature = "reqwest"))]
+mod tests {
+    use super::AsyncBody;
+    use futures::AsyncReadExt;
+
+    #[test]
+    fn reqwest_in_memory_body_conversion_remains_available() {
+        let mut body = AsyncBody::try_from(reqwest::Body::from("payload")).unwrap();
+        let mut text = String::new();
+        futures::executor::block_on(body.read_to_string(&mut text)).unwrap();
+        assert_eq!(text, "payload");
     }
 }

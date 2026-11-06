@@ -26,6 +26,7 @@ accessibility = ["gpui_core/accessibility", "gpui_platform/accessibility"]
 default = [
     "accessibility",
     "font-kit",
+    "http-client-reqwest",
     "keyring",
     "wayland",
     "x11",
@@ -34,6 +35,8 @@ default = [
     "image-rayon",
 ]
 font-kit = ["gpui_core/font-kit", "gpui_platform/font-kit"]
+# Retain the default HTTP compatibility API while allowing protocol-only builds.
+http-client-reqwest = ["gpui_core/http-client-reqwest"]
 # Secret Service credentials storage on Linux (oo7). Included in default;
 # disable with default-features = false to drop oo7 and its unique
 # transitive dependencies (credentials methods then return an error).

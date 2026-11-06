@@ -37,6 +37,13 @@ fc-gpui = { version = "0.13.0", default-features = false, features = [
 The crate now exposes `image-format-*` features that map directly to `image` crate decoders, plus
 `image-rayon` for parallel decoding. SVG rendering remains available separately via `resvg`.
 
+The default `http-client-reqwest` feature retains the HTTP compatibility methods that accept
+reqwest multipart forms and bodies. Disabling default features also removes that dependency;
+ordinary HTTP requests and responses still work with an injected client. Add
+`"http-client-reqwest"` when a minimal build uses those reqwest-specific methods. Direct users of
+`fc-gpui-http-client` can use `default-features = false` for the same protocol-only API, or enable
+its `reqwest` feature to restore the compatibility methods.
+
 ### Import Naming
 
 The published package is `fc-gpui`, but the library target keeps the upstream `gpui` namespace,
