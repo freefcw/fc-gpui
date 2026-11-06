@@ -142,7 +142,9 @@ fn generate_test_function(
                     let last_segment = ty.path.segments.last();
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
-                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
+                            inner_fn_args.extend(
+                                quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),),
+                            );
                             continue;
                         }
                         Some("BackgroundExecutor") => {
@@ -215,7 +217,9 @@ fn generate_test_function(
                     let last_segment = ty.path.segments.last();
 
                     if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
+                        inner_fn_args.extend(
+                            quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),),
+                        );
                         continue;
                     }
                 } else if let Type::Reference(ty) = &*arg.ty

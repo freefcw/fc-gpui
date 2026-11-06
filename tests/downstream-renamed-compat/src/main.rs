@@ -31,6 +31,21 @@ struct RenamedContext<'a, 'b> {
 #[ui::test]
 fn renamed_test_macro(_cx: &mut ui::TestAppContext) {}
 
+#[cfg(test)]
+use ui::private::rand::{RngCore, SeedableRng, rngs::StdRng};
+
+#[ui::test(seed = 7)]
+fn renamed_seeded_test_macro(mut rng: StdRng) {
+    let mut expected = StdRng::seed_from_u64(7);
+    assert_eq!(rng.next_u64(), expected.next_u64());
+}
+
+#[ui::test(seed = 11)]
+async fn renamed_async_seeded_test_macro(mut rng: StdRng) {
+    let mut expected = StdRng::seed_from_u64(11);
+    assert_eq!(rng.next_u64(), expected.next_u64());
+}
+
 fn main() {
     let _ = DerivedView;
     let _ = RenamedAction;
