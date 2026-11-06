@@ -175,36 +175,49 @@ impl Scene {
     }
 
     pub(crate) fn finish(&mut self) {
-        // Primitives are typically inserted in draw order during painting.
-        // Skip the O(n log n) sort when data is already sorted (common case).
-        if !self.shadows.is_sorted_by_key(|s| s.order) {
-            self.shadows.sort_unstable_by_key(|s| s.order);
-        }
-        if !self.quads.is_sorted_by_key(|q| q.order) {
-            self.quads.sort_unstable_by_key(|q| q.order);
-        }
-        if !self.paths.is_sorted_by_key(|p| p.order) {
-            self.paths.sort_unstable_by_key(|p| p.order);
-        }
-        if !self.underlines.is_sorted_by_key(|u| u.order) {
-            self.underlines.sort_unstable_by_key(|u| u.order);
-        }
-        if !self
-            .monochrome_sprites
-            .is_sorted_by_key(|s| (s.order, s.tile.texture_id.index))
+        let shadow_indices = sort_primitives(&mut self.shadows, |shadow| shadow.order);
+        let quad_indices = sort_primitives(&mut self.quads, |quad| quad.order);
+        let path_indices = sort_primitives(&mut self.paths, |path| path.order);
+        let underline_indices = sort_primitives(&mut self.underlines, |underline| underline.order);
+        let monochrome_sprite_indices = sort_primitives(&mut self.monochrome_sprites, |sprite| {
+            (sprite.order, sprite.tile.texture_id.index)
+        });
+        let polychrome_sprite_indices = sort_primitives(&mut self.polychrome_sprites, |sprite| {
+            (sprite.order, sprite.tile.texture_id.index)
+        });
+        let surface_indices = sort_primitives(&mut self.surfaces, |surface| surface.order);
+        if [
+            &shadow_indices,
+            &quad_indices,
+            &path_indices,
+            &underline_indices,
+            &monochrome_sprite_indices,
+            &polychrome_sprite_indices,
+            &surface_indices,
+        ]
+        .iter()
+        .all(|mapping| mapping.is_none())
         {
-            self.monochrome_sprites
-                .sort_unstable_by_key(|s| (s.order, s.tile.texture_id.index));
+            return;
         }
-        if !self
-            .polychrome_sprites
-            .is_sorted_by_key(|s| (s.order, s.tile.texture_id.index))
-        {
-            self.polychrome_sprites
-                .sort_unstable_by_key(|s| (s.order, s.tile.texture_id.index));
-        }
-        if !self.surfaces.is_sorted_by_key(|s| s.order) {
-            self.surfaces.sort_unstable_by_key(|s| s.order);
+
+        // Paint ranges retain insertion order, while backend arrays use batch order.
+        // Keep each log entry attached to its primitive when those arrays move.
+        for operation in &mut self.paint_operations {
+            if let PaintOperation::Primitive(kind, index) = operation {
+                let mapping = match kind {
+                    PrimitiveKind::Shadow => &shadow_indices,
+                    PrimitiveKind::Quad => &quad_indices,
+                    PrimitiveKind::Path => &path_indices,
+                    PrimitiveKind::Underline => &underline_indices,
+                    PrimitiveKind::MonochromeSprite => &monochrome_sprite_indices,
+                    PrimitiveKind::PolychromeSprite => &polychrome_sprite_indices,
+                    PrimitiveKind::Surface => &surface_indices,
+                };
+                if let Some(mapping) = mapping {
+                    *index = mapping[*index];
+                }
+            }
         }
     }
 
@@ -240,6 +253,30 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+}
+
+fn sort_primitives<T, K: Ord>(primitives: &mut [T], key: impl Fn(&T) -> K) -> Option<Vec<usize>> {
+    // Painting commonly produces batch order already, so keep that path allocation-free.
+    if primitives.is_sorted_by_key(&key) {
+        return None;
+    }
+
+    let mut permutation = (0..primitives.len()).collect::<Vec<_>>();
+    permutation.sort_unstable_by_key(|&index| key(&primitives[index]));
+    let mut index_mapping = vec![0; primitives.len()];
+    for (sorted_index, &original_index) in permutation.iter().enumerate() {
+        index_mapping[original_index] = sorted_index;
+    }
+
+    permutation.copy_from_slice(&index_mapping);
+    for index in 0..primitives.len() {
+        while permutation[index] != index {
+            let destination = permutation[index];
+            primitives.swap(index, destination);
+            permutation.swap(index, destination);
+        }
+    }
+    Some(index_mapping)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
@@ -819,6 +856,65 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(batch_lengths, vec![2, 1, 1, 1]);
+    }
+
+    #[test]
+    fn replay_keeps_insertion_identity_after_primitive_sorting() {
+        let mut scene = Scene::default();
+        for (x, y) in [(0., 0.), (5., 5.), (100., 0.)] {
+            let mut quad = test_quad(BlendMode::Normal);
+            quad.bounds.origin = point(x.into(), y.into());
+            quad.content_mask.bounds = quad.bounds;
+            scene.insert_primitive(quad);
+        }
+        let expected_bounds = scene.quads[1].bounds;
+        assert_eq!(
+            scene
+                .quads
+                .iter()
+                .map(|quad| quad.order)
+                .collect::<Vec<_>>(),
+            [1, 2, 1]
+        );
+
+        scene.finish();
+        scene.finish();
+        let mut replayed = Scene::default();
+        replayed.replay(1..2, &scene);
+
+        assert_eq!(replayed.quads.len(), 1);
+        assert_eq!(replayed.quads[0].bounds, expected_bounds);
+    }
+
+    #[test]
+    fn replay_keeps_sprite_identity_after_texture_sorting() {
+        let mut scene = Scene::default();
+        for (x, texture_index) in [(0., 2), (100., 1)] {
+            let bounds = bounds(point(x.into(), 0.0.into()), size(10.0.into(), 10.0.into()));
+            scene.insert_primitive(PolychromeSprite {
+                order: 0,
+                pad: 0,
+                tile: AtlasTile {
+                    texture_id: AtlasTextureId {
+                        index: texture_index,
+                        kind: crate::AtlasTextureKind::Polychrome,
+                    },
+                    tile_id: crate::TileId(0),
+                    padding: 0,
+                    bounds: Bounds::default(),
+                },
+                grayscale: false.into(),
+                opacity: 1.,
+                bounds,
+                content_mask: ContentMask { bounds },
+                corner_radii: Corners::default(),
+            });
+        }
+        scene.finish();
+        let mut replayed = Scene::default();
+        replayed.replay(0..1, &scene);
+
+        assert_eq!(replayed.polychrome_sprites[0].tile.texture_id.index, 2);
     }
 
     #[test]
