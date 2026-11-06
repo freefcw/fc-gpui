@@ -3354,7 +3354,17 @@ mod test {
         let first = app.borrow();
         let second = app.borrow();
         drop(first);
-        assert!(app.try_borrow_mut().is_err());
+        let try_line = line!() + 1;
+        let error = app.try_borrow_mut().err().expect("conflicting borrow");
+        let error = error.to_string();
+        assert!(error.contains(&format!(
+            "attempted mutable App borrow at {}:{try_line}:",
+            file!()
+        )));
+        assert!(error.contains(&format!(
+            "existing shared borrow group began at {}:{first_line}:",
+            file!()
+        )));
 
         let attempted_line = line!() + 1;
         let panic = catch_unwind(AssertUnwindSafe(|| drop(app.borrow_mut())));
