@@ -306,19 +306,25 @@ impl BackgroundExecutor {
         }
     }
 
-    #[cfg(not(any(test, feature = "test-support")))]
+    #[track_caller]
     pub(crate) fn block_internal<Fut: Future>(
         &self,
         _background_only: bool,
         future: Fut,
         timeout: Option<Duration>,
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
-        use std::time::Instant;
-
         let mut future = Box::pin(future);
         if timeout == Some(Duration::ZERO) {
             return Err(future);
         }
+
+        // Compiling test support must not change how a real dispatcher runs.
+        // Only the deterministic test dispatcher needs to be driven by ticks.
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(dispatcher) = self.dispatcher.as_test() {
+            return self.block_test_internal(dispatcher, _background_only, future, timeout);
+        }
+
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
         let unparker = self.dispatcher.unparker();
@@ -333,9 +339,10 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout)
-                        && deadline.is_some_and(|deadline| deadline < Instant::now())
-                    {
+                    self.dispatcher.park(timeout);
+                    // Dispatchers may wake spuriously or report a timeout as a
+                    // successful park. The deadline is the source of truth.
+                    if deadline.is_some_and(|deadline| deadline <= Instant::now()) {
                         return Err(future);
                     }
                 }
@@ -345,21 +352,14 @@ impl BackgroundExecutor {
 
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
-    pub(crate) fn block_internal<Fut: Future>(
+    fn block_test_internal<Fut: Future>(
         &self,
+        dispatcher: &crate::TestDispatcher,
         background_only: bool,
-        future: Fut,
+        mut future: Pin<Box<Fut>>,
         timeout: Option<Duration>,
-    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
+    ) -> Result<Fut::Output, Pin<Box<Fut>>> {
         use std::sync::atomic::AtomicBool;
-
-        let mut future = Box::pin(future);
-        if timeout == Some(Duration::ZERO) {
-            return Err(future);
-        }
-        let Some(dispatcher) = self.dispatcher.as_test() else {
-            return Err(future);
-        };
 
         let mut max_ticks = if timeout.is_some() {
             dispatcher.gen_block_on_ticks()
@@ -705,8 +705,8 @@ impl<'a> Scope<'a> {
     {
         let tx = self.tx.clone().unwrap();
 
-        // SAFETY: The 'a lifetime is guaranteed to outlive any of these futures because
-        // dropping this `Scope` blocks until all of the futures have resolved.
+        // SAFETY: Dropping this `Scope` drops any unsubmitted futures and waits
+        // for submitted futures to finish, so none can outlive the 'a lifetime.
         let f = unsafe {
             mem::transmute::<
                 Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
@@ -722,10 +722,13 @@ impl<'a> Scope<'a> {
 
 impl Drop for Scope<'_> {
     fn drop(&mut self) {
+        // If the scheduler panicked, these futures were never submitted. Drop
+        // their borrowed captures and senders before waiting for running tasks.
+        self.futures.clear();
         self.tx.take().unwrap();
 
-        // Wait until the channel is closed, which means that all of the spawned
-        // futures have resolved.
+        // Wait until the channel is closed, so submitted futures have finished
+        // or been dropped and no longer hold borrowed captures.
         self.executor.block(self.rx.next());
     }
 }
@@ -943,6 +946,163 @@ mod tests {
             executor.block_with_timeout(Duration::from_millis(1), futures::future::pending::<()>());
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn threaded_executor_blocks_ready_and_woken_futures() {
+        let executor = BackgroundExecutor::new(Arc::new(crate::ThreadedDispatcher::new()));
+        assert!(!executor.is_test());
+        assert_eq!(executor.block(async { 42 }), 42);
+        assert_eq!(
+            executor
+                .block_with_timeout(Duration::from_secs(1), async { 42 })
+                .ok(),
+            Some(42)
+        );
+
+        let completed = Arc::new(AtomicBool::new(false));
+        let mut started = false;
+        let future = futures::future::poll_fn(|cx| {
+            if !started {
+                started = true;
+                let completed = completed.clone();
+                let waker = cx.waker().clone();
+                executor
+                    .spawn(async move {
+                        completed.store(true, Ordering::SeqCst);
+                        waker.wake();
+                    })
+                    .detach();
+                return Poll::Pending;
+            }
+            if completed.load(Ordering::SeqCst) {
+                Poll::Ready(42)
+            } else {
+                Poll::Pending
+            }
+        });
+        assert_eq!(
+            executor
+                .block_with_timeout(Duration::from_secs(1), future)
+                .ok(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn threaded_executor_timeout_preserves_pending_future() {
+        let executor = BackgroundExecutor::new(Arc::new(crate::ThreadedDispatcher::new()));
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let timeout = Duration::from_millis(5);
+        let started = Instant::now();
+        let pending = executor
+            .block_with_timeout(timeout, receiver)
+            .expect_err("the unsent receiver must time out");
+        assert!(started.elapsed() >= timeout);
+        sender.send(42).unwrap();
+        assert_eq!(executor.block(pending), Ok(42));
+    }
+
+    #[test]
+    fn threaded_executor_zero_timeout_does_not_poll() {
+        let executor = BackgroundExecutor::new(Arc::new(crate::ThreadedDispatcher::new()));
+        let polled = std::cell::Cell::new(false);
+        let future = async {
+            polled.set(true);
+            42
+        };
+        let pending = executor
+            .block_with_timeout(Duration::ZERO, future)
+            .expect_err("zero timeout must return the unpolled future");
+        assert!(!polled.get());
+        assert_eq!(executor.block(pending), 42);
+        assert!(polled.get());
+    }
+
+    #[test]
+    fn threaded_executor_scopes_wait_for_borrowed_tasks() {
+        let executor = BackgroundExecutor::new(Arc::new(crate::ThreadedDispatcher::new()));
+        futures::executor::block_on(executor.scoped(|_| {}));
+
+        let mut completed = false;
+        futures::executor::block_on(executor.scoped(|scope| {
+            scope.spawn(async { completed = true });
+        }));
+        assert!(completed);
+    }
+
+    #[test]
+    fn scope_scheduler_panic_drops_unsubmitted_futures() {
+        const CHILD_DISPATCHER: &str = "GPUI_SCOPE_PANIC_TEST_DISPATCHER";
+        if let Ok(dispatcher) = std::env::var(CHILD_DISPATCHER) {
+            use std::panic::{AssertUnwindSafe, catch_unwind};
+
+            struct BorrowedDrop<'a>(&'a AtomicBool);
+            impl Drop for BorrowedDrop<'_> {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::SeqCst);
+                }
+            }
+
+            let cx = TestAppContext::single();
+            let executor = if dispatcher == "threaded" {
+                BackgroundExecutor::new(Arc::new(crate::ThreadedDispatcher::new()))
+            } else {
+                cx.executor()
+            };
+            let dropped = AtomicBool::new(false);
+            let ran = AtomicBool::new(false);
+            let guard = BorrowedDrop(&dropped);
+            let panic = catch_unwind(AssertUnwindSafe(|| {
+                futures::executor::block_on(executor.scoped(|scope| {
+                    let ran = &ran;
+                    scope.spawn(async move {
+                        ran.store(true, Ordering::SeqCst);
+                        drop(guard);
+                    });
+                    panic!("scheduler panic");
+                }));
+            }))
+            .expect_err("the scheduler panic must reach the caller");
+            assert_eq!(panic.downcast_ref::<&str>(), Some(&"scheduler panic"));
+            assert!(!ran.load(Ordering::SeqCst));
+            assert!(dropped.load(Ordering::SeqCst));
+            return;
+        }
+
+        // A regression can deadlock a real dispatcher or double-panic while
+        // unwinding the deterministic one. Isolate both in bounded subprocesses.
+        let mut failures = Vec::new();
+        for dispatcher in ["threaded", "deterministic"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "executor::tests::scope_scheduler_panic_drops_unsubmitted_futures",
+                ])
+                .env(CHILD_DISPATCHER, dispatcher)
+                .env("RUST_BACKTRACE", "0")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    if !status.success() {
+                        failures.push(format!("{dispatcher}: {status}"));
+                    }
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    failures.push(format!("{dispatcher}: timed out"));
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("; "));
     }
 
     #[test]
