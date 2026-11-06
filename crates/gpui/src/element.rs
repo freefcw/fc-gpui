@@ -48,6 +48,15 @@ use std::{
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
 /// You can create custom elements by implementing this trait, see the module-level documentation
 /// for more details.
+///
+/// A newly rendered element is processed in order: [`Element::request_layout`],
+/// [`Element::prepaint`], then [`Element::paint`], with each phase's state passed to
+/// the next. These callbacks are not guaranteed to run on every window frame.
+/// When an ancestor [`crate::AnyView::cached`] reuses its output, its subtree's
+/// layout, prepaint, and paint callbacks are skipped. Keep application state changes
+/// and work that must run every frame outside these callbacks; notify the consuming
+/// view when a state change requires fresh output. See [`crate::AnyView::cached`]
+/// for invalidation and entity-subscription behavior.
 pub trait Element: 'static + IntoElement {
     /// The type of state returned from [`Element::request_layout`]. A mutable reference to this state is subsequently
     /// provided to [`Element::prepaint`] and [`Element::paint`].
@@ -80,6 +89,7 @@ pub trait Element: 'static + IntoElement {
 
     /// After laying out an element, we need to commit its bounds to the current frame for hitbox
     /// purposes. The state argument is the same state that was returned from [`Element::request_layout()`].
+    /// Cached ancestors can replay this phase's recorded output without calling it again.
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
@@ -90,8 +100,9 @@ pub trait Element: 'static + IntoElement {
         cx: &mut App,
     ) -> Self::PrepaintState;
 
-    /// Once layout has been completed, this method will be called to paint the element to the screen.
-    /// The state argument is the same state that was returned from [`Element::request_layout()`].
+    /// After prepaint, record the drawing commands for this element.
+    /// The state arguments come from [`Element::request_layout`] and [`Element::prepaint`].
+    /// Cached ancestors can replay these commands without calling this method again.
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,

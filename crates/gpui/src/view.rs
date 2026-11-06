@@ -100,9 +100,23 @@ impl<V: Render> From<Entity<V>> for AnyView {
 }
 
 impl AnyView {
-    /// Indicate that this view should be cached when using it as an element.
-    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
-    /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
+    /// Cache this view when using it as an element, using `style` for its outer layout.
+    ///
+    /// On a cache hit, GPUI reuses the subtree's recorded prepaint and paint output
+    /// without calling the view's render method or its elements' `request_layout`,
+    /// `prepaint`, or `paint` methods. The cached view's outer layout is still computed.
+    /// Reuse requires matching bounds, content mask, text style, and inherited opacity.
+    ///
+    /// Calling [`Context::notify`] on this view or a descendant view invalidates the
+    /// cached ancestor views along its rendered view path. Entity reads recorded while
+    /// rendering the subtree remain subscribed when its output is reused, so their
+    /// notifications can still schedule a window redraw. A read of a non-view entity
+    /// does not by itself give that entity a view path: notify the consuming view when
+    /// its output changes, or call [`Window::refresh`] outside a draw to bypass caches
+    /// for the next frame. Inspector picking also disables caching.
+    ///
+    /// Rendering phases must not be used for side effects that need to run every
+    /// frame. Schedule such work separately and notify the view when it needs repainting.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style.into());
         self
