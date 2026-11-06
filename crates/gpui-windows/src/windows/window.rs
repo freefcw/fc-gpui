@@ -1009,9 +1009,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
-        // todo(windows): position the TSF candidate window. Windows does have
-        // IME candidate positioning (ITextInputPanel / ITfContextView); it is
-        // just not wired up yet, so the candidate window follows the caret.
+        // The IMM path in `events.rs::handle_ime_position` positions the
+        // composition and candidate windows when composition starts. This
+        // hook still ignores later bounds updates supplied by GPUI.
     }
 
     fn play_system_bell(&self) {
