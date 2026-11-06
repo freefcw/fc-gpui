@@ -15,11 +15,11 @@ use raw_window_handle as rwh;
 use uuid::Uuid;
 
 use gpui::{
-    AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
-    DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Result, Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams, WindowVisibility, px,
+    AtlasKey, AtlasTextureId, AtlasTile, AtlasTileRegistry, Bounds, Capslock, DevicePixels,
+    DispatchEventResult, DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, Result, Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowParams, WindowVisibility, px,
 };
 
 #[derive(Debug)]
@@ -227,6 +227,7 @@ struct HeadlessAtlas(Mutex<HeadlessAtlasState>);
 struct HeadlessAtlasState {
     next_id: u32,
     tiles: HashMap<AtlasKey, AtlasTile>,
+    tile_registry: AtlasTileRegistry,
 }
 
 impl PlatformAtlas for HeadlessAtlas {
@@ -251,7 +252,7 @@ impl PlatformAtlas for HeadlessAtlas {
         let texture_id = state.next_id;
         state.next_id += 1;
         let tile_id = state.next_id;
-        let tile = AtlasTile {
+        let mut tile = AtlasTile {
             texture_id: AtlasTextureId {
                 index: texture_id,
                 kind: key.texture_kind(),
@@ -263,11 +264,23 @@ impl PlatformAtlas for HeadlessAtlas {
                 size,
             },
         };
+        state.tile_registry.register(&mut tile)?;
         state.tiles.insert(key.clone(), tile);
         Ok(Some(tile))
     }
 
     fn remove(&self, key: &AtlasKey) {
-        self.0.lock().tiles.remove(key);
+        let mut state = self.0.lock();
+        if let Some(tile) = state.tiles.remove(key) {
+            state.tile_registry.remove(&tile);
+        }
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.lock().tile_registry.epoch()
+    }
+
+    fn is_tile_live(&self, tile: &AtlasTile) -> bool {
+        self.0.lock().tile_registry.is_live(tile)
     }
 }

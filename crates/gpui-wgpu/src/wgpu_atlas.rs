@@ -5,8 +5,8 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, ops, sync::Arc};
 
 use gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, AtlasTileRegistry,
+    Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
 
 use super::WgpuContext;
@@ -38,6 +38,7 @@ struct WgpuAtlasState {
     color_texture_format: wgpu::TextureFormat,
     storage: WgpuAtlasStorage,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    tile_registry: AtlasTileRegistry,
     pending_uploads: Vec<PendingUpload>,
     next_texture_generation: u64,
 }
@@ -64,6 +65,7 @@ impl WgpuAtlas {
             color_texture_format,
             storage: WgpuAtlasStorage::default(),
             tiles_by_key: Default::default(),
+            tile_registry: Default::default(),
             pending_uploads: Vec::new(),
             next_texture_generation: 0,
         }))
@@ -102,6 +104,7 @@ impl WgpuAtlas {
         let mut lock = self.0.lock();
         lock.storage = WgpuAtlasStorage::default();
         lock.tiles_by_key.clear();
+        lock.tile_registry.clear();
         lock.pending_uploads.clear();
     }
 
@@ -114,6 +117,7 @@ impl WgpuAtlas {
         lock.color_texture_format = context.color_texture_format();
         lock.storage = WgpuAtlasStorage::default();
         lock.tiles_by_key.clear();
+        lock.tile_registry.clear();
         lock.pending_uploads.clear();
     }
 }
@@ -132,9 +136,10 @@ impl PlatformAtlas for WgpuAtlas {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let tile = lock
+            let mut tile = lock
                 .allocate(size, key.texture_kind())
                 .context("failed to allocate")?;
+            lock.tile_registry.register(&mut tile)?;
             lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
@@ -147,6 +152,7 @@ impl PlatformAtlas for WgpuAtlas {
         let Some(tile) = lock.tiles_by_key.remove(key) else {
             return;
         };
+        lock.tile_registry.remove(&tile);
         let id = tile.texture_id;
 
         let Some(texture_slot) = lock.storage[id.kind].textures.get_mut(id.index as usize) else {
@@ -166,6 +172,14 @@ impl PlatformAtlas for WgpuAtlas {
                 *texture_slot = Some(texture);
             }
         }
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.lock().tile_registry.epoch()
+    }
+
+    fn is_tile_live(&self, tile: &AtlasTile) -> bool {
+        self.0.lock().tile_registry.is_live(tile)
     }
 }
 
@@ -519,6 +533,11 @@ mod tests {
         atlas.remove(&big_key_a);
         let tile_b = insert_tile(&atlas, &big_key_b, big)?;
         assert_eq!(tile_b.texture_id, keeper_tile.texture_id);
+        assert_eq!(tile_b.bounds, tile_a.bounds);
+        assert!(!atlas.is_tile_live(&tile_a));
+        assert!(atlas.is_tile_live(&tile_b));
+        assert!(atlas.is_tile_live(&keeper_tile));
+        assert_eq!(atlas.epoch(), 1);
 
         Ok(())
     }
@@ -558,6 +577,28 @@ mod tests {
 
         assert_eq!(second_tile.texture_id, first_tile.texture_id);
         assert_ne!(second_generation, first_generation);
+        assert!(!atlas.is_tile_live(&first_tile));
+        assert!(atlas.is_tile_live(&second_tile));
+        assert_ne!(second_tile.padding, first_tile.padding);
+        Ok(())
+    }
+
+    #[test]
+    fn clearing_atlas_does_not_revive_old_tiles() -> anyhow::Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+        let size = Size {
+            width: DevicePixels(64),
+            height: DevicePixels(64),
+        };
+        let atlas = WgpuAtlas::new(device, queue, wgpu::TextureFormat::Bgra8Unorm, size);
+        let first = insert_tile(&atlas, &make_image_key(1, 0), size)?;
+        atlas.clear();
+        let replacement = insert_tile(&atlas, &make_image_key(2, 0), size)?;
+
+        assert_eq!(first.texture_id, replacement.texture_id);
+        assert!(!atlas.is_tile_live(&first));
+        assert!(atlas.is_tile_live(&replacement));
+        assert_eq!(atlas.epoch(), 1);
         Ok(())
     }
 

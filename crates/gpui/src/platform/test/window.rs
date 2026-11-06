@@ -456,6 +456,7 @@ impl PlatformWindow for TestWindow {
 pub(crate) struct TestAtlasState {
     next_id: u32,
     tiles: HashMap<AtlasKey, AtlasTile>,
+    tile_registry: crate::AtlasTileRegistry,
 }
 
 pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
@@ -465,6 +466,7 @@ impl TestAtlas {
         TestAtlas(Mutex::new(TestAtlasState {
             next_id: 0,
             tiles: HashMap::default(),
+            tile_registry: Default::default(),
         }))
     }
 }
@@ -493,27 +495,36 @@ impl PlatformAtlas for TestAtlas {
         state.next_id += 1;
         let tile_id = state.next_id;
 
-        state.tiles.insert(
-            key.clone(),
-            crate::AtlasTile {
-                texture_id: AtlasTextureId {
-                    index: texture_id,
-                    kind: crate::AtlasTextureKind::Monochrome,
-                },
-                tile_id: TileId(tile_id),
-                padding: 0,
-                bounds: crate::Bounds {
-                    origin: Point::default(),
-                    size,
-                },
+        let mut tile = crate::AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind: crate::AtlasTextureKind::Monochrome,
             },
-        );
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: crate::Bounds {
+                origin: Point::default(),
+                size,
+            },
+        };
+        state.tile_registry.register(&mut tile)?;
+        state.tiles.insert(key.clone(), tile);
 
         Ok(Some(state.tiles[key]))
     }
 
     fn remove(&self, key: &AtlasKey) {
         let mut state = self.0.lock();
-        state.tiles.remove(key);
+        if let Some(tile) = state.tiles.remove(key) {
+            state.tile_registry.remove(&tile);
+        }
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.lock().tile_registry.epoch()
+    }
+
+    fn is_tile_live(&self, tile: &AtlasTile) -> bool {
+        self.0.lock().tile_registry.is_live(tile)
     }
 }

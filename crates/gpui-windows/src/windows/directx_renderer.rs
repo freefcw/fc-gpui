@@ -301,7 +301,8 @@ impl DirectXRenderer {
     /// instead, so the encoded frame cannot drift between the two.
     fn render_scene(&mut self, scene: &Scene, render_target: &DirectXRenderTarget) -> Result<()> {
         self.pre_draw(render_target)?;
-        for batch in scene.batches() {
+        let atlas = self.atlas.clone();
+        for batch in scene.batches_for_atlas(atlas.as_ref()) {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(quads, render_target),

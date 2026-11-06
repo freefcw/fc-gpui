@@ -1,4 +1,5 @@
 mod app_menu;
+mod atlas;
 mod keyboard;
 mod keystroke;
 /// Wayland layer-shell window configuration.
@@ -95,6 +96,8 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+#[doc(hidden)]
+pub use atlas::AtlasTileRegistry;
 pub use keyboard::*;
 pub use keystroke::*;
 
@@ -1345,6 +1348,19 @@ pub trait PlatformAtlas: Send + Sync {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
+
+    /// Changes when previously issued tiles are invalidated, so cached views repaint.
+    /// Atlases that never invalidate tiles may keep the default constant epoch.
+    fn epoch(&self) -> u64 {
+        0
+    }
+
+    /// Whether this allocation still owns its pixels. Renderers check this before
+    /// drawing cached sprites because both texture slots and tile regions may be reused.
+    /// The default preserves compatibility with atlases that do not recycle tiles.
+    fn is_tile_live(&self, _tile: &AtlasTile) -> bool {
+        true
+    }
 }
 
 #[doc(hidden)]
@@ -1390,6 +1406,8 @@ impl<T> AtlasTextureList<T> {
 pub struct AtlasTile {
     pub texture_id: AtlasTextureId,
     pub tile_id: TileId,
+    /// CPU allocation identity assigned by recycling atlases; ignored by shaders.
+    /// Kept in the existing padding word to preserve the GPU instance layout.
     pub padding: u32,
     pub bounds: Bounds<DevicePixels>,
 }

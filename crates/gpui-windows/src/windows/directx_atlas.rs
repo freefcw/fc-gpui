@@ -10,8 +10,8 @@ use windows::Win32::Graphics::{
 };
 
 use crate::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, AtlasTileRegistry,
+    Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
 
 pub(crate) struct DirectXAtlas(Mutex<DirectXAtlasState>);
@@ -23,6 +23,7 @@ struct DirectXAtlasState {
     monochrome_textures: AtlasTextureList<DirectXAtlasTexture>,
     polychrome_textures: AtlasTextureList<DirectXAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    tile_registry: AtlasTileRegistry,
 }
 
 struct DirectXAtlasTexture {
@@ -47,6 +48,7 @@ impl DirectXAtlas {
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             tiles_by_key: Default::default(),
+            tile_registry: Default::default(),
         }))
     }
 
@@ -74,6 +76,7 @@ impl DirectXAtlas {
         lock.monochrome_textures = AtlasTextureList::default();
         lock.polychrome_textures = AtlasTextureList::default();
         lock.tiles_by_key.clear();
+        lock.tile_registry.clear();
     }
 }
 
@@ -92,9 +95,10 @@ impl PlatformAtlas for DirectXAtlas {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let tile = lock
+            let mut tile = lock
                 .allocate(size, key.texture_kind())
                 .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
+            lock.tile_registry.register(&mut tile)?;
             let texture = lock
                 .texture(tile.texture_id)
                 .ok_or_else(|| anyhow::anyhow!("allocated tile refers to a missing texture"))?;
@@ -110,6 +114,7 @@ impl PlatformAtlas for DirectXAtlas {
         let Some(tile) = lock.tiles_by_key.remove(key) else {
             return;
         };
+        lock.tile_registry.remove(&tile);
         let id = tile.texture_id;
 
         let textures = match id.kind {
@@ -130,6 +135,14 @@ impl PlatformAtlas for DirectXAtlas {
                 *texture_slot = Some(texture);
             }
         }
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.lock().tile_registry.epoch()
+    }
+
+    fn is_tile_live(&self, tile: &AtlasTile) -> bool {
+        self.0.lock().tile_registry.is_live(tile)
     }
 }
 

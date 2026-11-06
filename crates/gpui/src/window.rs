@@ -2989,6 +2989,7 @@ impl Window {
             // text resolved before the new fonts were installed.
             self.refreshing = true;
         }
+        let atlas_epoch = self.sprite_atlas_epoch();
         self.invalidate_entities();
         let previous_access_frame = cx.entities.start_access_frame();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -3071,6 +3072,9 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+        if self.sprite_atlas_epoch() != atlas_epoch {
+            self.on_next_frame(|window, _| window.refresh());
+        }
 
         drop(arena_scope);
         ArenaClearNeeded
@@ -4519,7 +4523,8 @@ impl Window {
         });
     }
 
-    /// Removes an image from the sprite atlas.
+    /// Removes an image from the sprite atlas and refreshes the window.
+    /// Allocations invalidated during drawing are rebuilt on the next frame.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
             let params = RenderImageParams {
@@ -4530,7 +4535,16 @@ impl Window {
             self.sprite_atlas.remove(&params.clone().into());
         }
 
+        if data.frame_count() > 0 && self.invalidator.not_drawing() {
+            self.refresh();
+            self.platform_window.schedule_frame();
+        }
+
         Ok(())
+    }
+
+    pub(crate) fn sprite_atlas_epoch(&self) -> u64 {
+        self.sprite_atlas.epoch()
     }
 
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
@@ -7060,6 +7074,145 @@ mod tests {
             .unwrap();
             assert_eq!(renders.get(), fresh_renders, "the child should stay cached");
         }
+    }
+
+    #[test]
+    fn cached_view_rebuilds_after_atlas_allocations_are_removed() {
+        struct Child {
+            image: Arc<RenderImage>,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                crate::img(self.image.clone()).size_full()
+            }
+        }
+        struct Root(Entity<Child>);
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                AnyView::from(self.0.clone()).cached(StyleRefinement::default().size(px(40.)))
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let image = Arc::new(RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::new(8, 8),
+        )]));
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let image = image.clone();
+            let renders = renders.clone();
+            move |_, cx| Root(cx.new(|_| Child { image, renders }))
+        });
+        let fresh_renders = renders.get();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear();
+            assert_eq!(renders.get(), fresh_renders);
+            let old_tile = window.rendered_frame.scene.polychrome_sprites[0].tile;
+            let old_epoch = window.sprite_atlas_epoch();
+            window.sprite_atlas.remove(
+                &RenderImageParams {
+                    image_id: image.id,
+                    frame_index: 0,
+                }
+                .into(),
+            );
+            assert_ne!(window.sprite_atlas_epoch(), old_epoch);
+            assert!(!window.sprite_atlas.is_tile_live(&old_tile));
+
+            window.draw(cx).clear();
+            assert_eq!(renders.get(), fresh_renders + 1);
+            let new_tile = window.rendered_frame.scene.polychrome_sprites[0].tile;
+            assert!(window.sprite_atlas.is_tile_live(&new_tile));
+            assert_ne!(new_tile.padding, old_tile.padding);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn atlas_eviction_during_paint_requests_a_repair_frame() {
+        struct Child(Arc<RenderImage>, Rc<Cell<usize>>);
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.1.set(self.1.get() + 1);
+                crate::img(self.0.clone()).size_full()
+            }
+        }
+        struct Root {
+            child: Entity<Child>,
+            image: Arc<RenderImage>,
+            evict: Rc<Cell<bool>>,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let image = self.image.clone();
+                let evict = self.evict.clone();
+                div()
+                    .size_full()
+                    .child(
+                        AnyView::from(self.child.clone())
+                            .cached(StyleRefinement::default().size(px(40.))),
+                    )
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |_, _, window, _| {
+                                if evict.replace(false) {
+                                    window.drop_image(image).unwrap();
+                                }
+                            },
+                        )
+                        .size(px(1.)),
+                    )
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let image = Arc::new(RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::new(8, 8),
+        )]));
+        let renders = Rc::new(Cell::new(0));
+        let evict = Rc::new(Cell::new(false));
+        let window = cx.add_window({
+            let renders = renders.clone();
+            let evict = evict.clone();
+            move |_, cx| Root {
+                child: cx.new(|_| Child(image.clone(), renders)),
+                image,
+                evict,
+            }
+        });
+        let fresh_renders = renders.get();
+        evict.set(true);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear();
+            assert_eq!(renders.get(), fresh_renders);
+            assert!(
+                !window
+                    .rendered_frame
+                    .scene
+                    .batches_for_atlas(window.sprite_atlas.as_ref())
+                    .any(|batch| matches!(batch, crate::PrimitiveBatch::PolychromeSprites { .. }))
+            );
+            let callbacks = window.next_frame_callbacks.take();
+            assert!(!callbacks.is_empty(), "eviction must wake a repair frame");
+            for callback in callbacks {
+                callback(window, cx);
+            }
+            window.draw(cx).clear();
+            assert_eq!(renders.get(), fresh_renders + 1);
+            assert!(
+                window
+                    .rendered_frame
+                    .scene
+                    .polychrome_sprites
+                    .iter()
+                    .all(|sprite| window.sprite_atlas.is_tile_live(&sprite.tile))
+            );
+            assert!(window.next_frame_callbacks.borrow().is_empty());
+        })
+        .unwrap();
     }
 
     #[test]

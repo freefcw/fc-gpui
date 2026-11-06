@@ -677,7 +677,8 @@ impl MetalRenderer {
             },
         );
 
-        for batch in scene.batches() {
+        let atlas = self.sprite_atlas.clone();
+        for batch in scene.batches_for_atlas(atlas.as_ref()) {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(
                     shadows,

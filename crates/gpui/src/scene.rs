@@ -229,7 +229,12 @@ impl Scene {
         allow(dead_code)
     )]
     pub fn batches(&self) -> impl Iterator<Item = PrimitiveBatch<'_>> {
+        self.batch_iter(None)
+    }
+
+    fn batch_iter<'a>(&'a self, atlas: Option<&'a dyn crate::PlatformAtlas>) -> BatchIterator<'a> {
         BatchIterator {
+            atlas,
             shadows: &self.shadows,
             shadows_start: 0,
             shadows_iter: self.shadows.iter().peekable(),
@@ -252,6 +257,15 @@ impl Scene {
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
+    }
+
+    /// Batches only sprites whose allocation is still live in `atlas`.
+    /// Returned slices reference the original instance arrays, preserving GPU offsets.
+    pub fn batches_for_atlas<'a>(
+        &'a self,
+        atlas: &'a dyn crate::PlatformAtlas,
+    ) -> impl Iterator<Item = PrimitiveBatch<'a>> {
+        self.batch_iter(Some(atlas))
     }
 }
 
@@ -350,6 +364,7 @@ impl Primitive {
     allow(dead_code)
 )]
 struct BatchIterator<'a> {
+    atlas: Option<&'a dyn crate::PlatformAtlas>,
     shadows: &'a [Shadow],
     shadows_start: usize,
     shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
@@ -377,6 +392,23 @@ impl<'a> Iterator for BatchIterator<'a> {
     type Item = PrimitiveBatch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let atlas = self.atlas;
+        if let Some(atlas) = atlas {
+            while self
+                .monochrome_sprites_iter
+                .next_if(|sprite| !atlas.is_tile_live(&sprite.tile))
+                .is_some()
+            {
+                self.monochrome_sprites_start += 1;
+            }
+            while self
+                .polychrome_sprites_iter
+                .next_if(|sprite| !atlas.is_tile_live(&sprite.tile))
+                .is_some()
+            {
+                self.polychrome_sprites_start += 1;
+            }
+        }
         let mut orders_and_kinds = [
             (
                 self.shadows_iter.peek().map(|s| s.order),
@@ -486,6 +518,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
+                            && atlas.is_none_or(|atlas| atlas.is_tile_live(&sprite.tile))
                     })
                     .is_some()
                 {
@@ -507,6 +540,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
+                            && atlas.is_none_or(|atlas| atlas.is_tile_live(&sprite.tile))
                     })
                     .is_some()
                 {
@@ -1089,5 +1123,121 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod atlas_liveness_tests {
+    use super::*;
+    use crate::{
+        AtlasKey, AtlasTextureKind, AtlasTileRegistry, DevicePixels, PlatformAtlas, TileId, size,
+    };
+    use std::borrow::Cow;
+
+    struct Atlas(AtlasTileRegistry);
+
+    impl PlatformAtlas for Atlas {
+        fn get_or_insert_with<'a>(
+            &self,
+            _: &AtlasKey,
+            _: &mut dyn FnMut() -> anyhow::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+        ) -> anyhow::Result<Option<AtlasTile>> {
+            unreachable!()
+        }
+
+        fn remove(&self, _: &AtlasKey) {
+            unreachable!()
+        }
+
+        fn is_tile_live(&self, tile: &AtlasTile) -> bool {
+            self.0.is_live(tile)
+        }
+    }
+
+    fn tile(kind: AtlasTextureKind, id: u32) -> AtlasTile {
+        AtlasTile {
+            texture_id: AtlasTextureId { index: 0, kind },
+            tile_id: TileId(id),
+            padding: 0,
+            bounds: Bounds::new(
+                crate::Point::default(),
+                size(DevicePixels(64), DevicePixels(64)),
+            ),
+        }
+    }
+
+    #[test]
+    fn atlas_batches_skip_recycled_tiles_and_preserve_instance_offsets() -> anyhow::Result<()> {
+        let mut atlas = Atlas(AtlasTileRegistry::default());
+        let mut keeper = tile(AtlasTextureKind::Polychrome, 1);
+        atlas.0.register(&mut keeper)?;
+        let mut stale = tile(AtlasTextureKind::Polychrome, 2);
+        atlas.0.register(&mut stale)?;
+        atlas.0.remove(&stale);
+        let mut replacement = tile(AtlasTextureKind::Polychrome, 2);
+        atlas.0.register(&mut replacement)?;
+        let sprite = |tile| PolychromeSprite {
+            order: 0,
+            pad: 0,
+            tile,
+            grayscale: false.into(),
+            opacity: 1.,
+            bounds: Bounds::default(),
+            content_mask: ContentMask::default(),
+            corner_radii: Corners::default(),
+        };
+        let scene = Scene {
+            polychrome_sprites: vec![
+                sprite(keeper),
+                sprite(stale),
+                sprite(replacement),
+                sprite(stale),
+                sprite(replacement),
+            ],
+            ..Scene::default()
+        };
+        let batches = scene.batches_for_atlas(&atlas).collect::<Vec<_>>();
+        assert_eq!(batches.len(), 3);
+        for (batch, index) in batches.iter().zip([0, 2, 4]) {
+            let PrimitiveBatch::PolychromeSprites { sprites, .. } = batch else {
+                panic!("expected sprites")
+            };
+            assert_eq!(sprites.len(), 1);
+            assert!(std::ptr::eq(
+                sprites.as_ptr(),
+                scene.polychrome_sprites[index..].as_ptr()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn atlas_batches_skip_stale_monochrome_sprites_after_clear() -> anyhow::Result<()> {
+        let mut atlas = Atlas(AtlasTileRegistry::default());
+        let mut stale = tile(AtlasTextureKind::Monochrome, 1);
+        atlas.0.register(&mut stale)?;
+        atlas.0.clear();
+        let mut replacement = tile(AtlasTextureKind::Monochrome, 1);
+        atlas.0.register(&mut replacement)?;
+        let sprite = |tile| MonochromeSprite {
+            order: 0,
+            pad: 0,
+            tile,
+            bounds: Bounds::default(),
+            content_mask: ContentMask::default(),
+            color: Hsla::default(),
+            transformation: TransformationMatrix::default(),
+        };
+        let scene = Scene {
+            monochrome_sprites: vec![sprite(stale), sprite(replacement)],
+            ..Scene::default()
+        };
+        let batches = scene.batches_for_atlas(&atlas).collect::<Vec<_>>();
+        let [PrimitiveBatch::MonochromeSprites { sprites, .. }] = batches.as_slice() else {
+            panic!("expected one batch")
+        };
+        assert_eq!(sprites.len(), 1);
+        assert_eq!(sprites[0].tile, replacement);
+        Ok(())
     }
 }

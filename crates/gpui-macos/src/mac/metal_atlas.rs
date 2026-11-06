@@ -1,6 +1,6 @@
 use crate::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, AtlasTileRegistry,
+    Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
 use anyhow::{Context as _, Result};
 use collections::FxHashMap;
@@ -27,6 +27,7 @@ impl MetalAtlas {
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             tiles_by_key: Default::default(),
+            tile_registry: Default::default(),
         }))
     }
 
@@ -45,6 +46,7 @@ struct MetalAtlasState {
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    tile_registry: AtlasTileRegistry,
 }
 
 impl PlatformAtlas for MetalAtlas {
@@ -60,9 +62,10 @@ impl PlatformAtlas for MetalAtlas {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let tile = lock
+            let mut tile = lock
                 .allocate(size, key.texture_kind())
                 .context("failed to allocate")?;
+            lock.tile_registry.register(&mut tile)?;
             let texture = lock
                 .texture(tile.texture_id)
                 .context("allocated tile refers to a missing texture")?;
@@ -77,6 +80,7 @@ impl PlatformAtlas for MetalAtlas {
         let Some(tile) = lock.tiles_by_key.remove(key) else {
             return;
         };
+        lock.tile_registry.remove(&tile);
         let id = tile.texture_id;
 
         let textures = match id.kind {
@@ -102,6 +106,14 @@ impl PlatformAtlas for MetalAtlas {
                 *texture_slot = Some(texture);
             }
         }
+    }
+
+    fn epoch(&self) -> u64 {
+        self.0.lock().tile_registry.epoch()
+    }
+
+    fn is_tile_live(&self, tile: &AtlasTile) -> bool {
+        self.0.lock().tile_registry.is_live(tile)
     }
 }
 
@@ -332,5 +344,44 @@ mod tests {
         // texture up must report the gap instead of panicking.
         atlas.remove(&key);
         assert!(atlas.metal_texture(tile.texture_id).is_none());
+        assert!(!atlas.is_tile_live(&tile));
+        let replacement = insert_tile(&atlas, &make_image_key(2, 0), tile.bounds.size);
+        assert_eq!(replacement.texture_id, tile.texture_id);
+        assert!(atlas.is_tile_live(&replacement));
+        assert!(!atlas.is_tile_live(&tile));
+        assert_eq!(atlas.epoch(), 1);
+    }
+
+    #[test]
+    fn removed_tile_stays_invalid_when_its_region_is_reused() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+        let keeper = insert_tile(
+            &atlas,
+            &make_image_key(1, 0),
+            Size {
+                width: DevicePixels(64),
+                height: DevicePixels(64),
+            },
+        );
+        let key = make_image_key(2, 0);
+        let first = insert_tile(
+            &atlas,
+            &key,
+            Size {
+                width: DevicePixels(700),
+                height: DevicePixels(700),
+            },
+        );
+        assert_eq!(keeper.texture_id, first.texture_id);
+        atlas.remove(&key);
+        let replacement = insert_tile(&atlas, &make_image_key(3, 0), first.bounds.size);
+
+        assert_eq!(replacement.texture_id, keeper.texture_id);
+        assert_eq!(replacement.bounds, first.bounds);
+        assert!(!atlas.is_tile_live(&first));
+        assert!(atlas.is_tile_live(&keeper));
+        assert!(atlas.is_tile_live(&replacement));
     }
 }

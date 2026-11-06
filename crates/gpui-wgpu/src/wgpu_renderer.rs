@@ -1148,7 +1148,8 @@ impl WgpuRenderer {
                 ..Default::default()
             });
 
-            for batch in scene.batches() {
+            let atlas = self.atlas.clone();
+            for batch in scene.batches_for_atlas(atlas.as_ref()) {
                 match batch {
                     PrimitiveBatch::Quads(quads) => self.draw_instances(
                         &instance_bindings.quads,
@@ -1518,7 +1519,7 @@ impl WgpuRenderer {
 
     fn prepare_texture_bind_groups(&mut self, scene: &Scene) {
         let mut texture_ids = Vec::with_capacity(8);
-        for batch in scene.batches() {
+        for batch in scene.batches_for_atlas(self.atlas.as_ref()) {
             let texture_id = match batch {
                 PrimitiveBatch::MonochromeSprites { texture_id, .. }
                 | PrimitiveBatch::PolychromeSprites { texture_id, .. } => texture_id,
@@ -1760,7 +1761,7 @@ impl WgpuRenderer {
             self.storage_buffer_alignment,
             &scene.polychrome_sprites,
         );
-        for batch in scene.batches() {
+        for batch in scene.batches_for_atlas(self.atlas.as_ref()) {
             if let PrimitiveBatch::Paths(paths) = batch {
                 let vertex_len = paths
                     .iter()
