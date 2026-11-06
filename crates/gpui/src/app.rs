@@ -1097,14 +1097,9 @@ impl App {
         &mut self,
         callback: impl FnOnce(&mut App) -> R,
     ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.borrow().clone();
+        self.entities.push_access_scope();
         let result = callback(self);
-        let accessed_entities_end = self.entities.accessed_entities.borrow().clone();
-        let entities_accessed_in_callback = accessed_entities_end
-            .difference(&accessed_entities_start)
-            .copied()
-            .collect::<FxHashSet<EntityId>>();
-        (result, entities_accessed_in_callback)
+        (result, self.entities.pop_access_scope())
     }
 
     pub(crate) fn record_entities_accessed(
