@@ -434,9 +434,7 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        if let Some(ref mut callback) = self.inner.state.borrow_mut().callbacks.quit {
-            callback();
-        }
+        self.inner.invoke_quit_callback();
     }
 
     fn quit(&self) {
@@ -1159,10 +1157,7 @@ impl WindowsPlatformInner {
     }
 
     fn handle_end_session(&self) -> Option<isize> {
-        let mut shutdown_completed = false;
-        if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
-            shutdown_completed = callback();
-        }
+        let shutdown_completed = self.invoke_quit_callback();
         log::logger().flush();
         if shutdown_completed {
             std::process::exit(0);
@@ -1173,6 +1168,10 @@ impl WindowsPlatformInner {
         // but posting WM_QUIT now may still let the message loop shut down first.
         unsafe { PostQuitMessage(0) };
         Some(0)
+    }
+
+    fn invoke_quit_callback(&self) -> bool {
+        crate::quit_callback::invoke_quit_callback(&self.state, |state| &mut state.callbacks.quit)
     }
 
     fn close_one_window(&self, target_window: HWND) {

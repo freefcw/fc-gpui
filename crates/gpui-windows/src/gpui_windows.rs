@@ -4,6 +4,8 @@
 
 mod ime_position;
 mod mouse_move_cache;
+#[cfg(any(target_os = "windows", test))]
+mod quit_callback;
 
 #[cfg(target_os = "windows")]
 #[path = "windows/mod.rs"]
