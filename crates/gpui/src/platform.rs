@@ -202,10 +202,22 @@ impl RendererCacheStats {
     }
 }
 
-/// Error returned by the [`Platform`] trait's default implementations for
-/// operations that a backend does not support; see the individual methods.
-fn unsupported(what: &str) -> anyhow::Error {
-    anyhow::anyhow!("{what} is not supported on this platform")
+/// An operation is unavailable on the current platform.
+///
+/// Used by fallible [`Platform`] defaults and selected backend implementations
+/// for known missing capabilities. Callers can identify these errors through
+/// [`anyhow::Error::downcast_ref`], including after adding error context.
+/// Backend implementations that do not use this type may still report an
+/// unsupported operation as another error; its absence does not imply support.
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} is not supported on this platform")]
+pub struct UnsupportedPlatformOperation {
+    /// The capability that is unavailable.
+    pub operation: &'static str,
+}
+
+fn unsupported(operation: &'static str) -> anyhow::Error {
+    UnsupportedPlatformOperation { operation }.into()
 }
 
 /// Low-level operating-system integration contract implemented by GPUI backends.
@@ -271,8 +283,8 @@ pub trait Platform: 'static {
     ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
-            .send(Err(anyhow::anyhow!(
-                "gpui was compiled without the screen-capture feature"
+            .send(Err(unsupported("Screen capture").context(
+                "gpui was compiled without the screen-capture feature",
             )))
             .ok();
         sources_rx
@@ -466,9 +478,7 @@ pub trait Platform: 'static {
     fn on_tray_menu_action(&self, _callback: Box<dyn FnMut(SharedString)>) {}
 
     fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Global hotkeys not supported on this platform"
-        ))
+        Err(unsupported("Global hotkeys"))
     }
     fn unregister_global_hotkey(&self, _id: u32) {}
     fn on_global_hotkey(&self, _callback: Box<dyn FnMut(u32)>) {}
@@ -496,18 +506,14 @@ pub trait Platform: 'static {
     }
 
     fn set_auto_launch(&self, _app_id: &str, _enabled: bool) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Auto-launch not supported on this platform"
-        ))
+        Err(unsupported("Auto-launch"))
     }
     fn is_auto_launch_enabled(&self, _app_id: &str) -> bool {
         false
     }
 
     fn show_notification(&self, _title: &str, _body: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Notifications not supported on this platform"
-        ))
+        Err(unsupported("Notifications"))
     }
 
     /// Receive the application's configured [`QuitMode`].
@@ -659,8 +665,8 @@ pub trait ScreenCaptureSource {
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         let (mut sender, receiver) = oneshot::channel();
         sender
-            .send(Err(anyhow::anyhow!(
-                "runtime termination notification is not supported by this screen capture source"
+            .send(Err(unsupported("Screen capture termination notification").context(
+                "runtime termination notification is not supported by this screen capture source",
             )))
             .ok();
         receiver

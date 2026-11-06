@@ -62,9 +62,12 @@ pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 #[cfg(not(feature = "keyring"))]
 fn credentials_unavailable<T>() -> Task<Result<T>> {
-    Task::ready(Err(anyhow!(
-        "credentials storage requires the `keyring` feature"
-    )))
+    Task::ready(Err(anyhow::Error::new(
+        gpui::UnsupportedPlatformOperation {
+            operation: "Credentials storage",
+        },
+    )
+    .context("credentials storage requires the `keyring` feature")))
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -224,9 +227,10 @@ pub trait LinuxClient {
     fn set_tray_tooltip(&self, _tooltip: &str) {}
     fn set_tray_panel_mode(&self, _enabled: bool) {}
     fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Global hotkeys not supported on this platform"
-        ))
+        Err(gpui::UnsupportedPlatformOperation {
+            operation: "Global hotkeys",
+        }
+        .into())
     }
     fn unregister_global_hotkey(&self, _id: u32) {}
 
@@ -833,9 +837,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
-        Err(anyhow::Error::msg(
-            "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
-        ))
+        Err(anyhow::Error::new(gpui::UnsupportedPlatformOperation {
+            operation: "Auxiliary executables",
+        })
+        .context("Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet"))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -1737,6 +1742,69 @@ async fn await_idle_sleep_prevention(
 mod tests {
     use super::*;
     use gpui::{Point, px};
+
+    #[test]
+    fn headless_platform_reports_typed_unsupported_operations() {
+        let platform = crate::linux::current_platform(true);
+        for (operation, error) in [
+            (
+                "Global hotkeys",
+                platform
+                    .register_global_hotkey(1, &Keystroke::parse("ctrl-a").unwrap())
+                    .unwrap_err(),
+            ),
+            (
+                "Auxiliary executables",
+                platform
+                    .path_for_auxiliary_executable("helper")
+                    .unwrap_err(),
+            ),
+        ] {
+            let error = error.context("application operation failed");
+            assert_eq!(
+                error
+                    .downcast_ref::<gpui::UnsupportedPlatformOperation>()
+                    .unwrap()
+                    .operation,
+                operation
+            );
+        }
+
+        let error = match smol::block_on(platform.screen_capture_sources()).unwrap() {
+            Ok(_) => panic!("headless platform unexpectedly returned capture sources"),
+            Err(error) => error.context("enumerating capture sources"),
+        };
+        assert_eq!(
+            error
+                .downcast_ref::<gpui::UnsupportedPlatformOperation>()
+                .unwrap()
+                .operation,
+            "Screen capture"
+        );
+    }
+
+    #[cfg(not(feature = "keyring"))]
+    #[test]
+    fn disabled_credentials_report_typed_async_errors_from_platform() {
+        let platform = crate::linux::current_platform(true);
+        let errors = [
+            smol::block_on(platform.write_credentials("test://service", "user", b"password"))
+                .unwrap_err(),
+            smol::block_on(platform.read_credentials("test://service")).unwrap_err(),
+            smol::block_on(platform.delete_credentials("test://service")).unwrap_err(),
+        ];
+        for error in errors {
+            let error = error.context("accessing application credentials");
+            assert_eq!(
+                error
+                    .downcast_ref::<gpui::UnsupportedPlatformOperation>()
+                    .unwrap()
+                    .operation,
+                "Credentials storage"
+            );
+            assert!(format!("{error:#}").contains("requires the `keyring` feature"));
+        }
+    }
 
     #[test]
     fn power_mode_callbacks_can_reenter_and_replace_themselves() -> anyhow::Result<()> {

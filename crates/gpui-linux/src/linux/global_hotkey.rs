@@ -255,9 +255,33 @@ pub mod wayland {
         }
 
         pub fn register(&mut self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
-            Err(anyhow::anyhow!("Global hotkeys not supported on Wayland"))
+            Err(anyhow::Error::new(gpui::UnsupportedPlatformOperation {
+                operation: "Global hotkeys",
+            })
+            .context("Global hotkeys not supported on Wayland"))
         }
 
         pub fn unregister(&mut self, _id: u32) {}
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn registration_reports_typed_unsupported_error() {
+            let error = WaylandGlobalHotkey::new()
+                .register(1, &Keystroke::parse("ctrl-a").unwrap())
+                .unwrap_err()
+                .context("registering application shortcut");
+            assert_eq!(
+                error
+                    .downcast_ref::<gpui::UnsupportedPlatformOperation>()
+                    .unwrap()
+                    .operation,
+                "Global hotkeys"
+            );
+            assert!(format!("{error:#}").contains("not supported on Wayland"));
+        }
     }
 }

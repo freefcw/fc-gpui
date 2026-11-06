@@ -79,10 +79,13 @@ impl LinuxClient for HeadlessClient {
     ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
         let (mut tx, rx) = futures::channel::oneshot::channel();
-        tx.send(Err(anyhow::anyhow!(
-            "Headless mode does not support screen capture."
-        )))
-        .ok();
+        tx.send(Err(anyhow::Error::new(
+            gpui::UnsupportedPlatformOperation {
+                operation: "Screen capture",
+            },
+        )
+        .context("Headless mode does not support screen capture.")))
+            .ok();
         rx
     }
 

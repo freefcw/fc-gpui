@@ -190,7 +190,9 @@ jobs:
             os: ubuntu-24.04
             cache-key: linux-no-default
             linux-native: false
-            command: cargo check -p fc-gpui --lib --no-default-features --locked
+            command: >-
+              cargo check -p fc-gpui --lib --no-default-features --locked &&
+              cargo test -p fc-gpui-linux --lib --no-default-features --locked typed_
           - name: Linux / async benchmark compile
             os: ubuntu-24.04
             cache-key: linux-async-benchmark
@@ -207,7 +209,10 @@ jobs:
             linux-native: true
             # scap is opt-in; these are the only jobs that compile its Linux
             # engine (needs libx11-dev for the `x11` crate build script).
-            command: cargo check -p fc-gpui --lib --no-default-features --features screen-capture,font-kit,x11 --locked && cargo check -p fc-gpui-linux --features screen-capture --locked
+            command: >-
+              cargo check -p fc-gpui --lib --no-default-features --features screen-capture,font-kit,x11 --locked &&
+              cargo check -p fc-gpui-linux --features screen-capture --locked &&
+              cargo test -p fc-gpui-linux --lib --features screen-capture --locked headless_platform_reports_typed_unsupported_operations
           - name: Linux X11 / real visual smoke
             os: ubuntu-24.04
             cache-key: linux-x11-real-visual

@@ -713,7 +713,80 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "screen-capture")]
+    #[test]
+    fn unsupported_operations_are_identifiable_through_error_context() {
+        let platform = test_platform();
+        let errors = [
+            ("App path", platform.app_path().unwrap_err()),
+            (
+                "Auxiliary executables",
+                platform
+                    .path_for_auxiliary_executable("helper")
+                    .unwrap_err(),
+            ),
+            (
+                "Global hotkeys",
+                platform
+                    .register_global_hotkey(1, &crate::Keystroke::parse("ctrl-a").unwrap())
+                    .unwrap_err(),
+            ),
+            (
+                "Auto-launch",
+                platform.set_auto_launch("test-app", true).unwrap_err(),
+            ),
+            (
+                "Notifications",
+                platform.show_notification("title", "body").unwrap_err(),
+            ),
+            (
+                "Registering URL schemes",
+                futures::executor::block_on(platform.register_url_scheme("example")).unwrap_err(),
+            ),
+            (
+                "Path prompts",
+                futures::executor::block_on(platform.prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: false,
+                    prompt: None,
+                }))
+                .unwrap()
+                .unwrap_err(),
+            ),
+        ];
+        for (operation, error) in errors {
+            let error = error.context("application operation failed");
+            let unsupported = error
+                .downcast_ref::<crate::UnsupportedPlatformOperation>()
+                .unwrap();
+            assert_eq!(unsupported.operation, operation);
+        }
+        assert!(
+            anyhow::anyhow!("temporary failure")
+                .downcast_ref::<crate::UnsupportedPlatformOperation>()
+                .is_none()
+        );
+    }
+
+    #[cfg(not(feature = "screen-capture"))]
+    #[test]
+    fn disabled_screen_capture_reports_typed_async_error() {
+        let platform = test_platform();
+        assert!(!platform.is_screen_capture_supported());
+        let error = match smol::block_on(platform.screen_capture_sources()).unwrap() {
+            Ok(_) => panic!("disabled screen capture unexpectedly returned sources"),
+            Err(error) => error.context("enumerating capture sources"),
+        };
+        assert_eq!(
+            error
+                .downcast_ref::<crate::UnsupportedPlatformOperation>()
+                .unwrap()
+                .operation,
+            "Screen capture"
+        );
+        assert!(format!("{error:#}").contains("without the screen-capture feature"));
+    }
+
     #[test]
     fn legacy_screen_capture_source_rejects_unsupported_termination_notification() {
         struct LegacySource;
@@ -748,6 +821,14 @@ mod tests {
             error
                 .to_string()
                 .contains("runtime termination notification is not supported")
+        );
+        let error = error.context("starting capture with termination reporting");
+        assert_eq!(
+            error
+                .downcast_ref::<crate::UnsupportedPlatformOperation>()
+                .unwrap()
+                .operation,
+            "Screen capture termination notification"
         );
 
         let stream = LegacySource.stream(&foreground_executor, Box::new(|_| {}));

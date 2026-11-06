@@ -1254,7 +1254,10 @@ impl LinuxClient for WaylandClient {
     }
 
     fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> gpui::Result<()> {
-        Err(anyhow::anyhow!("Global hotkeys not supported on Wayland"))
+        Err(anyhow::Error::new(gpui::UnsupportedPlatformOperation {
+            operation: "Global hotkeys",
+        })
+        .context("Global hotkeys not supported on Wayland"))
     }
 
     fn unregister_global_hotkey(&self, _id: u32) {}

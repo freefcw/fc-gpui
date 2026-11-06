@@ -5,9 +5,10 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 fn main_app_service() -> Result<Retained<SMAppService>> {
     if AnyClass::get(c"SMAppService").is_none() {
-        return Err(anyhow::anyhow!(
-            "SMAppService not available (requires macOS 13+)"
-        ));
+        return Err(anyhow::Error::new(gpui::UnsupportedPlatformOperation {
+            operation: "Auto-launch",
+        })
+        .context("SMAppService not available (requires macOS 13+)"));
     }
     Ok(unsafe { SMAppService::mainAppService() })
 }
