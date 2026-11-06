@@ -42,7 +42,10 @@ use std::{
 };
 use util::ResultExt;
 
+mod a11y;
+
 use super::ImageCacheProvider;
+use a11y::A11yAttributes;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
@@ -1212,7 +1215,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
             role != accesskit::Role::GenericContainer,
             "GenericContainer is filtered out of the a11y tree and has no effect"
         );
-        self.interactivity().override_role = Some(role);
+        self.interactivity().a11y_attributes_mut().override_role = Some(role);
         self
     }
 
@@ -1221,55 +1224,55 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Unlike the GPUI element ID, this value is visible outside the process.
     /// Keep it stable and unique within its accessibility tree.
     fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
-        self.interactivity().accessibility_id = Some(id.into());
+        self.interactivity().a11y_attributes_mut().accessibility_id = Some(id.into());
         self
     }
 
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_label = Some(label.into());
+        self.interactivity().a11y_attributes_mut().aria_label = Some(label.into());
         self
     }
 
     /// Set supplementary information announced after this element's label, role, and value.
     fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_description = Some(description.into());
+        self.interactivity().a11y_attributes_mut().aria_description = Some(description.into());
         self
     }
 
     /// Set the current textual value for this element.
     fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_value = Some(value.into());
+        self.interactivity().a11y_attributes_mut().aria_value = Some(value.into());
         self
     }
 
     /// Set the placeholder announced when this element has no value.
     fn aria_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_placeholder = Some(placeholder.into());
+        self.interactivity().a11y_attributes_mut().aria_placeholder = Some(placeholder.into());
         self
     }
 
     /// Report whether this control is disabled.
     fn aria_disabled(mut self, disabled: bool) -> Self {
-        self.interactivity().aria_disabled = disabled;
+        self.interactivity().a11y_attributes_mut().aria_disabled = disabled;
         self
     }
 
     /// Report whether this form control requires a value.
     fn aria_required(mut self, required: bool) -> Self {
-        self.interactivity().aria_required = required;
+        self.interactivity().a11y_attributes_mut().aria_required = required;
         self
     }
 
     /// Report why this form control's value is invalid.
     fn aria_invalid(mut self, invalid: accesskit::Invalid) -> Self {
-        self.interactivity().aria_invalid = Some(invalid);
+        self.interactivity().a11y_attributes_mut().aria_invalid = Some(invalid);
         self
     }
 
     /// Report whether this dialog is modal.
     fn aria_modal(mut self, modal: bool) -> Self {
-        self.interactivity().aria_modal = modal;
+        self.interactivity().a11y_attributes_mut().aria_modal = modal;
         self
     }
 
@@ -1277,91 +1280,99 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     ///
     /// This is metadata only and does not register a key binding.
     fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_keyshortcuts = Some(keyshortcuts.into());
+        self.interactivity().a11y_attributes_mut().aria_keyshortcuts = Some(keyshortcuts.into());
         self
     }
 
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
-        self.interactivity().aria_selected = Some(selected);
+        self.interactivity().a11y_attributes_mut().aria_selected = Some(selected);
         self
     }
 
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
-        self.interactivity().aria_expanded = Some(expanded);
+        self.interactivity().a11y_attributes_mut().aria_expanded = Some(expanded);
         self
     }
 
     /// Set the toggled state for this element.
     fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
-        self.interactivity().aria_toggled = Some(toggled);
+        self.interactivity().a11y_attributes_mut().aria_toggled = Some(toggled);
         self
     }
 
     /// Set the numeric value for this element.
     fn aria_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_numeric_value = Some(value);
+        self.interactivity()
+            .a11y_attributes_mut()
+            .aria_numeric_value = Some(value);
         self
     }
 
     /// Set the minimum numeric value for this element.
     fn aria_min_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_min_numeric_value = Some(value);
+        self.interactivity()
+            .a11y_attributes_mut()
+            .aria_min_numeric_value = Some(value);
         self
     }
 
     /// Set the maximum numeric value for this element.
     fn aria_max_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_max_numeric_value = Some(value);
+        self.interactivity()
+            .a11y_attributes_mut()
+            .aria_max_numeric_value = Some(value);
         self
     }
 
     /// Set the orientation of this element.
     fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
-        self.interactivity().aria_orientation = Some(orientation);
+        self.interactivity().a11y_attributes_mut().aria_orientation = Some(orientation);
         self
     }
 
     /// Set the heading level of this element.
     fn aria_level(mut self, level: usize) -> Self {
-        self.interactivity().aria_level = Some(level);
+        self.interactivity().a11y_attributes_mut().aria_level = Some(level);
         self
     }
 
     /// Set the position in set of this element.
     fn aria_position_in_set(mut self, position: usize) -> Self {
-        self.interactivity().aria_position_in_set = Some(position);
+        self.interactivity()
+            .a11y_attributes_mut()
+            .aria_position_in_set = Some(position);
         self
     }
 
     /// Set the size of set for this element.
     fn aria_size_of_set(mut self, size: usize) -> Self {
-        self.interactivity().aria_size_of_set = Some(size);
+        self.interactivity().a11y_attributes_mut().aria_size_of_set = Some(size);
         self
     }
 
     /// Set the row index for this element.
     fn aria_row_index(mut self, index: usize) -> Self {
-        self.interactivity().aria_row_index = Some(index);
+        self.interactivity().a11y_attributes_mut().aria_row_index = Some(index);
         self
     }
 
     /// Set the column index for this element.
     fn aria_column_index(mut self, index: usize) -> Self {
-        self.interactivity().aria_column_index = Some(index);
+        self.interactivity().a11y_attributes_mut().aria_column_index = Some(index);
         self
     }
 
     /// Set the row count for this element.
     fn aria_row_count(mut self, count: usize) -> Self {
-        self.interactivity().aria_row_count = Some(count);
+        self.interactivity().a11y_attributes_mut().aria_row_count = Some(count);
         self
     }
 
     /// Set the column count for this element.
     fn aria_column_count(mut self, count: usize) -> Self {
-        self.interactivity().aria_column_count = Some(count);
+        self.interactivity().a11y_attributes_mut().aria_column_count = Some(count);
         self
     }
 
@@ -1729,8 +1740,9 @@ impl Element for Div {
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
         self.interactivity
-            .override_role
-            .filter(|role| *role != accesskit::Role::GenericContainer)
+            .a11y_attributes
+            .as_deref()
+            .and_then(A11yAttributes::role)
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -1952,31 +1964,7 @@ pub struct Interactivity {
 
     pub(crate) a11y_action_listeners:
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
-    pub(crate) override_role: Option<accesskit::Role>,
-    pub(crate) accessibility_id: Option<SharedString>,
-    pub(crate) aria_label: Option<SharedString>,
-    pub(crate) aria_description: Option<SharedString>,
-    pub(crate) aria_value: Option<SharedString>,
-    pub(crate) aria_placeholder: Option<SharedString>,
-    pub(crate) aria_disabled: bool,
-    pub(crate) aria_required: bool,
-    pub(crate) aria_invalid: Option<accesskit::Invalid>,
-    pub(crate) aria_modal: bool,
-    pub(crate) aria_keyshortcuts: Option<SharedString>,
-    pub(crate) aria_selected: Option<bool>,
-    pub(crate) aria_expanded: Option<bool>,
-    pub(crate) aria_toggled: Option<accesskit::Toggled>,
-    pub(crate) aria_numeric_value: Option<f64>,
-    pub(crate) aria_min_numeric_value: Option<f64>,
-    pub(crate) aria_max_numeric_value: Option<f64>,
-    pub(crate) aria_orientation: Option<accesskit::Orientation>,
-    pub(crate) aria_level: Option<usize>,
-    pub(crate) aria_position_in_set: Option<usize>,
-    pub(crate) aria_size_of_set: Option<usize>,
-    pub(crate) aria_row_index: Option<usize>,
-    pub(crate) aria_column_index: Option<usize>,
-    pub(crate) aria_row_count: Option<usize>,
-    pub(crate) aria_column_count: Option<usize>,
+    pub(crate) a11y_attributes: Option<Box<A11yAttributes>>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -3136,78 +3124,13 @@ impl Interactivity {
         style
     }
 
+    fn a11y_attributes_mut(&mut self) -> &mut A11yAttributes {
+        self.a11y_attributes.get_or_insert_with(Default::default)
+    }
+
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
-        if let Some(id) = &self.accessibility_id {
-            node.set_author_id(id.to_string());
-        }
-        if let Some(label) = &self.aria_label {
-            node.set_label(label.to_string());
-        }
-        if let Some(description) = &self.aria_description {
-            node.set_description(description.to_string());
-        }
-        if let Some(value) = &self.aria_value {
-            node.set_value(value.to_string());
-        }
-        if let Some(placeholder) = &self.aria_placeholder {
-            node.set_placeholder(placeholder.to_string());
-        }
-        if self.aria_disabled {
-            node.set_disabled();
-        }
-        if self.aria_required {
-            node.set_required();
-        }
-        if let Some(invalid) = self.aria_invalid {
-            node.set_invalid(invalid);
-        }
-        if self.aria_modal {
-            node.set_modal();
-        }
-        if let Some(keyshortcuts) = &self.aria_keyshortcuts {
-            node.set_keyboard_shortcut(keyshortcuts.to_string());
-        }
-        if let Some(selected) = self.aria_selected {
-            node.set_selected(selected);
-        }
-        if let Some(expanded) = self.aria_expanded {
-            node.set_expanded(expanded);
-        }
-        if let Some(toggled) = self.aria_toggled {
-            node.set_toggled(toggled);
-        }
-        if let Some(value) = self.aria_numeric_value {
-            node.set_numeric_value(value);
-        }
-        if let Some(value) = self.aria_min_numeric_value {
-            node.set_min_numeric_value(value);
-        }
-        if let Some(value) = self.aria_max_numeric_value {
-            node.set_max_numeric_value(value);
-        }
-        if let Some(orientation) = self.aria_orientation {
-            node.set_orientation(orientation);
-        }
-        if let Some(level) = self.aria_level {
-            node.set_level(level);
-        }
-        if let Some(position) = self.aria_position_in_set {
-            node.set_position_in_set(position);
-        }
-        if let Some(size) = self.aria_size_of_set {
-            node.set_size_of_set(size);
-        }
-        if let Some(index) = self.aria_row_index {
-            node.set_row_index(index);
-        }
-        if let Some(index) = self.aria_column_index {
-            node.set_column_index(index);
-        }
-        if let Some(count) = self.aria_row_count {
-            node.set_row_count(count);
-        }
-        if let Some(count) = self.aria_column_count {
-            node.set_column_count(count);
+        if let Some(attributes) = &self.a11y_attributes {
+            attributes.write_to(node);
         }
         if !self.click_listeners.is_empty() {
             node.add_action(accesskit::Action::Click);
@@ -4324,6 +4247,82 @@ mod tests {
             element.element.interactivity.tooltip_show_delay,
             Some(delay)
         );
+    }
+
+    #[test]
+    fn default_accessibility_properties_leave_the_node_unchanged() {
+        let element = div().id("layout");
+        assert!(element.element.interactivity.a11y_attributes.is_none());
+        let mut node = accesskit::Node::new(accesskit::Role::Group);
+        node.set_label("existing label");
+        element.write_a11y_info(&mut node);
+
+        let mut expected = accesskit::Node::new(accesskit::Role::Group);
+        expected.set_label("existing label");
+        assert_eq!(node, expected);
+        assert_eq!(element.a11y_role(), None);
+        assert!(element.element.interactivity.a11y_attributes.is_none());
+    }
+
+    #[test]
+    fn accessibility_state_and_collection_properties_preserve_explicit_values() {
+        let element = div()
+            .id("item")
+            .role(accesskit::Role::Row)
+            .aria_label("Volume")
+            .aria_selected(false)
+            .aria_expanded(false)
+            .aria_toggled(accesskit::Toggled::Mixed)
+            .aria_numeric_value(0.)
+            .aria_min_numeric_value(-1.)
+            .aria_max_numeric_value(1.)
+            .aria_orientation(accesskit::Orientation::Vertical)
+            .aria_level(2)
+            .aria_position_in_set(3)
+            .aria_size_of_set(4)
+            .aria_row_index(5)
+            .aria_column_index(6)
+            .aria_row_count(7)
+            .aria_column_count(8);
+        let mut node = accesskit::Node::new(accesskit::Role::Row);
+        element.write_a11y_info(&mut node);
+
+        assert_eq!(element.a11y_role(), Some(accesskit::Role::Row));
+        assert_eq!(node.label(), Some("Volume"));
+        assert_eq!(node.is_selected(), Some(false));
+        assert_eq!(node.is_expanded(), Some(false));
+        assert_eq!(node.toggled(), Some(accesskit::Toggled::Mixed));
+        assert_eq!(node.numeric_value(), Some(0.));
+        assert_eq!(node.min_numeric_value(), Some(-1.));
+        assert_eq!(node.max_numeric_value(), Some(1.));
+        assert_eq!(node.orientation(), Some(accesskit::Orientation::Vertical));
+        assert_eq!(node.level(), Some(2));
+        assert_eq!(node.position_in_set(), Some(3));
+        assert_eq!(node.size_of_set(), Some(4));
+        assert_eq!(node.row_index(), Some(5));
+        assert_eq!(node.column_index(), Some(6));
+        assert_eq!(node.row_count(), Some(7));
+        assert_eq!(node.column_count(), Some(8));
+    }
+
+    #[gpui::test]
+    fn accessibility_actions_do_not_require_explicit_attributes(cx: &mut TestAppContext) {
+        let element = div()
+            .id("actions")
+            .on_click(|_, _, _| {})
+            .focusable()
+            .on_a11y_action(accesskit::Action::Increment, |_, _, _| {});
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        element.write_a11y_info(&mut node);
+        assert!(node.supports_action(accesskit::Action::Click));
+        assert!(node.supports_action(accesskit::Action::Focus));
+        assert!(node.supports_action(accesskit::Action::Increment));
+
+        let focus_handle = cx.update(|cx| cx.focus_handle());
+        let tracked = div().id("tracked").track_focus(&focus_handle);
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        tracked.write_a11y_info(&mut node);
+        assert!(node.supports_action(accesskit::Action::Focus));
     }
 
     #[test]
