@@ -5,7 +5,7 @@ pub use binding::*;
 pub use context::*;
 
 use crate::{Action, AsKeystroke, Keystroke, is_no_action};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use smallvec::SmallVec;
 use std::any::TypeId;
 
@@ -26,6 +26,11 @@ pub struct Keymap {
 /// Index of a binding within a keymap.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BindingIndex(usize);
+
+fn is_user_binding(binding: &KeyBinding) -> bool {
+    // Bindings without source metadata retain the user-binding behavior.
+    binding.meta.is_none_or(KeyBindingMetaIndex::is_user)
+}
 
 impl Keymap {
     /// Create a new keymap with the given bindings.
@@ -93,7 +98,9 @@ impl Keymap {
             for null_ix in &self.no_action_binding_indices {
                 if null_ix > ix {
                     let null_binding = &self.bindings[*null_ix];
-                    if null_binding.keystrokes == binding.keystrokes {
+                    if is_user_binding(null_binding)
+                        && null_binding.keystrokes == binding.keystrokes
+                    {
                         let null_binding_matches =
                             match (&null_binding.context_predicate, &binding.context_predicate) {
                                 (None, _) => true,
@@ -172,10 +179,13 @@ impl Keymap {
         context_stack: &[KeyContext],
         keymap_bindings: impl IntoIterator<Item = (usize, &'a KeyBinding)>,
     ) -> (SmallVec<[(BindingIndex, &'a KeyBinding); 1]>, bool) {
-        let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
-        let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
+        let mut matching_bindings =
+            SmallVec::<[(usize, BindingIndex, &KeyBinding, bool); 1]>::new();
 
         for (ix, binding) in keymap_bindings {
+            if is_no_action(&*binding.action) && !is_user_binding(binding) {
+                continue;
+            }
             let Some(depth) = self.binding_enabled(binding, context_stack) else {
                 continue;
             };
@@ -183,54 +193,55 @@ impl Keymap {
                 continue;
             };
 
-            if !pending {
-                matched_bindings.push((depth, BindingIndex(ix), binding));
-            } else {
-                pending_bindings.push((BindingIndex(ix), binding));
-            }
+            matching_bindings.push((depth, BindingIndex(ix), binding, pending));
         }
 
-        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
+        matching_bindings.sort_by(|(depth_a, ix_a, _, _), (depth_b, ix_b, _, _)| {
             depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
         });
 
         let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
         let mut first_binding_index = None;
 
-        for (_, ix, binding) in matched_bindings {
-            if is_no_action(&*binding.action) {
-                // Only break if this is a user-defined NoAction binding
-                // This allows user keymaps to override base keymap NoAction bindings
-                if let Some(meta) = binding.meta {
-                    if meta.is_user() {
-                        break;
-                    }
-                } else {
-                    // If no meta is set, assume it's a user binding for safety
-                    break;
-                }
-                // For non-user NoAction bindings, continue searching for user overrides
+        for &(_, ix, binding, pending) in &matching_bindings {
+            if pending {
                 continue;
+            }
+            if is_no_action(&*binding.action) {
+                break;
             }
             bindings.push((ix, binding));
             first_binding_index.get_or_insert(ix);
         }
 
-        let mut pending = HashSet::default();
-        for (ix, binding) in pending_bindings.into_iter().rev() {
-            if let Some(binding_ix) = first_binding_index
-                && binding_ix > ix
+        let mut full_input = SmallVec::<[&Keystroke; 4]>::new();
+        let pending = matching_bindings.iter().any(|&(_, ix, binding, pending)| {
+            if !pending
+                || is_no_action(&*binding.action)
+                || first_binding_index.is_some_and(|binding_ix| binding_ix > ix)
             {
-                continue;
+                return false;
             }
-            if is_no_action(&*binding.action) {
-                pending.remove(&&binding.keystrokes);
-                continue;
-            }
-            pending.insert(&binding.keystrokes);
-        }
 
-        (bindings, !pending.is_empty())
+            // Resolve this completion in the same depth/registration order as
+            // a full input. Keep the typed prefix so character and physical-key
+            // spellings (such as Alt-S and ß) observe the same NoAction binding.
+            full_input.clear();
+            full_input.extend(input.iter().map(AsKeystroke::as_keystroke));
+            full_input.extend(
+                binding.keystrokes[input.len()..]
+                    .iter()
+                    .map(AsKeystroke::as_keystroke),
+            );
+            matching_bindings
+                .iter()
+                .find(|(_, _, candidate, pending)| {
+                    *pending && candidate.match_keystrokes(&full_input) == Some(false)
+                })
+                .is_some_and(|(_, _, winner, _)| !is_no_action(&*winner.action))
+        });
+
+        (bindings, pending)
     }
 
     /// Find the bindings that can follow the current input sequence, in precedence order. Only
@@ -767,6 +778,177 @@ mod tests {
                 .map(|binding| binding.keystrokes[0].inner().unparse())
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
+        }
+    }
+
+    #[test]
+    fn test_no_action_source_matches_display_and_dispatch() {
+        for meta in [
+            Some(KeyBindingMetaIndex(2)),
+            Some(KeyBindingMetaIndex::USER),
+            None,
+        ] {
+            for (action_context, null_context, context) in [
+                (None, None, "editor"),
+                (Some("editor"), Some("editor"), "editor"),
+                (Some("editor"), None, "editor"),
+                (
+                    Some("editor && mode == full"),
+                    Some("editor"),
+                    "editor mode=full",
+                ),
+            ] {
+                let mut null_binding = KeyBinding::new("ctrl-a", NoAction, null_context);
+                null_binding.meta = meta;
+                let keymap = Keymap::new(vec![
+                    KeyBinding::new("ctrl-a", ActionAlpha, action_context),
+                    null_binding,
+                ]);
+                let expected_count = usize::from(meta.is_some_and(|meta| !meta.is_user()));
+                let (dispatched, pending) = keymap.bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse(context).unwrap()],
+                );
+
+                assert!(!pending);
+                assert_eq!(dispatched.len(), expected_count, "source: {meta:?}");
+                assert_eq!(
+                    keymap.bindings_for_action(&ActionAlpha).count(),
+                    dispatched.len(),
+                    "display and dispatch disagree for source {meta:?}, action context {action_context:?}, null context {null_context:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_action_source_matches_chord_pending_and_dispatch() {
+        for (meta, expected_count) in [
+            (Some(KeyBindingMetaIndex(2)), 1),
+            (Some(KeyBindingMetaIndex::USER), 0),
+            (None, 0),
+        ] {
+            let mut null_binding = KeyBinding::new("ctrl-k a", NoAction, Some("editor"));
+            null_binding.meta = meta;
+            let keymap = Keymap::new(vec![
+                KeyBinding::new("ctrl-k a", ActionAlpha, Some("editor")),
+                null_binding,
+            ]);
+            let input = [
+                Keystroke::parse("ctrl-k").unwrap(),
+                Keystroke::parse("a").unwrap(),
+            ];
+            let contexts = [KeyContext::parse("editor").unwrap()];
+            let (prefix_matches, pending) = keymap.bindings_for_input(&input[..1], &contexts);
+            let (dispatched, full_pending) = keymap.bindings_for_input(&input, &contexts);
+
+            assert!(prefix_matches.is_empty());
+            assert!(!full_pending);
+            assert_eq!(dispatched.len(), expected_count, "source: {meta:?}");
+            assert_eq!(pending, !dispatched.is_empty(), "source: {meta:?}");
+            assert_eq!(
+                keymap.bindings_for_action(&ActionAlpha).count(),
+                expected_count
+            );
+            assert_eq!(
+                keymap
+                    .possible_next_bindings_for_input(&input[..1], &contexts)
+                    .len(),
+                expected_count,
+            );
+        }
+    }
+
+    #[test]
+    fn chord_pending_respects_context_depth_before_registration_order() {
+        let contexts = [
+            KeyContext::parse("Workspace").unwrap(),
+            KeyContext::parse("Editor").unwrap(),
+        ];
+        let input = ["ctrl-k", "a", "b"].map(|key| Keystroke::parse(key).unwrap());
+        for (action_context, null_context, expected) in [
+            ("Editor", "Workspace", true),
+            ("Workspace", "Editor", false),
+        ] {
+            for reverse_order in [false, true] {
+                for meta in [
+                    None,
+                    Some(KeyBindingMetaIndex::USER),
+                    Some(KeyBindingMetaIndex(2)),
+                ] {
+                    let mut null_binding =
+                        KeyBinding::new("ctrl-k a b", NoAction, Some(null_context));
+                    null_binding.meta = meta;
+                    let mut bindings = vec![
+                        KeyBinding::new("ctrl-k a b", ActionAlpha, Some(action_context)),
+                        null_binding,
+                    ];
+                    if reverse_order {
+                        bindings.reverse();
+                    }
+                    let keymap = Keymap::new(bindings);
+                    let (dispatched, _) = keymap.bindings_for_input(&input, &contexts);
+                    let enabled = expected || meta.is_some_and(|meta| !meta.is_user());
+                    assert_eq!(!dispatched.is_empty(), enabled);
+                    for prefix_len in [1, 2] {
+                        let (matched, pending) =
+                            keymap.bindings_for_input(&input[..prefix_len], &contexts);
+                        assert!(matched.is_empty());
+                        assert_eq!(
+                            pending, enabled,
+                            "action={action_context}, null={null_context}, reverse={reverse_order}, source={meta:?}, prefix={prefix_len}"
+                        );
+                        assert_eq!(
+                            !keymap
+                                .possible_next_bindings_for_input(&input[..prefix_len], &contexts)
+                                .is_empty(),
+                            enabled
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chord_pending_uses_the_typed_prefix_for_equivalent_keys() {
+        let input = [Keystroke::parse("alt-s->ß").unwrap()];
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ß a", ActionAlpha, None),
+            KeyBinding::new("alt-s a", NoAction, None),
+        ]);
+        assert!(!keymap.bindings_for_input(&input, &[]).1);
+        assert!(
+            keymap
+                .possible_next_bindings_for_input(&input, &[])
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_contextual_user_no_action_preserves_other_contexts() {
+        for meta in [Some(KeyBindingMetaIndex::USER), None] {
+            let mut null_binding =
+                KeyBinding::new("ctrl-a", NoAction, Some("editor && mode == full"));
+            null_binding.meta = meta;
+            let keymap = Keymap::new(vec![
+                KeyBinding::new("ctrl-a", ActionAlpha, Some("editor")),
+                null_binding,
+            ]);
+
+            assert_eq!(keymap.bindings_for_action(&ActionAlpha).count(), 1);
+            for (context, expected_count) in [("editor", 1), ("editor mode=full", 0)] {
+                let (dispatched, pending) = keymap.bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse(context).unwrap()],
+                );
+                assert!(!pending);
+                assert_eq!(
+                    dispatched.len(),
+                    expected_count,
+                    "source: {meta:?}, context: {context}"
+                );
+            }
         }
     }
 

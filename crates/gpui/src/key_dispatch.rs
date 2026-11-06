@@ -1036,6 +1036,46 @@ mod tests {
         assert!(keybinding[0].action.partial_eq(&TestAction))
     }
 
+    #[test]
+    fn chord_dispatch_keeps_child_binding_when_parent_disables_it() {
+        for reverse_order in [false, true] {
+            let mut bindings = vec![
+                KeyBinding::new("ctrl-k a", TestAction, Some("Editor")),
+                KeyBinding::new("ctrl-k a", crate::NoAction, Some("Workspace")),
+            ];
+            if reverse_order {
+                bindings.reverse();
+            }
+            let mut tree = DispatchTree::new(
+                Rc::new(RefCell::new(Keymap::new(bindings))),
+                Rc::new(ActionRegistry::default()),
+            );
+            tree.push_node();
+            tree.set_key_context(KeyContext::parse("Workspace").unwrap());
+            let editor = tree.push_node();
+            tree.set_key_context(KeyContext::parse("Editor").unwrap());
+            tree.pop_node();
+            tree.pop_node();
+            let path = tree.dispatch_path(editor);
+
+            let prefix = tree.dispatch_key(
+                Default::default(),
+                Keystroke::parse("ctrl-k").unwrap(),
+                &path,
+            );
+            assert_eq!(prefix.pending.len(), 1);
+            assert!(prefix.bindings.is_empty());
+            assert!(prefix.to_replay.is_empty());
+
+            let completed =
+                tree.dispatch_key(prefix.pending, Keystroke::parse("a").unwrap(), &path);
+            assert!(completed.pending.is_empty());
+            assert!(completed.to_replay.is_empty());
+            assert_eq!(completed.bindings.len(), 1);
+            assert!(completed.bindings[0].action().partial_eq(&TestAction));
+        }
+    }
+
     #[crate::test]
     fn test_input_handler_pending(cx: &mut TestAppContext) {
         #[derive(Clone)]
