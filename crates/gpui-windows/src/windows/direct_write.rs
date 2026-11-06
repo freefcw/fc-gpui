@@ -553,7 +553,7 @@ impl DirectWriteState {
         font_runs: &[FontRun],
     ) -> Result<LineLayout> {
         if !text.contains(is_line_separator) {
-            return self.layout_line_without_separators(text, font_size, font_runs);
+            return self.layout_line_without_separators(text, font_size, font_runs, 0.0);
         }
 
         // DirectWrite honors mandatory breaks even without wrapping. Keep each
@@ -589,8 +589,12 @@ impl DirectWriteState {
                 }
             }
 
-            let segment_layout =
-                self.layout_line_without_separators(segment, font_size, &segment_runs)?;
+            let segment_layout = self.layout_line_without_separators(
+                segment,
+                font_size,
+                &segment_runs,
+                f32::from(layout.width),
+            )?;
             for mut run in segment_layout.runs {
                 for glyph in &mut run.glyphs {
                     glyph.index += text_offset;
@@ -612,11 +616,14 @@ impl DirectWriteState {
         Ok(layout)
     }
 
+    /// `line_x` is where `text` starts within the shaped line. Tab stops are
+    /// measured from the line's start, not from this layout's start.
     fn layout_line_without_separators(
         &mut self,
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
+        line_x: f32,
     ) -> Result<LineLayout> {
         if font_runs.is_empty() {
             return Ok(LineLayout {
@@ -730,6 +737,7 @@ impl DirectWriteState {
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
                 layout: &text_layout,
+                line_x,
                 width: 0.0,
             };
             text_layout.Draw(
@@ -1463,6 +1471,7 @@ struct RendererContext<'t, 'a, 'b> {
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
     layout: &'b IDWriteTextLayout,
+    line_x: f32,
     width: f32,
 }
 
@@ -1625,9 +1634,9 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         };
 
         if let Some(text) = tab_text {
-            // Invisible space glyphs carry the tab's byte index. Their x
-            // positions use the accumulated logical pen, plus DirectWrite's
-            // native hit-test width, so caret indices stay spaced apart.
+            // Each tab gets an invisible space glyph so LineLayout can map its
+            // byte index to a caret position, and advances the pen by its
+            // native layout width.
             let mut glyphs = Vec::new();
             for (offset, &character) in text.iter().enumerate() {
                 if character != u16::from(b'\t') {
@@ -1657,7 +1666,15 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     index: context.index_converter.utf8_ix,
                     is_emoji: false,
                 });
-                context.width += metrics.width;
+                context.width += if context.line_x == 0.0 {
+                    metrics.width
+                } else {
+                    // This layout holds a segment after a U+2028/U+2029, and
+                    // its native tab stops start at the segment.
+                    let x = context.line_x + context.width;
+                    let interval = unsafe { context.layout.GetIncrementalTabStop() };
+                    interval * ((x / interval).floor() + 1.0) - x
+                };
             }
             if !glyphs.is_empty() {
                 context.runs.push(ShapedRun { font_id, glyphs });
@@ -2287,6 +2304,9 @@ mod tests {
             format!("{separator}ab{separator}{separator}cd{separator}"),
             format!("{separator}{separator}{separator}{separator}{separator}"),
             format!("é{separator}𐐀{separator}z"),
+            format!("\ta{separator}b"),
+            format!("ab{separator}\tc"),
+            format!("a{separator}\t\tb{separator}\t"),
         ] {
             for multiple_fonts in [false, true] {
                 let mut runs = vec![TextRun {
