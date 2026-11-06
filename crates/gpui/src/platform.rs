@@ -3067,7 +3067,7 @@ impl Image {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "image-format-jpeg"))]
 mod image_tests {
     use super::*;
 

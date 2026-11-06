@@ -1645,7 +1645,10 @@ impl AnyWindowHandle {
 #[cfg(test)]
 mod test_app_tests {
     use super::*;
-    use crate::{InteractiveElement as _, Role, StatefulInteractiveElement as _, Styled as _, px};
+    #[cfg(feature = "accessibility")]
+    use crate::{InteractiveElement as _, Role, StatefulInteractiveElement as _};
+    use crate::{Styled as _, px};
+    #[cfg(feature = "accessibility")]
     use std::cell::Cell;
     use std::sync::{
         Arc,
@@ -1658,8 +1661,10 @@ mod test_app_tests {
 
     struct PaintedView;
 
+    #[cfg(feature = "accessibility")]
     struct AccessibleView;
 
+    #[cfg(feature = "accessibility")]
     struct AccessibleActionView {
         invocations: Rc<Cell<usize>>,
     }
@@ -1684,6 +1689,7 @@ mod test_app_tests {
         }
     }
 
+    #[cfg(feature = "accessibility")]
     impl Render for AccessibleView {
         fn render(
             &mut self,
@@ -1697,6 +1703,7 @@ mod test_app_tests {
         }
     }
 
+    #[cfg(feature = "accessibility")]
     impl Render for AccessibleActionView {
         fn render(
             &mut self,
@@ -1803,6 +1810,7 @@ mod test_app_tests {
         assert!(artifact.quads > 0);
     }
 
+    #[cfg(feature = "accessibility")]
     #[test]
     fn test_platform_accessibility_activation_builds_a_debug_tree() {
         let mut cx = TestAppContext::single();
@@ -1823,6 +1831,7 @@ mod test_app_tests {
         }));
     }
 
+    #[cfg(feature = "accessibility")]
     #[test]
     fn test_platform_dispatches_accessibility_actions_to_window_listeners() {
         let mut cx = TestAppContext::single();
