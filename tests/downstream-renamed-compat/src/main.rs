@@ -1,3 +1,8 @@
+mod style_macros {
+    use ui as style_ui;
+    include!("../../style_macros.rs");
+}
+
 #[derive(ui::Render)]
 struct DerivedView;
 

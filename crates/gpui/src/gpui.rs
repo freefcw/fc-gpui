@@ -73,6 +73,7 @@ pub mod private {
     pub use schemars;
     pub use serde;
     pub use serde_json;
+    pub use smallvec;
 }
 
 mod seal {

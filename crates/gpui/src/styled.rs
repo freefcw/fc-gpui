@@ -1,9 +1,9 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BlendMode, BorderStyle,
-    CursorStyle, DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle,
-    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, Pixels, SharedString,
-    StrikethroughStyle, StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow,
-    TextShadow, TextStyleRefinement, UnderlineStyle, WhiteSpace, point, px, relative, rems,
+    AbsoluteLength, AlignContent, AlignItems, AlignSelf, BlendMode, BorderStyle, DefiniteLength,
+    Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, GridPlacement,
+    GridTemplate, Hsla, JustifyContent, Length, Pixels, SharedString, StrikethroughStyle,
+    StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow, TextShadow,
+    TextStyleRefinement, UnderlineStyle, WhiteSpace, point, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -988,7 +988,7 @@ mod tests {
     #[test]
     fn cursor_none_requires_no_argument_and_sets_explicit_none() {
         let mut element = crate::div().cursor_pointer().cursor_none();
-        assert_eq!(element.style().mouse_cursor, Some(CursorStyle::None));
+        assert_eq!(element.style().mouse_cursor, Some(crate::CursorStyle::None));
     }
 
     #[test]
