@@ -102,6 +102,11 @@ impl std::fmt::Debug for AppBorrowError {
 impl std::error::Error for AppBorrowError {}
 
 impl AppCell {
+    #[track_caller]
+    fn update<R>(&self, update: impl FnOnce(&mut App) -> R) -> R {
+        self.borrow_mut().update(update)
+    }
+
     #[doc(hidden)]
     #[track_caller]
     pub fn borrow(&self) -> AppRef<'_> {
@@ -203,8 +208,7 @@ impl ApplicationHandle {
     /// is already inside an update; the app state is a `RefCell` and will panic on a
     /// double borrow.
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
-        let cx = &mut *self.app.borrow_mut();
-        f(cx)
+        self.app.update(f)
     }
 
     /// An [`AsyncApp`] for use across await points. It holds the app weakly; keeping the
@@ -318,8 +322,7 @@ impl Application {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
-            let cx = &mut *this.borrow_mut();
-            on_finish_launching(cx);
+            this.update(on_finish_launching);
         }));
     }
 
@@ -339,8 +342,7 @@ impl Application {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
-            let cx = &mut *this.borrow_mut();
-            on_finish_launching(cx);
+            this.update(on_finish_launching);
         }));
         ApplicationHandle { app: self.0 }
     }
@@ -364,7 +366,7 @@ impl Application {
         let this = Rc::downgrade(&self.0);
         self.0.borrow_mut().platform.on_reopen(Box::new(move || {
             if let Some(app) = this.upgrade() {
-                callback(&mut app.borrow_mut());
+                app.update(&mut callback);
             }
         }));
         self
@@ -880,12 +882,13 @@ impl App {
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = cx.platform.keyboard_layout();
-                    cx.keyboard_mapper = cx.platform.keyboard_mapper();
-                    cx.keyboard_layout_observers
-                        .clone()
-                        .retain(&(), move |callback| (callback)(cx));
+                    app.update(|cx| {
+                        cx.keyboard_layout = cx.platform.keyboard_layout();
+                        cx.keyboard_mapper = cx.platform.keyboard_mapper();
+                        cx.keyboard_layout_observers
+                            .clone()
+                            .retain(&(), move |callback| (callback)(cx));
+                    });
                 }
             }
         }));
@@ -894,10 +897,11 @@ impl App {
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
-                    cx.thermal_state_observers
-                        .clone()
-                        .retain(&(), move |callback| (callback)(cx));
+                    app.update(|cx| {
+                        cx.thermal_state_observers
+                            .clone()
+                            .retain(&(), move |callback| (callback)(cx));
+                    });
                 }
             }
         }));
@@ -906,8 +910,9 @@ impl App {
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let power_mode = app.borrow().platform.power_mode();
-                    app.borrow_mut().power_mode = power_mode;
+                    app.update(|cx| {
+                        cx.power_mode = cx.platform.power_mode();
+                    });
                 }
             }
         }));
@@ -1378,7 +1383,7 @@ impl App {
         let this = self.this.clone();
         self.platform.on_tray_icon_event(Box::new(move |event| {
             if let Some(app) = this.upgrade() {
-                callback(event, &mut app.borrow_mut());
+                app.update(|cx| callback(event, cx));
             }
         }));
     }
@@ -1398,7 +1403,7 @@ impl App {
         self.platform
             .on_tray_icon_click_event(Box::new(move |event| {
                 if let Some(app) = this.upgrade() {
-                    callback(event, &mut app.borrow_mut());
+                    app.update(|cx| callback(event, cx));
                 }
             }));
     }
@@ -1408,7 +1413,7 @@ impl App {
         let this = self.this.clone();
         self.platform.on_tray_menu_action(Box::new(move |id| {
             if let Some(app) = this.upgrade() {
-                callback(id, &mut app.borrow_mut());
+                app.update(|cx| callback(id, cx));
             }
         }));
     }
@@ -1487,7 +1492,7 @@ impl App {
         let this = self.this.clone();
         self.platform.on_system_power_event(Box::new(move |event| {
             if let Some(app) = this.upgrade() {
-                callback(event, &mut app.borrow_mut());
+                app.update(|cx| callback(event, cx));
             }
         }));
     }
@@ -1521,7 +1526,7 @@ impl App {
         self.platform
             .on_network_status_change(Box::new(move |status| {
                 if let Some(app) = this.upgrade() {
-                    callback(status, &mut app.borrow_mut());
+                    app.update(|cx| callback(status, cx));
                 }
             }));
     }
@@ -1531,7 +1536,7 @@ impl App {
         let this = self.this.clone();
         self.platform.on_media_key_event(Box::new(move |event| {
             if let Some(app) = this.upgrade() {
-                callback(event, &mut app.borrow_mut());
+                app.update(|cx| callback(event, cx));
             }
         }));
     }
@@ -1564,7 +1569,7 @@ impl App {
             items,
             Box::new(move |id| {
                 if let Some(app) = this.upgrade() {
-                    callback(id, &mut app.borrow_mut());
+                    app.update(|cx| callback(id, cx));
                 }
             }),
         );
@@ -3216,6 +3221,49 @@ mod test {
     };
 
     struct RenderCounter(Rc<Cell<usize>>);
+
+    struct RuntimeGlobal;
+    impl crate::Global for RuntimeGlobal {}
+
+    #[test]
+    fn runtime_tray_callback_flushes_effects() {
+        let cx = TestAppContext::single();
+        let observed = Rc::new(Cell::new(false));
+        let deferred = Rc::new(Cell::new(false));
+        cx.update(|cx| {
+            let observed = observed.clone();
+            cx.observe_global::<RuntimeGlobal>(move |_| observed.set(true))
+                .detach();
+            let deferred = deferred.clone();
+            cx.on_tray_icon_event(move |_, cx| {
+                cx.set_global(RuntimeGlobal);
+                let deferred = deferred.clone();
+                cx.defer(move |_| deferred.set(true));
+            });
+        });
+
+        cx.simulate_tray_icon_click_event(TrayIconClickEvent::new(TrayIconEvent::LeftClick));
+        assert!(
+            observed.get(),
+            "platform callbacks must flush global notifications"
+        );
+        assert!(
+            deferred.get(),
+            "platform callbacks must flush deferred effects"
+        );
+    }
+
+    #[test]
+    fn runtime_embedded_update_flushes_effects() {
+        let cx = TestAppContext::single();
+        let handle = ApplicationHandle { app: cx.app };
+        let deferred = Rc::new(Cell::new(false));
+        handle.update(|cx| {
+            let deferred = deferred.clone();
+            cx.defer(move |_| deferred.set(true));
+        });
+        assert!(deferred.get());
+    }
 
     crate::actions!(global_dispatch_test, [DispatchProbe]);
 
