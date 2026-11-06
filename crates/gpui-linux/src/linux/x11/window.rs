@@ -1791,7 +1791,13 @@ impl PlatformWindow for X11Window {
             return;
         }
 
-        inner.renderer.draw(scene);
+        // A failed swapchain acquisition or render must request another frame.
+        // X11's refresh loop normally does not require presentation, so dropping
+        // this result can leave a static window stale until the next input or
+        // expose event. Wayland already carries the same retry state explicitly.
+        if !inner.renderer.draw(scene) {
+            inner.force_render_after_recovery = true;
+        }
 
         if inner.renderer.needs_redraw() {
             inner.force_render_after_recovery = true;
