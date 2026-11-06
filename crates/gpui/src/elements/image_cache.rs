@@ -1,21 +1,18 @@
 use crate::{
-    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
-    ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Window, hash,
+    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Div, DivFrameState,
+    Element, ElementId, Entity, GlobalElementId, Hitbox, ImageAssetLoader, ImageCacheError,
+    InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, RenderImage, Resource,
+    StyleRefinement, Styled, Window, div, hash,
 };
 
 use crate::asset_cache::CachedLoad;
-use refineable::Refineable;
-use smallvec::SmallVec;
 use std::{collections::HashMap, fmt, sync::Arc};
 
 /// An image cache element, all its child img elements will use the cache specified by this element.
 /// Note that this could as simple as passing an `Entity<T: ImageCache>`
 pub fn image_cache(image_cache_provider: impl ImageCacheProvider) -> ImageCacheElement {
     ImageCacheElement {
-        image_cache_provider: Box::new(image_cache_provider),
-        style: StyleRefinement::default(),
-        children: SmallVec::default(),
+        div: div().image_cache(image_cache_provider),
     }
 }
 
@@ -41,6 +38,10 @@ impl<I: ImageCache> From<Entity<I>> for AnyImageCache {
 }
 
 impl AnyImageCache {
+    pub(crate) fn entity_id(&self) -> crate::EntityId {
+        self.image_cache.entity_id()
+    }
+
     /// Load an image given a resource
     /// returns the result of loading the image if it has finished loading, or None if it is still loading
     pub fn load(
@@ -69,20 +70,18 @@ mod any_image_cache {
 
 /// An image cache element.
 pub struct ImageCacheElement {
-    image_cache_provider: Box<dyn ImageCacheProvider>,
-    style: StyleRefinement,
-    children: SmallVec<[AnyElement; 2]>,
+    div: Div,
 }
 
 impl ParentElement for ImageCacheElement {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
+        self.div.extend(elements)
     }
 }
 
 impl Styled for ImageCacheElement {
     fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+        self.div.style()
     }
 }
 
@@ -95,8 +94,8 @@ impl IntoElement for ImageCacheElement {
 }
 
 impl Element for ImageCacheElement {
-    type RequestLayoutState = SmallVec<[LayoutId; 4]>;
-    type PrepaintState = ();
+    type RequestLayoutState = DivFrameState;
+    type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -108,55 +107,46 @@ impl Element for ImageCacheElement {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let image_cache = self.image_cache_provider.provide(window, cx);
-        window.with_image_cache(Some(image_cache), |window| {
-            let child_layout_ids = self
-                .children
-                .iter_mut()
-                .map(|child| child.request_layout(window, cx))
-                .collect::<SmallVec<_>>();
-            let mut style = Style::default();
-            style.refine(&self.style);
-            let layout_id = window.request_layout(style, child_layout_ids.iter().copied(), cx);
-            (layout_id, child_layout_ids)
-        })
+        self.div.request_layout(id, inspector_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        for child in &mut self.children {
-            child.prepaint(window, cx);
-        }
+        self.div
+            .prepaint(id, inspector_id, bounds, request_layout, window, cx)
     }
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let image_cache = self.image_cache_provider.provide(window, cx);
-        window.with_image_cache(Some(image_cache), |window| {
-            for child in &mut self.children {
-                child.paint(window, cx);
-            }
-        })
+        self.div.paint(
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        )
     }
 }
 
@@ -208,7 +198,8 @@ pub trait ImageCache: 'static {
 /// An object that can create an ImageCache during the render phase.
 /// See the ImageCache trait for more information.
 pub trait ImageCacheProvider: 'static {
-    /// Called during the request_layout phase to create an ImageCache.
+    /// Called once during request_layout to resolve the cache used by this element's
+    /// children in layout, prepaint, and paint.
     fn provide(&mut self, _window: &mut Window, _cx: &mut App) -> AnyImageCache;
 }
 
@@ -326,5 +317,252 @@ impl ImageCacheProvider for RetainAllImageCacheProvider {
                 )
             })
             .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Context, Render, TestAppContext, container_query, div, img, px};
+    use std::{cell::Cell, rc::Rc};
+
+    struct TestImageCache {
+        loads: Rc<Cell<usize>>,
+        image: Arc<RenderImage>,
+    }
+
+    impl ImageCache for TestImageCache {
+        fn load(
+            &mut self,
+            _: &Resource,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+            self.loads.set(self.loads.get() + 1);
+            Some(Ok(self.image.clone()))
+        }
+    }
+
+    struct CountingProvider {
+        calls: Rc<Cell<usize>>,
+        cache: Entity<TestImageCache>,
+    }
+
+    impl ImageCacheProvider for CountingProvider {
+        fn provide(&mut self, _: &mut Window, _: &mut App) -> AnyImageCache {
+            self.calls.set(self.calls.get() + 1);
+            self.cache.clone().into()
+        }
+    }
+
+    struct CacheRoot {
+        calls: Rc<Cell<usize>>,
+        cache: Entity<TestImageCache>,
+        use_div: bool,
+    }
+
+    impl Render for CacheRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let provider = CountingProvider {
+                calls: self.calls.clone(),
+                cache: self.cache.clone(),
+            };
+            let child = container_query(|_, _, _| img("test-image")).size(px(100.));
+            if self.use_div {
+                div().image_cache(provider).child(child).into_any_element()
+            } else {
+                image_cache(provider).child(child).into_any_element()
+            }
+        }
+    }
+
+    fn draw_cache_root(cx: &mut TestAppContext, use_div: bool) -> (usize, usize) {
+        let calls = Rc::new(Cell::new(0));
+        let loads = Rc::new(Cell::new(0));
+        let cache = cx.new(|_| TestImageCache {
+            loads: loads.clone(),
+            image: Arc::new(RenderImage::new(vec![image::Frame::new(
+                image::RgbaImage::new(8, 12),
+            )])),
+        });
+        let window = cx.add_window(|_, _| CacheRoot {
+            calls: calls.clone(),
+            cache,
+            use_div,
+        });
+        calls.set(0);
+        loads.set(0);
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        (calls.get(), loads.get())
+    }
+
+    #[gpui::test]
+    fn image_cache_provider_is_resolved_once_per_frame(cx: &mut TestAppContext) {
+        for use_div in [false, true] {
+            let (calls, _) = draw_cache_root(cx, use_div);
+            assert_eq!(calls, 1, "use_div={use_div}");
+        }
+    }
+
+    #[gpui::test]
+    fn image_cache_scope_reaches_images_created_during_prepaint(cx: &mut TestAppContext) {
+        for use_div in [false, true] {
+            let (_, loads) = draw_cache_root(cx, use_div);
+            assert_eq!(
+                loads, 2,
+                "layout and paint must use the same cache; use_div={use_div}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn cached_views_follow_the_nearest_image_cache_identity(cx: &mut TestAppContext) {
+        struct CachedImage(Rc<Cell<usize>>);
+        impl Render for CachedImage {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.0.set(self.0.get() + 1);
+                img("same-resource").size(px(32.))
+            }
+        }
+
+        struct Root {
+            cache: Entity<TestImageCache>,
+            inner_cache: Option<Entity<TestImageCache>>,
+            child: Entity<CachedImage>,
+            use_div: bool,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let child = crate::AnyView::from(self.child.clone())
+                    .cached(StyleRefinement::default().size(px(32.)));
+                let child = if let Some(cache) = self.inner_cache.as_ref() {
+                    div()
+                        .image_cache(cache.clone())
+                        .child(child)
+                        .into_any_element()
+                } else {
+                    child.into_any_element()
+                };
+                if self.use_div {
+                    div()
+                        .size(px(100.))
+                        .image_cache(self.cache.clone())
+                        .child(child)
+                        .into_any_element()
+                } else {
+                    image_cache(self.cache.clone())
+                        .size(px(100.))
+                        .child(child)
+                        .into_any_element()
+                }
+            }
+        }
+
+        for use_div in [false, true] {
+            let renders = Rc::new(Cell::new(0));
+            let loads_a = Rc::new(Cell::new(0));
+            let loads_b = Rc::new(Cell::new(0));
+            let cache_a = cx.new(|_| TestImageCache {
+                loads: loads_a.clone(),
+                image: Arc::new(RenderImage::new(vec![image::Frame::new(
+                    image::RgbaImage::new(8, 12),
+                )])),
+            });
+            let cache_b = cx.new(|_| TestImageCache {
+                loads: loads_b.clone(),
+                image: Arc::new(RenderImage::new(vec![image::Frame::new(
+                    image::RgbaImage::new(16, 24),
+                )])),
+            });
+            let child = cx.new(|_| CachedImage(renders.clone()));
+            let window = cx.add_window(|_, _| Root {
+                cache: cache_a.clone(),
+                inner_cache: None,
+                child,
+                use_div,
+            });
+            let draw = |cx: &mut TestAppContext| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear();
+                    assert_eq!(window.rendered_frame.scene.polychrome_sprites.len(), 1);
+                    window.rendered_frame.scene.polychrome_sprites[0].tile
+                })
+                .unwrap()
+            };
+            let first = draw(cx);
+            let first_renders = renders.get();
+            let first_loads = loads_a.get();
+            assert_eq!(
+                first.bounds.size,
+                crate::size(crate::DevicePixels(8), crate::DevicePixels(12))
+            );
+
+            window.update(cx, |_, _, cx| cx.notify()).unwrap();
+            assert_eq!(draw(cx), first);
+            assert_eq!(
+                renders.get(),
+                first_renders,
+                "unchanged provider should preserve cached output"
+            );
+            assert_eq!(loads_a.get(), first_loads);
+
+            window
+                .update(cx, |root, _, cx| {
+                    root.cache = cache_b;
+                    cx.notify();
+                })
+                .unwrap();
+            let replacement = draw(cx);
+            assert_eq!(
+                replacement.bounds.size,
+                crate::size(crate::DevicePixels(16), crate::DevicePixels(24))
+            );
+            assert_ne!(replacement, first);
+            assert_eq!(renders.get(), first_renders + 1);
+            assert!(
+                loads_b.get() > 0,
+                "replacement cache must supply the drawn image"
+            );
+
+            window.update(cx, |_, _, cx| cx.notify()).unwrap();
+            assert_eq!(draw(cx), replacement);
+            assert_eq!(renders.get(), first_renders + 1);
+
+            let inner_loads = Rc::new(Cell::new(0));
+            let inner_cache = cx.new(|_| TestImageCache {
+                loads: inner_loads.clone(),
+                image: Arc::new(RenderImage::new(vec![image::Frame::new(
+                    image::RgbaImage::new(24, 32),
+                )])),
+            });
+            window
+                .update(cx, |root, _, cx| {
+                    root.inner_cache = Some(inner_cache);
+                    cx.notify();
+                })
+                .unwrap();
+            let nested = draw(cx);
+            assert_eq!(
+                nested.bounds.size,
+                crate::size(crate::DevicePixels(24), crate::DevicePixels(32))
+            );
+            let nested_renders = renders.get();
+            let nested_loads = inner_loads.get();
+
+            window
+                .update(cx, |root, _, cx| {
+                    root.cache = cache_a;
+                    cx.notify();
+                })
+                .unwrap();
+            assert_eq!(draw(cx), nested);
+            assert_eq!(
+                renders.get(),
+                nested_renders,
+                "a shadowed outer cache must not invalidate the subtree"
+            );
+            assert_eq!(inner_loads.get(), nested_loads);
+        }
     }
 }

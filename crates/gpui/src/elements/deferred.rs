@@ -100,8 +100,8 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     use crate::{
-        AnyView, Context, Entity, StyleRefinement, TestAppContext, Window, anchored, deferred, div,
-        point, prelude::*, px, size,
+        AnyView, AppContext as _, Context, Entity, StyleRefinement, TestAppContext, Window,
+        anchored, deferred, div, point, prelude::*, px, size,
     };
 
     struct SubscriptionLeaf {
@@ -311,5 +311,60 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn deferred_images_keep_their_ancestor_image_cache(cx: &mut TestAppContext) {
+        struct CacheRoot {
+            use_div: bool,
+            observations: Rc<std::cell::RefCell<Vec<bool>>>,
+            cache: Entity<crate::RetainAllImageCache>,
+            image: std::sync::Arc<crate::RenderImage>,
+        }
+
+        impl Render for CacheRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let observations = self.observations.clone();
+                let image = self.image.clone();
+                let child = deferred(crate::img(
+                    move |window: &mut Window, _: &mut crate::App| {
+                        observations
+                            .borrow_mut()
+                            .push(!window.image_cache_stack.is_empty());
+                        Some(Ok(image.clone()))
+                    },
+                ));
+                if self.use_div {
+                    div()
+                        .image_cache(self.cache.clone())
+                        .child(child)
+                        .into_any_element()
+                } else {
+                    crate::image_cache(self.cache.clone())
+                        .child(child)
+                        .into_any_element()
+                }
+            }
+        }
+
+        for use_div in [false, true] {
+            let observations = Rc::new(std::cell::RefCell::new(Vec::new()));
+            let window = cx.add_window(|_, cx| CacheRoot {
+                use_div,
+                observations: observations.clone(),
+                cache: crate::RetainAllImageCache::new(cx),
+                image: std::sync::Arc::new(crate::RenderImage::new(vec![image::Frame::new(
+                    image::RgbaImage::new(8, 12),
+                )])),
+            });
+            observations.borrow_mut().clear();
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            assert_eq!(
+                *observations.borrow(),
+                [true, true],
+                "layout and deferred paint must keep the same cache scope; use_div={use_div}"
+            );
+        }
     }
 }

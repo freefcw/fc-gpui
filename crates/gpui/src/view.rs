@@ -26,6 +26,7 @@ struct ViewCacheKey {
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
     opacity: f32,
+    image_cache: Option<EntityId>,
 }
 
 impl<V: Render> Element for Entity<V> {
@@ -106,6 +107,7 @@ impl AnyView {
     /// without calling the view's render method or its elements' `request_layout`,
     /// `prepaint`, or `paint` methods. The cached view's outer layout is still computed.
     /// Reuse requires matching bounds, content mask, text style, and inherited opacity.
+    /// Switching the nearest inherited image cache also rebuilds the cached subtree.
     ///
     /// Calling [`Context::notify`] on this view or a descendant view invalidates the
     /// cached ancestor views along its rendered view path. Entity reads recorded while
@@ -222,6 +224,10 @@ impl Element for AnyView {
                     let content_mask = window.content_mask();
                     let text_style = window.text_style();
                     let opacity = window.element_opacity();
+                    let image_cache = window
+                        .image_cache_stack
+                        .last()
+                        .map(|cache| cache.entity_id());
 
                     // Opacity is compared by bits so that a NaN opacity still matches itself
                     // and the view keeps using its cache.
@@ -230,6 +236,7 @@ impl Element for AnyView {
                         && element_state.cache_key.content_mask == content_mask
                         && element_state.cache_key.text_style == text_style
                         && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                        && element_state.cache_key.image_cache == image_cache
                         && !window.dirty_views.contains(&self.entity_id())
                         && !window.refreshing
                     {
@@ -266,6 +273,7 @@ impl Element for AnyView {
                                 content_mask,
                                 text_style,
                                 opacity,
+                                image_cache,
                             },
                         },
                     )

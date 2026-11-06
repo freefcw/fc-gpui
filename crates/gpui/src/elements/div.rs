@@ -16,10 +16,10 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementId, Entity, EntityId, FileDropEvent, FocusHandle, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
-    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
+    AbsoluteLength, Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, Bounds,
+    ClickEvent, DispatchPhase, Element, ElementId, Entity, EntityId, FileDropEvent, FocusHandle,
+    Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement,
+    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels,
     Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
@@ -1683,14 +1683,16 @@ impl Div {
     }
 }
 
-/// A frame state for a `Div` element, which contains layout IDs for its children.
+/// A frame state for a `Div` element, containing child layout IDs and its resolved image cache.
 ///
 /// This struct is used internally by the `Div` element to manage the layout state of its children
 /// during the UI update cycle. It holds a small vector of `LayoutId` values, each corresponding to
 /// a child element of the `Div`. These IDs are used to query the layout engine for the computed
 /// bounds of the children after the layout phase is complete.
+/// The image cache is retained across all drawing phases, including children created in prepaint.
 pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
+    image_cache: Option<AnyImageCache>,
 }
 
 /// Interactivity state displayed an manipulated in the inspector.
@@ -1763,7 +1765,7 @@ impl Element for Div {
             .as_mut()
             .map(|provider| provider.provide(window, cx));
 
-        let layout_id = window.with_image_cache(image_cache, |window| {
+        let layout_id = window.with_image_cache(image_cache.clone(), |window| {
             self.interactivity.request_layout(
                 global_id,
                 inspector_id,
@@ -1782,7 +1784,13 @@ impl Element for Div {
             )
         });
 
-        (layout_id, DivFrameState { child_layout_ids })
+        (
+            layout_id,
+            DivFrameState {
+                child_layout_ids,
+                image_cache,
+            },
+        )
     }
 
     #[stacksafe]
@@ -1836,27 +1844,29 @@ impl Element for Div {
             scroll_handle.scroll_to_active_item();
         }
 
-        self.interactivity.prepaint(
-            global_id,
-            inspector_id,
-            bounds,
-            content_size,
-            window,
-            cx,
-            |_style, scroll_offset, hitbox, window, cx| {
-                window.with_element_offset(scroll_offset, |window| {
-                    for child in &mut self.children {
-                        child.prepaint(window, cx);
+        window.with_image_cache(request_layout.image_cache.clone(), |window| {
+            self.interactivity.prepaint(
+                global_id,
+                inspector_id,
+                bounds,
+                content_size,
+                window,
+                cx,
+                |_style, scroll_offset, hitbox, window, cx| {
+                    window.with_element_offset(scroll_offset, |window| {
+                        for child in &mut self.children {
+                            child.prepaint(window, cx);
+                        }
+                    });
+
+                    if let Some(listener) = self.prepaint_listener.as_ref() {
+                        listener(children_bounds, window, cx);
                     }
-                });
 
-                if let Some(listener) = self.prepaint_listener.as_ref() {
-                    listener(children_bounds, window, cx);
-                }
-
-                hitbox
-            },
-        )
+                    hitbox
+                },
+            )
+        })
     }
 
     #[stacksafe]
@@ -1865,17 +1875,12 @@ impl Element for Div {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let image_cache = self
-            .image_cache
-            .as_mut()
-            .map(|provider| provider.provide(window, cx));
-
-        window.with_image_cache(image_cache, |window| {
+        window.with_image_cache(request_layout.image_cache.clone(), |window| {
             self.interactivity.paint(
                 global_id,
                 inspector_id,

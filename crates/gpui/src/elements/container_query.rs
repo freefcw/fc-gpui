@@ -2,12 +2,10 @@
 //! The element's own size is determined solely by its style and the space
 //! offered by its parent.
 
-use refineable::Refineable as _;
-
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Size, Style, StyleRefinement, Styled,
-    Window, relative,
+    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, Hitbox,
+    InspectorElementId, Interactivity, IntoElement, LayoutId, Pixels, Size, StyleRefinement,
+    Styled, Window, relative,
 };
 
 /// Construct a container query element with the given render callback.
@@ -36,78 +34,103 @@ pub fn container_query<E>(
 where
     E: IntoElement,
 {
-    let mut base_style = StyleRefinement::default();
-    base_style.size.width = Some(relative(1.).into());
-    base_style.size.height = Some(relative(1.).into());
+    let mut interactivity = Interactivity::new();
+    interactivity.base_style.size.width = Some(relative(1.).into());
+    interactivity.base_style.size.height = Some(relative(1.).into());
 
     ContainerQuery {
         render: Some(Box::new(|size, window, cx| {
             render(size, window, cx).into_any_element()
         })),
-        style: base_style,
+        interactivity,
     }
 }
 
 /// A container query element, created with [`container_query`].
 pub struct ContainerQuery {
     render: Option<Box<dyn FnOnce(Size<Pixels>, &mut Window, &mut App) -> AnyElement>>,
-    style: StyleRefinement,
+    interactivity: Interactivity,
 }
 
 impl Element for ContainerQuery {
     type RequestLayoutState = ();
-    type PrepaintState = Option<AnyElement>;
+    type PrepaintState = (Option<Hitbox>, Option<AnyElement>);
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.interactivity.element_id.clone()
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
+        self.interactivity.source_location()
     }
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.refine(&self.style);
-        let layout_id = window.request_layout(style, [], cx);
+        let layout_id =
+            self.interactivity
+                .request_layout(id, inspector_id, window, cx, |style, window, cx| {
+                    window.request_layout(style, [], cx)
+                });
         (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement> {
-        let render = self.render.take()?;
-        let mut child = render(bounds.size, window, cx);
-        child.layout_as_root(bounds.size.map(AvailableSpace::Definite), window, cx);
-        child.prepaint_at(bounds.origin, window, cx);
-        Some(child)
+    ) -> Self::PrepaintState {
+        self.interactivity.prepaint(
+            id,
+            inspector_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, window, cx| {
+                let child = self.render.take().map(|render| {
+                    let mut child = render(bounds.size, window, cx);
+                    child.layout_as_root(bounds.size.map(AvailableSpace::Definite), window, cx);
+                    child.prepaint_at(bounds.origin, window, cx);
+                    child
+                });
+                (hitbox, child)
+            },
+        )
     }
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(child) = prepaint {
-            child.paint(window, cx);
-        }
+        let (hitbox, child) = prepaint;
+        self.interactivity.paint(
+            id,
+            inspector_id,
+            bounds,
+            hitbox.as_ref(),
+            window,
+            cx,
+            |_, window, cx| {
+                if let Some(child) = child {
+                    child.paint(window, cx);
+                }
+            },
+        );
     }
 }
 
@@ -121,15 +144,15 @@ impl IntoElement for ContainerQuery {
 
 impl Styled for ContainerQuery {
     fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
+        &mut self.interactivity.base_style
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        Context, IntoElement, ParentElement, Pixels, Render, Size, Styled, TestAppContext, Window,
-        container_query, div, px, size,
+        AppContext as _, Context, IntoElement, ParentElement, Pixels, Render, Size, Styled,
+        TestAppContext, Window, container_query, div, px, size,
     };
     use std::cell::Cell;
     use std::rc::Rc;
@@ -218,5 +241,108 @@ mod tests {
             Some(size(px(240.), px(80.))),
             "container_query should measure from its own style, not only the parent offer"
         );
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum ContainerKind {
+        Div,
+        Query,
+        ImageCache,
+    }
+
+    struct StyledContainer {
+        kind: ContainerKind,
+        hidden: bool,
+        observations: Rc<std::cell::RefCell<Vec<(crate::Hsla, crate::ContentMask<Pixels>, f32)>>>,
+        cache: crate::Entity<crate::RetainAllImageCache>,
+    }
+
+    impl Render for StyledContainer {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let prepaint_observations = self.observations.clone();
+            let paint_observations = self.observations.clone();
+            let child = crate::canvas(
+                move |_, window, _| {
+                    prepaint_observations.borrow_mut().push((
+                        window.text_style().color,
+                        window.content_mask(),
+                        window.element_opacity(),
+                    ));
+                },
+                move |_, _, window, _| {
+                    paint_observations.borrow_mut().push((
+                        window.text_style().color,
+                        window.content_mask(),
+                        window.element_opacity(),
+                    ));
+                },
+            )
+            .min_w(px(100.))
+            .min_h(px(100.))
+            .bg(crate::green());
+            let hidden = self.hidden;
+            fn style<E: Styled>(element: E, hidden: bool) -> E {
+                let element = element
+                    .size(px(40.))
+                    .bg(crate::red())
+                    .text_color(crate::blue())
+                    .opacity(0.5)
+                    .overflow_hidden();
+                if hidden { element.invisible() } else { element }
+            }
+            match self.kind {
+                ContainerKind::Div => style(div().child(child), hidden).into_any_element(),
+                ContainerKind::Query => {
+                    style(container_query(move |_, _, _| child), hidden).into_any_element()
+                }
+                ContainerKind::ImageCache => {
+                    style(crate::image_cache(self.cache.clone()).child(child), hidden)
+                        .into_any_element()
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn styled_containers_share_paint_and_inheritance_semantics(cx: &mut TestAppContext) {
+        for kind in [
+            ContainerKind::Div,
+            ContainerKind::Query,
+            ContainerKind::ImageCache,
+        ] {
+            for hidden in [false, true] {
+                let observations = Rc::new(std::cell::RefCell::new(Vec::new()));
+                let window = cx.add_window(|_, cx| StyledContainer {
+                    kind,
+                    hidden,
+                    observations: observations.clone(),
+                    cache: crate::RetainAllImageCache::new(cx),
+                });
+                observations.borrow_mut().clear();
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear();
+                    let quads = &window.rendered_frame.scene.quads;
+                    assert_eq!(
+                        quads.len(),
+                        if hidden { 0 } else { 2 },
+                        "{kind:?}, hidden={hidden}"
+                    );
+                    for quad in quads {
+                        assert_eq!(quad.background.solid.a, 0.5, "{kind:?}");
+                    }
+                    assert_eq!(
+                        observations.borrow().len(),
+                        if hidden { 1 } else { 2 },
+                        "{kind:?}, hidden={hidden}"
+                    );
+                    for (color, mask, opacity) in observations.borrow().iter() {
+                        assert_eq!(*color, crate::blue(), "{kind:?}");
+                        assert_eq!(mask.bounds.size, size(px(40.), px(40.)), "{kind:?}");
+                        assert_eq!(*opacity, 0.5, "{kind:?}");
+                    }
+                })
+                .unwrap();
+            }
+        }
     }
 }

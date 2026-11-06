@@ -765,6 +765,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: SmallVec<[TextStyleRefinement; 4]>,
+    image_cache_stack: SmallVec<[AnyImageCache; 4]>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
@@ -3335,6 +3336,8 @@ impl Window {
                         .clone_from(&deferred_draw.element_id_stack);
                     self.text_style_stack
                         .clone_from(&deferred_draw.text_style_stack);
+                    self.image_cache_stack
+                        .clone_from(&deferred_draw.image_cache_stack);
                     (
                         deferred_draw.element.take(),
                         deferred_draw.parent_node,
@@ -3373,6 +3376,7 @@ impl Window {
 
             self.element_id_stack.clear();
             self.text_style_stack.clear();
+            self.image_cache_stack.clear();
             round_start = round_end;
         }
     }
@@ -3385,6 +3389,10 @@ impl Window {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
+            self.text_style_stack
+                .clone_from(&deferred_draw.text_style_stack);
+            self.image_cache_stack
+                .clone_from(&deferred_draw.image_cache_stack);
             self.next_frame
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
@@ -3405,6 +3413,8 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+        self.text_style_stack.clear();
+        self.image_cache_stack.clear();
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -3458,6 +3468,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    image_cache_stack: deferred_draw.image_cache_stack.clone(),
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -3947,6 +3958,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            image_cache_stack: self.image_cache_stack.clone(),
             priority,
             element: Some(element),
             absolute_offset,
