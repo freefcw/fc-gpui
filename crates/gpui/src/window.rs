@@ -808,6 +808,7 @@ pub(crate) struct PrepaintStateIndex {
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
     line_layout_index: LineLayoutIndex,
+    a11y_index: usize,
 }
 
 #[derive(Clone, Default)]
@@ -821,6 +822,8 @@ pub(crate) struct PaintIndex {
     accessed_element_states_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
+    window_control_hitboxes_index: usize,
+    a11y_index: usize,
 }
 
 impl Frame {
@@ -3425,10 +3428,15 @@ impl Window {
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             line_layout_index: self.text_system.layout_index(),
+            a11y_index: self.a11y.prepaint_index(),
         }
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        if self.a11y.is_active() {
+            self.a11y
+                .reuse_prepaint(range.start.a11y_index..range.end.a11y_index, self.focus);
+        }
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -3490,10 +3498,22 @@ impl Window {
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
+            window_control_hitboxes_index: self.next_frame.window_control_hitboxes.len(),
+            a11y_index: self.a11y.paint_index(),
         }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        self.next_frame.window_control_hitboxes.extend(
+            self.rendered_frame.window_control_hitboxes[range.start.window_control_hitboxes_index
+                ..range.end.window_control_hitboxes_index]
+                .iter()
+                .cloned(),
+        );
+        if self.a11y.is_active() {
+            self.a11y
+                .reuse_paint(range.start.a11y_index..range.end.a11y_index);
+        }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -6081,11 +6101,7 @@ impl Window {
         action: accesskit::Action,
         listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
     ) {
-        self.a11y
-            .action_listeners
-            .entry(node_id)
-            .or_default()
-            .push((action, Box::new(listener)));
+        self.a11y.on_action(node_id, action, Box::new(listener));
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -6895,6 +6911,156 @@ mod tests {
         path::PathBuf,
         rc::Rc,
     };
+
+    #[cfg(feature = "accessibility")]
+    #[test]
+    fn cached_view_replays_accessibility_outputs() {
+        struct Child {
+            renders: Rc<Cell<usize>>,
+            actions: Rc<Cell<usize>>,
+            focus: FocusHandle,
+        }
+
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                let actions = self.actions.clone();
+                div()
+                    .id("cached-button")
+                    .size_full()
+                    .role(crate::Role::Button)
+                    .aria_label("Cached action")
+                    .track_focus(&self.focus)
+                    .on_a11y_action(accesskit::Action::Click, move |_, _, _| {
+                        actions.set(actions.get() + 1);
+                    })
+            }
+        }
+
+        struct Root(Entity<Child>);
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                AnyView::from(self.0.clone()).cached(StyleRefinement::default().size(px(50.)))
+            }
+        }
+
+        let mut app = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let actions = Rc::new(Cell::new(0));
+        let (_, cx) = app.add_window_view({
+            let renders = renders.clone();
+            let actions = actions.clone();
+            move |_, cx| {
+                Root(cx.new(|cx| Child {
+                    renders,
+                    actions,
+                    focus: cx.focus_handle(),
+                }))
+            }
+        });
+        cx.simulate_accessibility_activation();
+        let node_id = cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+            let tree: serde_json::Value =
+                serde_json::from_str(&window.debug_a11y_tree_json().unwrap()).unwrap();
+            let node = tree["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["aria"]["label"] == "Cached action")
+                .unwrap();
+            accesskit::NodeId(node["accesskit_id"].as_str().unwrap().parse().unwrap())
+        });
+        let fresh_renders = renders.get();
+
+        for expected_actions in 1..=3 {
+            cx.update(|window, cx| {
+                window.draw(cx).clear();
+                let tree: serde_json::Value =
+                    serde_json::from_str(&window.debug_a11y_tree_json().unwrap()).unwrap();
+                let nodes = tree["nodes"].as_array().unwrap();
+                let button = nodes
+                    .iter()
+                    .find(|node| node["aria"]["label"] == "Cached action")
+                    .unwrap();
+                let root = nodes
+                    .iter()
+                    .find(|node| node["id"] == tree["root"])
+                    .unwrap();
+                assert_eq!(root["children"], serde_json::json!([button["id"]]));
+                assert!(window.a11y.node_bounds.contains_key(&node_id));
+                assert!(window.a11y.focus_ids.contains_key(&node_id));
+            });
+            cx.simulate_accessibility_action(accesskit::ActionRequest {
+                action: accesskit::Action::Click,
+                target_tree: accesskit::TreeId::ROOT,
+                target_node: node_id,
+                data: None,
+            });
+            assert_eq!(actions.get(), expected_actions);
+            assert_eq!(renders.get(), fresh_renders, "the child should stay cached");
+        }
+
+        cx.simulate_accessibility_action(accesskit::ActionRequest {
+            action: accesskit::Action::Focus,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+            assert_eq!(window.focus, window.a11y.focus_ids.get(&node_id).copied());
+            let tree: serde_json::Value =
+                serde_json::from_str(&window.debug_a11y_tree_json().unwrap()).unwrap();
+            let focused = tree["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["id"] == tree["focus"])
+                .unwrap();
+            assert_eq!(focused["aria"]["label"], "Cached action");
+        });
+    }
+
+    #[test]
+    fn cached_view_replays_window_control_hitboxes() {
+        struct Child(Rc<Cell<usize>>);
+        impl Render for Child {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.0.set(self.0.get() + 1);
+                div()
+                    .id("cached-titlebar")
+                    .size_full()
+                    .window_control_area(crate::WindowControlArea::Drag)
+            }
+        }
+        struct Root(Entity<Child>);
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                AnyView::from(self.0.clone()).cached(StyleRefinement::default().size(px(50.)))
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let renders = renders.clone();
+            move |_, cx| Root(cx.new(|_| Child(renders)))
+        });
+        let fresh_renders = renders.get();
+        for _ in 0..3 {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear();
+                let controls = &window.rendered_frame.window_control_hitboxes;
+                assert_eq!(controls.len(), 1);
+                assert_eq!(controls[0].0, crate::WindowControlArea::Drag);
+                assert_eq!(controls[0].1.bounds.size, size(px(50.), px(50.)));
+            })
+            .unwrap();
+            assert_eq!(renders.get(), fresh_renders, "the child should stay cached");
+        }
+    }
 
     #[test]
     fn registered_fonts_invalidate_svg_tiles_and_cached_views() -> Result<()> {

@@ -33,9 +33,13 @@ use crate::{App, Bounds, FocusId, Pixels, Window};
 use accesskit::{Action, NodeId, TreeUpdate};
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    mem,
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
@@ -44,6 +48,23 @@ pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
 /// A listener for an accessibility action on a specific node.
 pub(crate) type A11yActionListener =
     Box<dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static>;
+
+type RegisteredAction = (Action, A11yActionListener);
+
+#[derive(Default)]
+struct PreviousFrame {
+    nodes: Vec<NodeOperation>,
+    focus_ids: FxHashMap<NodeId, FocusId>,
+    node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+    action_listeners: FxHashMap<NodeId, Vec<Option<RegisteredAction>>>,
+    action_records: Vec<(NodeId, usize)>,
+}
+
+#[derive(Clone)]
+enum NodeOperation {
+    Push(NodeId, Arc<accesskit::Node>),
+    Pop,
+}
 
 /// Per-window accessibility state.
 ///
@@ -73,6 +94,8 @@ pub(crate) struct A11y {
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    action_records: Vec<(NodeId, usize)>,
+    previous_frame: PreviousFrame,
     debug_tree_json: Option<String>,
 }
 
@@ -86,6 +109,8 @@ impl A11y {
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
+            action_records: Vec::new(),
+            previous_frame: PreviousFrame::default(),
             debug_tree_json: None,
         }
     }
@@ -108,10 +133,70 @@ impl A11y {
 
     /// Clear per-frame state and push the root node to start a new frame.
     pub(crate) fn begin_frame(&mut self) {
-        self.focus_ids.clear();
-        self.node_bounds.clear();
-        self.action_listeners.clear();
+        self.previous_frame = PreviousFrame {
+            nodes: mem::take(&mut self.nodes.operations),
+            focus_ids: mem::take(&mut self.focus_ids),
+            node_bounds: mem::take(&mut self.node_bounds),
+            action_listeners: mem::take(&mut self.action_listeners)
+                .into_iter()
+                .map(|(node_id, listeners)| (node_id, listeners.into_iter().map(Some).collect()))
+                .collect(),
+            action_records: mem::take(&mut self.action_records),
+        };
         self.nodes.begin_frame();
+    }
+
+    pub(crate) fn prepaint_index(&self) -> usize {
+        self.nodes.operations.len()
+    }
+
+    pub(crate) fn reuse_prepaint(&mut self, range: Range<usize>, focused: Option<FocusId>) {
+        for index in range {
+            match self.previous_frame.nodes[index].clone() {
+                NodeOperation::Push(node_id, node) => {
+                    self.nodes.push_recorded(node_id, node);
+                    if let Some(bounds) = self.previous_frame.node_bounds.get(&node_id) {
+                        self.node_bounds.insert(node_id, *bounds);
+                    }
+                    if let Some(focus_id) = self.previous_frame.focus_ids.get(&node_id) {
+                        self.focus_ids.insert(node_id, *focus_id);
+                        if focused == Some(*focus_id) {
+                            self.nodes.set_focus(node_id);
+                        }
+                    }
+                }
+                NodeOperation::Pop => self.nodes.pop(),
+            }
+        }
+    }
+
+    pub(crate) fn paint_index(&self) -> usize {
+        self.action_records.len()
+    }
+
+    pub(crate) fn on_action(
+        &mut self,
+        node_id: NodeId,
+        action: Action,
+        listener: A11yActionListener,
+    ) {
+        let listeners = self.action_listeners.entry(node_id).or_default();
+        self.action_records.push((node_id, listeners.len()));
+        listeners.push((action, listener));
+    }
+
+    pub(crate) fn reuse_paint(&mut self, range: Range<usize>) {
+        for index in range {
+            let (node_id, listener_index) = self.previous_frame.action_records[index];
+            if let Some((action, listener)) = self
+                .previous_frame
+                .action_listeners
+                .get_mut(&node_id)
+                .and_then(|listeners| listeners[listener_index].take())
+            {
+                self.on_action(node_id, action, listener);
+            }
+        }
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
@@ -127,6 +212,7 @@ impl A11y {
 }
 
 pub(crate) struct A11yNodeBuilder {
+    operations: Vec<NodeOperation>,
     ids_stack: SmallVec<[NodeId; 16]>,
     nodes_stack: SmallVec<[accesskit::Node; 16]>,
     /// This is the exact type required by accesskit, so we can't just make it a
@@ -141,6 +227,7 @@ pub(crate) struct A11yNodeBuilder {
 impl A11yNodeBuilder {
     fn new() -> Self {
         Self {
+            operations: Vec::new(),
             ids_stack: SmallVec::new(),
             nodes_stack: SmallVec::new(),
             all_nodes: Vec::new(),
@@ -156,6 +243,10 @@ impl A11yNodeBuilder {
     ///
     /// Returns `true` if the node was successfully pushed.
     pub(crate) fn push(&mut self, id: NodeId, node: accesskit::Node) -> bool {
+        self.push_recorded(id, Arc::new(node))
+    }
+
+    fn push_recorded(&mut self, id: NodeId, node: Arc<accesskit::Node>) -> bool {
         debug_assert!(!self.ids_stack.is_empty(), "push called before push_root");
 
         if !self.seen_ids.insert(id) {
@@ -170,7 +261,8 @@ impl A11yNodeBuilder {
             parent.push_child(id);
         }
         self.ids_stack.push(id);
-        self.nodes_stack.push(node);
+        self.nodes_stack.push((*node).clone());
+        self.operations.push(NodeOperation::Push(id, node));
         true
     }
 
@@ -181,11 +273,13 @@ impl A11yNodeBuilder {
 
         if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
             self.all_nodes.push((id, node));
+            self.operations.push(NodeOperation::Pop);
         }
     }
 
     /// Push the root node to start a new frame.
     fn begin_frame(&mut self) {
+        self.operations.clear();
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
@@ -296,6 +390,51 @@ impl A11yNodeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_subtree_rejoins_the_current_parent_without_duplicate_children() {
+        let mut a11y = A11y::new(Arc::new(AtomicBool::new(true)), false);
+        a11y.sync_active_flag();
+        a11y.begin_frame();
+        a11y.nodes
+            .push(NodeId(1), accesskit::Node::new(accesskit::Role::Group));
+        let start = a11y.prepaint_index();
+        a11y.nodes
+            .push(NodeId(2), accesskit::Node::new(accesskit::Role::Button));
+        a11y.nodes
+            .push(NodeId(3), accesskit::Node::new(accesskit::Role::Label));
+        a11y.nodes.pop();
+        a11y.nodes.pop();
+        let end = a11y.prepaint_index();
+        a11y.nodes.pop();
+        let _ = a11y.end_frame();
+        let mut cached_range = start..end;
+
+        for parent in [NodeId(4), NodeId(5), NodeId(6)] {
+            a11y.begin_frame();
+            a11y.nodes
+                .push(parent, accesskit::Node::new(accesskit::Role::Group));
+            let start = a11y.prepaint_index();
+            a11y.reuse_prepaint(cached_range, None);
+            cached_range = start..a11y.prepaint_index();
+            a11y.nodes.pop();
+            let update = a11y.end_frame();
+            let node = |id| {
+                &update
+                    .nodes
+                    .iter()
+                    .find(|(node_id, _)| *node_id == id)
+                    .unwrap()
+                    .1
+            };
+
+            assert_eq!(node(ROOT_NODE_ID).children(), &[parent]);
+            assert_eq!(node(parent).children(), &[NodeId(2)]);
+            assert_eq!(node(NodeId(2)).children(), &[NodeId(3)]);
+            assert!(node(NodeId(3)).children().is_empty());
+            assert_eq!(update.nodes.len(), 4);
+        }
+    }
 
     #[test]
     fn finalizes_tree_with_root_and_focus() {
