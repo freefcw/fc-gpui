@@ -7,6 +7,10 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use refineable::Refineable;
 
 /// A source of a surface's content.
+///
+/// Content sources are currently available only on macOS and are rendered by
+/// the Metal backend. This type does not provide cross-platform video playback;
+/// the WGPU and DirectX backends do not render surface primitives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceSource {
     /// A macOS image buffer from CoreVideo

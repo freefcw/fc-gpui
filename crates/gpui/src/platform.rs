@@ -232,6 +232,11 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
+    /// Restarts the application with the supplied arguments.
+    ///
+    /// Linux and Windows use `binary_path` when provided, otherwise the current
+    /// executable. macOS ignores `binary_path` with a warning and reopens the
+    /// current app bundle, or the current executable when running unbundled.
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     /// Brings the application to the foreground. The default implementation
     /// does nothing on platforms without a notion of app activation.
@@ -922,6 +927,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
+    /// Displays a native prompt, or returns `None` when native prompts are unavailable.
+    ///
+    /// `None` requests the GPUI-rendered fallback in [`crate::Window::prompt`];
+    /// it does not mean that the user cancelled. A receiver resolves to the
+    /// selected answer's index, or is dropped when the native prompt is dismissed.
     fn prompt(
         &self,
         level: PromptLevel,
