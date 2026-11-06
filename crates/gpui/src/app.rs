@@ -2647,48 +2647,37 @@ impl App {
 
     fn dispatch_global_action(&mut self, action: &dyn Action) {
         self.propagate_event = true;
+        let action_id = action.as_any().type_id();
 
-        if let Some(mut global_listeners) = self
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
-        {
-            for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, self);
+        for phase in [DispatchPhase::Capture, DispatchPhase::Bubble] {
+            let Some(mut global_listeners) = self.global_action_listeners.remove(&action_id) else {
+                continue;
+            };
+
+            for index in 0..global_listeners.len() {
+                let index = match phase {
+                    DispatchPhase::Capture => index,
+                    DispatchPhase::Bubble => global_listeners.len() - index - 1,
+                };
+                global_listeners[index](action.as_any(), phase, self);
                 if !self.propagate_event {
                     break;
                 }
             }
 
+            // Registrations made during capture participate in bubble, while
+            // registrations made during bubble start with the next dispatch.
             global_listeners.extend(
                 self.global_action_listeners
-                    .remove(&action.as_any().type_id())
+                    .remove(&action_id)
                     .unwrap_or_default(),
             );
-
             self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
-        }
+                .insert(action_id, global_listeners);
 
-        if self.propagate_event
-            && let Some(mut global_listeners) = self
-                .global_action_listeners
-                .remove(&action.as_any().type_id())
-        {
-            for listener in global_listeners.iter().rev() {
-                listener(action.as_any(), DispatchPhase::Bubble, self);
-                if !self.propagate_event {
-                    break;
-                }
+            if !self.propagate_event {
+                break;
             }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
         }
     }
 
@@ -3226,6 +3215,81 @@ mod test {
     };
 
     struct RenderCounter(Rc<Cell<usize>>);
+
+    crate::actions!(global_dispatch_test, [DispatchProbe]);
+
+    #[test]
+    fn global_action_dispatch_preserves_order_and_reentrant_registration() {
+        use crate::DispatchPhase::{Bubble, Capture};
+        let cx = TestAppContext::single();
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let action_id = std::any::TypeId::of::<DispatchProbe>();
+            for name in ["first", "second"] {
+                let calls = calls.clone();
+                let registered = Cell::new(false);
+                cx.global_action_listeners
+                    .entry(action_id)
+                    .or_default()
+                    .push(Rc::new(move |_, phase, cx| {
+                        calls.borrow_mut().push((name, phase));
+                        if name == "first" && phase == Capture && !registered.replace(true) {
+                            let calls = calls.clone();
+                            cx.on_action::<DispatchProbe>(move |_, _| {
+                                calls.borrow_mut().push(("new", Bubble));
+                            });
+                        }
+                    }));
+            }
+            let expected = vec![
+                ("first", Capture),
+                ("second", Capture),
+                ("new", Bubble),
+                ("second", Bubble),
+                ("first", Bubble),
+            ];
+            cx.dispatch_global_action(&DispatchProbe);
+            assert_eq!(*calls.borrow(), expected);
+            calls.borrow_mut().clear();
+            cx.dispatch_global_action(&DispatchProbe);
+            assert_eq!(*calls.borrow(), expected);
+        });
+    }
+
+    #[test]
+    fn global_action_dispatch_restores_listeners_after_stopping_propagation() {
+        use crate::DispatchPhase::{Bubble, Capture};
+        for stop_phase in [Capture, Bubble] {
+            let cx = TestAppContext::single();
+            let calls = Rc::new(RefCell::new(Vec::new()));
+            cx.update(|cx| {
+                let action_id = std::any::TypeId::of::<DispatchProbe>();
+                for name in ["first", "second"] {
+                    let calls = calls.clone();
+                    cx.global_action_listeners
+                        .entry(action_id)
+                        .or_default()
+                        .push(Rc::new(move |_, phase, cx| {
+                            calls.borrow_mut().push((name, phase));
+                            if phase == stop_phase {
+                                cx.stop_propagation();
+                            }
+                        }));
+                }
+                for _ in 0..2 {
+                    calls.borrow_mut().clear();
+                    cx.dispatch_global_action(&DispatchProbe);
+                    let expected = if stop_phase == Capture {
+                        vec![("first", Capture)]
+                    } else {
+                        vec![("first", Capture), ("second", Capture), ("second", Bubble)]
+                    };
+                    assert_eq!(*calls.borrow(), expected);
+                    assert_eq!(cx.global_action_listeners[&action_id].len(), 2);
+                }
+            });
+        }
+    }
 
     impl Render for RenderCounter {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
