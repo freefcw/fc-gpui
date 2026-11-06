@@ -7,6 +7,7 @@ on:
       - main
       - develop/0.9
       - develop/0.10
+      - develop/0.13
 
 permissions:
   contents: read
@@ -161,6 +162,11 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # macos-15 jobs are often cancelled while still queued (no runner
+    # acquired). Keep that visible, but do not fail the workflow. Linux and
+    # Windows leave experimental unset and stay required. The Linux X11
+    # allow_failure row stays step-level so that check remains green.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,17 +222,20 @@ jobs:
             cache-key: macos-workspace-tests
             linux-native: false
             examples: true
+            experimental: true
             command: cargo test --workspace --lib --tests --locked -- --test-threads=1
           - name: macOS / no default features
             os: macos-15
             cache-key: macos-no-default
             linux-native: false
+            experimental: true
             command: cargo check -p fc-gpui --lib --no-default-features --locked
           - name: macOS / real visual smoke
             os: macos-15
             cache-key: macos-real-visual
             linux-native: false
             require_real_visual: true
+            experimental: true
             # screen-capture is opt-in; workspace tests do not compile SCStream.
             # Run only that module (serialized): the full gpui-macos lib suite
             # without --test-threads=1 SIGABRTs on AppKit clipboard/text paths.
