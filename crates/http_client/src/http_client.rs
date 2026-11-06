@@ -280,6 +280,9 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed API URL using the given path.
+    #[deprecated(
+        note = "Zed-specific endpoint routing; configure API endpoints and construct URLs in application code"
+    )]
     pub fn build_zed_api_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
@@ -296,6 +299,9 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed Cloud URL using the given path.
+    #[deprecated(
+        note = "Zed-specific endpoint routing; configure cloud endpoints and construct URLs in application code"
+    )]
     pub fn build_zed_cloud_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
@@ -312,6 +318,9 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed LLM URL using the given path.
+    #[deprecated(
+        note = "Zed-specific endpoint routing; configure LLM endpoints and construct URLs in application code"
+    )]
     pub fn build_zed_llm_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {

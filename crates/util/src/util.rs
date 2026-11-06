@@ -223,6 +223,9 @@ where
 /// and terminates the program with an error message unless explicitly allowed via the
 /// `ZED_ALLOW_ROOT` environment variable.
 #[cfg(unix)]
+#[deprecated(
+    note = "Zed-specific root-execution policy; enforce your application's privilege policy in application code"
+)]
 pub fn prevent_root_execution() {
     let is_root = nix::unistd::geteuid().is_root();
     let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
@@ -351,6 +354,9 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
 
 /// Returns a path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
+#[deprecated(
+    note = "Assumes Zed's executable layout; resolve your application's CLI path in application code"
+)]
 pub fn get_zed_cli_path() -> Result<PathBuf> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
