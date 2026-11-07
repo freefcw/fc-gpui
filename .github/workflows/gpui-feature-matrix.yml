@@ -4,10 +4,21 @@ on:
   pull_request:
   push:
     branches:
+      # Keep this list identical in gpui-feature-matrix-macos.yml.
       - main
-      - develop/0.9
-      - develop/0.10
-      - develop/0.13
+      - "develop/**"
+
+# Key is workflow name + event + ref, so this file cannot cancel the macOS
+# workflow, a pull request cannot cancel a branch push, and one pull
+# request cannot cancel another.
+# A new commit on a pull request cancels that PR's older run of this
+# workflow only (github.ref stays refs/pull/<n>/merge).
+# Push runs also include the commit SHA. cancel-in-progress is false for
+# them. The SHA is required because GitHub still cancels a pending run
+# when a newer run uses the same group.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -158,15 +169,13 @@ jobs:
       - name: Build and verify packaged crates
         run: scripts/verify-release-archives.sh
 
+  # macOS rows live in gpui-feature-matrix-macos.yml. A cancelled macOS
+  # runner must not fail this workflow. Failures of commands that actually
+  # run stay strict over there.
   check:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    # macos-15 jobs are often cancelled while still queued (no runner
-    # acquired). Keep that visible, but do not fail the workflow. Linux and
-    # Windows leave experimental unset and stay required. The Linux X11
-    # allow_failure row stays step-level so that check remains green.
-    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -217,29 +226,6 @@ jobs:
             cache-key: linux-accessibility-wayland
             linux-native: true
             command: cargo check -p fc-gpui --lib --no-default-features --features accessibility,font-kit,wayland --locked
-          - name: macOS / workspace tests
-            os: macos-15
-            cache-key: macos-workspace-tests
-            linux-native: false
-            examples: true
-            experimental: true
-            command: cargo test --workspace --lib --tests --locked -- --test-threads=1
-          - name: macOS / no default features
-            os: macos-15
-            cache-key: macos-no-default
-            linux-native: false
-            experimental: true
-            command: cargo check -p fc-gpui --lib --no-default-features --locked
-          - name: macOS / real visual smoke
-            os: macos-15
-            cache-key: macos-real-visual
-            linux-native: false
-            require_real_visual: true
-            experimental: true
-            # screen-capture is opt-in; workspace tests do not compile SCStream.
-            # Run only that module (serialized): the full gpui-macos lib suite
-            # without --test-threads=1 SIGABRTs on AppKit clipboard/text paths.
-            command: cargo test -p fc-gpui-macos --lib --features screen-capture --locked -- --test-threads=1 screen_capture && cargo test -p fc-gpui --test real_visual_smoke --features test-support,screen-capture --locked -- --ignored
           - name: Windows / workspace tests
             os: windows-2022
             cache-key: windows-workspace-tests
@@ -266,49 +252,13 @@ jobs:
             command: cargo test -p fc-gpui --test real_visual_smoke --features test-support --locked -- --ignored
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Install Linux native dependencies
-        if: runner.os == 'Linux' && matrix.linux-native
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            libwayland-dev \
-            libxcb1-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libx11-dev \
-            mesa-vulkan-drivers \
-            libegl1 \
-            libgles2 \
-            libgl1-mesa-dri \
-            pkg-config \
-            xvfb
-
-      - name: Install Rust 1.97.1
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-        with:
-          toolchain: 1.97.1
-
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          shared-key: gpui-${{ matrix.cache-key }}
-
-      # Job-level continue-on-error still reports this matrix check as failure
-      # and leaves mergeable_state=unstable. Step-level keeps the required
-      # check green when only Linux X11 real visual smoke is allow-failure.
       - name: Check GPUI feature combination
-        continue-on-error: ${{ matrix.allow_failure || false }}
-        env:
-          GPUI_REQUIRE_REAL_VISUAL: ${{ matrix.require_real_visual && '1' || '0' }}
-          LIBGL_ALWAYS_SOFTWARE: ${{ matrix.software_gl && '1' || '' }}
-          WGPU_BACKEND: ${{ matrix.software_gl && 'gl' || '' }}
-        run: bash scripts/ci-retry-registry.sh "${{ matrix.command }}"
-
-      - name: Check public examples
-        if: matrix.examples
-        run: bash scripts/ci-retry-registry.sh "cargo check -p fc-gpui --examples --locked"
+        uses: ./.github/actions/gpui-matrix-check
+        with:
+          cache-key: ${{ matrix.cache-key }}
+          command: ${{ matrix.command }}
+          linux-native: ${{ matrix.linux-native }}
+          examples: ${{ matrix.examples == true }}
+          allow-failure: ${{ matrix.allow_failure == true }}
+          require-real-visual: ${{ matrix.require_real_visual == true }}
+          software-gl: ${{ matrix.software_gl == true }}
