@@ -1,8 +1,8 @@
 name: GPUI matrix check
 description: >-
-  Checkout, Linux libraries when requested, Rust 1.97.1, cache, and one
-  feature-matrix command. Shared by the Linux/Windows and macOS workflows
-  so those steps are not copied.
+  Linux libraries when requested, Rust 1.97.1, cache, and one
+  feature-matrix command. The calling job must check out the repository
+  first; GitHub resolves this local action from the workspace.
 
 inputs:
   cache-key:
@@ -36,11 +36,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Check out repository
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      with:
-        persist-credentials: false
-
     - name: Install Linux native dependencies
       if: runner.os == 'Linux' && inputs.linux-native == 'true'
       shell: bash

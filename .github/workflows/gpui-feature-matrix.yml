@@ -252,6 +252,11 @@ jobs:
             command: cargo test -p fc-gpui --test real_visual_smoke --features test-support --locked -- --ignored
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Check GPUI feature combination
         uses: ./.github/actions/gpui-matrix-check
         with:
