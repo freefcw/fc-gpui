@@ -1,0 +1,95 @@
+name: GPUI matrix check
+description: >-
+  Checkout, Linux libraries when requested, Rust 1.97.1, cache, and one
+  feature-matrix command. Shared by the Linux/Windows and macOS workflows
+  so those steps are not copied.
+
+inputs:
+  cache-key:
+    description: Suffix for the Rust cache shared-key
+    required: true
+  command:
+    description: Command passed to scripts/ci-retry-registry.sh
+    required: true
+  linux-native:
+    description: Install Linux windowing libraries before the command
+    required: true
+  examples:
+    description: Also cargo-check the public examples
+    required: false
+    default: "false"
+  allow-failure:
+    description: >-
+      If true, a failed command step does not fail the job. This does not
+      apply when GitHub cancels the job before a runner starts it.
+    required: false
+    default: "false"
+  require-real-visual:
+    description: Set GPUI_REQUIRE_REAL_VISUAL=1 for the command
+    required: false
+    default: "false"
+  software-gl:
+    description: Force the software GL backend for the command
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Check out repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+
+    - name: Install Linux native dependencies
+      if: runner.os == 'Linux' && inputs.linux-native == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes \
+          libwayland-dev \
+          libxcb1-dev \
+          libxkbcommon-dev \
+          libxkbcommon-x11-dev \
+          libx11-dev \
+          mesa-vulkan-drivers \
+          libegl1 \
+          libgles2 \
+          libgl1-mesa-dri \
+          pkg-config \
+          xvfb
+
+    - name: Install Rust 1.97.1
+      uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      with:
+        toolchain: 1.97.1
+
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      with:
+        shared-key: gpui-${{ inputs.cache-key }}
+
+    # continue-on-error here only covers a step that actually runs. GitHub
+    # cancels a job that never gets a runner before any step starts, and
+    # that cancellation still fails the workflow that owns the job. Only
+    # the Linux X11 real-visual row sets allow-failure, so a failed smoke
+    # step does not fail that job. Every other row is strict.
+    - name: Check GPUI feature combination
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      continue-on-error: ${{ inputs.allow-failure == 'true' }}
+      env:
+        GPUI_REQUIRE_REAL_VISUAL: ${{ inputs.require-real-visual == 'true' && '1' || '0' }}
+        LIBGL_ALWAYS_SOFTWARE: ${{ inputs.software-gl == 'true' && '1' || '' }}
+        WGPU_BACKEND: ${{ inputs.software-gl == 'true' && 'gl' || '' }}
+        GPUI_CI_COMMAND: ${{ inputs.command }}
+      run: bash scripts/ci-retry-registry.sh "$GPUI_CI_COMMAND"
+
+    - name: Check public examples
+      if: inputs.examples == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        GPUI_CI_COMMAND: cargo check -p fc-gpui --examples --locked
+      run: bash scripts/ci-retry-registry.sh "$GPUI_CI_COMMAND"

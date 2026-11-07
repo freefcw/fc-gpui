@@ -1,0 +1,78 @@
+name: GPUI feature matrix (macOS)
+
+# Separate from the Linux/Windows workflow so a missing macos-15 runner
+# cannot fail that run. This file does not set continue-on-error.
+# GitHub cancels a queued job that never gets a runner before any step
+# starts (conclusion cancelled, zero steps). continue-on-error does not
+# turn that into success, so this workflow still goes red. That shows the
+# capacity problem. It is not a passing build. Commands that do run fail
+# the job on compiler and test errors.
+
+on:
+  pull_request:
+  push:
+    branches:
+      # Keep this list identical in gpui-feature-matrix.yml.
+      - main
+      - "develop/**"
+
+# Key is workflow name + event + ref, so this file cannot cancel the
+# Linux/Windows workflow, a pull request cannot cancel a branch push, and
+# one pull request cannot cancel another.
+# A new commit on a pull request cancels that PR's older run of this
+# workflow only (github.ref stays refs/pull/<n>/merge).
+# Push runs also include the commit SHA. cancel-in-progress is false for
+# them. The SHA is required because GitHub still cancels a pending run
+# when a newer run uses the same group.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS / workspace tests
+            os: macos-15
+            cache-key: macos-workspace-tests
+            linux-native: false
+            examples: true
+            command: cargo test --workspace --lib --tests --locked -- --test-threads=1
+          - name: macOS / no default features
+            os: macos-15
+            cache-key: macos-no-default
+            linux-native: false
+            command: cargo check -p fc-gpui --lib --no-default-features --locked
+          - name: macOS / real visual smoke
+            os: macos-15
+            cache-key: macos-real-visual
+            linux-native: false
+            require_real_visual: true
+            # screen-capture is opt-in; workspace tests do not compile SCStream.
+            # Run only that module (serialized): the full gpui-macos lib suite
+            # without --test-threads=1 SIGABRTs on AppKit clipboard/text paths.
+            command: cargo test -p fc-gpui-macos --lib --features screen-capture --locked -- --test-threads=1 screen_capture && cargo test -p fc-gpui --test real_visual_smoke --features test-support,screen-capture --locked -- --ignored
+
+    steps:
+      - name: Check GPUI feature combination
+        uses: ./.github/actions/gpui-matrix-check
+        with:
+          cache-key: ${{ matrix.cache-key }}
+          command: ${{ matrix.command }}
+          linux-native: ${{ matrix.linux-native }}
+          examples: ${{ matrix.examples == true }}
+          allow-failure: "false"
+          require-real-visual: ${{ matrix.require_real_visual == true }}
+          software-gl: "false"
