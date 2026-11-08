@@ -33,7 +33,6 @@ pub struct Toast {
     title: SharedString,
     body: Option<SharedString>,
     duration: Duration,
-    position: ToastPosition,
 }
 
 impl Toast {
@@ -43,7 +42,6 @@ impl Toast {
             title: title.into(),
             body: None,
             duration: Duration::from_secs(3),
-            position: ToastPosition::default(),
         }
     }
 
@@ -59,9 +57,13 @@ impl Toast {
         self
     }
 
-    /// Set the screen position where the toast appears.
-    pub fn position(mut self, position: ToastPosition) -> Self {
-        self.position = position;
+    /// No-op retained for source compatibility. The position is determined by
+    /// the stack; use [`ToastStack::with_position`] instead.
+    #[deprecated(
+        since = "0.13.0",
+        note = "Toast::position has no effect; configure the containing ToastStack with ToastStack::with_position instead"
+    )]
+    pub fn position(self, _position: ToastPosition) -> Self {
         self
     }
 }
@@ -217,4 +219,15 @@ fn render_toast_item(toast: &Toast, is_dark: bool) -> AnyElement {
     }
 
     toast_div.into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toast_stack_position_is_configured_at_stack_level() {
+        let stack = ToastStack::new().with_position(ToastPosition::BottomRight);
+        assert_eq!(stack.position, ToastPosition::BottomRight);
+    }
 }
