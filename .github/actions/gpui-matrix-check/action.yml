@@ -48,6 +48,7 @@ runs:
           libxkbcommon-dev \
           libxkbcommon-x11-dev \
           libx11-dev \
+          libx11-xcb-dev \
           mesa-vulkan-drivers \
           libegl1 \
           libgles2 \
