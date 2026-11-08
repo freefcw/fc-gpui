@@ -388,10 +388,8 @@ struct BatchIterator<'a> {
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
 }
 
-impl<'a> Iterator for BatchIterator<'a> {
-    type Item = PrimitiveBatch<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl BatchIterator<'_> {
+    fn next_batch_kind(&mut self) -> Option<(PrimitiveKind, (DrawOrder, PrimitiveKind))> {
         let atlas = self.atlas;
         if let Some(atlas) = atlas {
             while self
@@ -437,138 +435,123 @@ impl<'a> Iterator for BatchIterator<'a> {
 
         let first = orders_and_kinds[0];
         let second = orders_and_kinds[1];
-        let (batch_kind, max_order_and_kind) = if first.0.is_some() {
-            (first.1, (second.0.unwrap_or(u32::MAX), second.1))
-        } else {
-            return None;
-        };
+        first.0?;
+        Some((first.1, (second.0.unwrap_or(u32::MAX), second.1)))
+    }
+}
 
-        match batch_kind {
+// Advance indices along the original arrays, including any entries skipped before a batch.
+fn consume_batch_range<'a, T>(
+    iter: &mut Peekable<slice::Iter<'a, T>>,
+    start: &mut usize,
+    mut can_batch: impl FnMut(&T, &T) -> bool,
+) -> Range<usize> {
+    let range_start = *start;
+    let first = iter.next().unwrap();
+    *start += 1;
+    while iter.next_if(|item| can_batch(first, item)).is_some() {
+        *start += 1;
+    }
+    range_start..*start
+}
+
+fn consume_sprite_range<'a, T>(
+    iter: &mut Peekable<slice::Iter<'a, T>>,
+    start: &mut usize,
+    batch_kind: PrimitiveKind,
+    max_order_and_kind: (DrawOrder, PrimitiveKind),
+    atlas: Option<&dyn crate::PlatformAtlas>,
+    properties: impl Fn(&T) -> (DrawOrder, &AtlasTile),
+) -> (AtlasTextureId, Range<usize>) {
+    let texture_id = properties(iter.peek().unwrap()).1.texture_id;
+    let range = consume_batch_range(iter, start, |_, sprite| {
+        let (order, tile) = properties(sprite);
+        (order, batch_kind) < max_order_and_kind
+            && tile.texture_id == texture_id
+            && atlas.is_none_or(|atlas| atlas.is_tile_live(tile))
+    });
+    (texture_id, range)
+}
+
+impl<'a> Iterator for BatchIterator<'a> {
+    type Item = PrimitiveBatch<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (batch_kind, max_order_and_kind) = self.next_batch_kind()?;
+        let batch = match batch_kind {
             PrimitiveKind::Shadow => {
-                let shadows_start = self.shadows_start;
-                let mut shadows_end = shadows_start + 1;
-                self.shadows_iter.next();
-                while self
-                    .shadows_iter
-                    .next_if(|shadow| (shadow.order, batch_kind) < max_order_and_kind)
-                    .is_some()
-                {
-                    shadows_end += 1;
-                }
-                self.shadows_start = shadows_end;
-                Some(PrimitiveBatch::Shadows(
-                    &self.shadows[shadows_start..shadows_end],
-                ))
+                let range = consume_batch_range(
+                    &mut self.shadows_iter,
+                    &mut self.shadows_start,
+                    |_, item| (item.order, batch_kind) < max_order_and_kind,
+                );
+                PrimitiveBatch::Shadows(&self.shadows[range])
             }
             PrimitiveKind::Quad => {
-                let quads_start = self.quads_start;
-                let mut quads_end = quads_start + 1;
-                let first = self.quads_iter.next().unwrap();
-                while self
-                    .quads_iter
-                    .next_if(|quad| {
+                let range = consume_batch_range(
+                    &mut self.quads_iter,
+                    &mut self.quads_start,
+                    |first, item| {
                         first.blend_mode == 0
-                            && quad.blend_mode == 0
-                            && (quad.order, batch_kind) < max_order_and_kind
-                    })
-                    .is_some()
-                {
-                    quads_end += 1;
-                }
-                self.quads_start = quads_end;
-                Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+                            && item.blend_mode == 0
+                            && (item.order, batch_kind) < max_order_and_kind
+                    },
+                );
+                PrimitiveBatch::Quads(&self.quads[range])
             }
             PrimitiveKind::Path => {
-                let paths_start = self.paths_start;
-                let mut paths_end = paths_start + 1;
-                self.paths_iter.next();
-                while self
-                    .paths_iter
-                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
-                    .is_some()
-                {
-                    paths_end += 1;
-                }
-                self.paths_start = paths_end;
-                Some(PrimitiveBatch::Paths(&self.paths[paths_start..paths_end]))
+                let range =
+                    consume_batch_range(&mut self.paths_iter, &mut self.paths_start, |_, item| {
+                        (item.order, batch_kind) < max_order_and_kind
+                    });
+                PrimitiveBatch::Paths(&self.paths[range])
             }
             PrimitiveKind::Underline => {
-                let underlines_start = self.underlines_start;
-                let mut underlines_end = underlines_start + 1;
-                self.underlines_iter.next();
-                while self
-                    .underlines_iter
-                    .next_if(|underline| (underline.order, batch_kind) < max_order_and_kind)
-                    .is_some()
-                {
-                    underlines_end += 1;
-                }
-                self.underlines_start = underlines_end;
-                Some(PrimitiveBatch::Underlines(
-                    &self.underlines[underlines_start..underlines_end],
-                ))
+                let range = consume_batch_range(
+                    &mut self.underlines_iter,
+                    &mut self.underlines_start,
+                    |_, item| (item.order, batch_kind) < max_order_and_kind,
+                );
+                PrimitiveBatch::Underlines(&self.underlines[range])
             }
             PrimitiveKind::MonochromeSprite => {
-                let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
-                let sprites_start = self.monochrome_sprites_start;
-                let mut sprites_end = sprites_start + 1;
-                self.monochrome_sprites_iter.next();
-                while self
-                    .monochrome_sprites_iter
-                    .next_if(|sprite| {
-                        (sprite.order, batch_kind) < max_order_and_kind
-                            && sprite.tile.texture_id == texture_id
-                            && atlas.is_none_or(|atlas| atlas.is_tile_live(&sprite.tile))
-                    })
-                    .is_some()
-                {
-                    sprites_end += 1;
-                }
-                self.monochrome_sprites_start = sprites_end;
-                Some(PrimitiveBatch::MonochromeSprites {
+                let (texture_id, range) = consume_sprite_range(
+                    &mut self.monochrome_sprites_iter,
+                    &mut self.monochrome_sprites_start,
+                    batch_kind,
+                    max_order_and_kind,
+                    self.atlas,
+                    |sprite| (sprite.order, &sprite.tile),
+                );
+                PrimitiveBatch::MonochromeSprites {
                     texture_id,
-                    sprites: &self.monochrome_sprites[sprites_start..sprites_end],
-                })
+                    sprites: &self.monochrome_sprites[range],
+                }
             }
             PrimitiveKind::PolychromeSprite => {
-                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
-                let sprites_start = self.polychrome_sprites_start;
-                let mut sprites_end = self.polychrome_sprites_start + 1;
-                self.polychrome_sprites_iter.next();
-                while self
-                    .polychrome_sprites_iter
-                    .next_if(|sprite| {
-                        (sprite.order, batch_kind) < max_order_and_kind
-                            && sprite.tile.texture_id == texture_id
-                            && atlas.is_none_or(|atlas| atlas.is_tile_live(&sprite.tile))
-                    })
-                    .is_some()
-                {
-                    sprites_end += 1;
-                }
-                self.polychrome_sprites_start = sprites_end;
-                Some(PrimitiveBatch::PolychromeSprites {
+                let (texture_id, range) = consume_sprite_range(
+                    &mut self.polychrome_sprites_iter,
+                    &mut self.polychrome_sprites_start,
+                    batch_kind,
+                    max_order_and_kind,
+                    self.atlas,
+                    |sprite| (sprite.order, &sprite.tile),
+                );
+                PrimitiveBatch::PolychromeSprites {
                     texture_id,
-                    sprites: &self.polychrome_sprites[sprites_start..sprites_end],
-                })
+                    sprites: &self.polychrome_sprites[range],
+                }
             }
             PrimitiveKind::Surface => {
-                let surfaces_start = self.surfaces_start;
-                let mut surfaces_end = surfaces_start + 1;
-                self.surfaces_iter.next();
-                while self
-                    .surfaces_iter
-                    .next_if(|surface| (surface.order, batch_kind) < max_order_and_kind)
-                    .is_some()
-                {
-                    surfaces_end += 1;
-                }
-                self.surfaces_start = surfaces_end;
-                Some(PrimitiveBatch::Surfaces(
-                    &self.surfaces[surfaces_start..surfaces_end],
-                ))
+                let range = consume_batch_range(
+                    &mut self.surfaces_iter,
+                    &mut self.surfaces_start,
+                    |_, item| (item.order, batch_kind) < max_order_and_kind,
+                );
+                PrimitiveBatch::Surfaces(&self.surfaces[range])
             }
-        }
+        };
+        Some(batch)
     }
 }
 
@@ -890,6 +873,84 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(batch_lengths, vec![2, 1, 1, 1]);
+    }
+
+    #[test]
+    fn sprite_batches_preserve_texture_and_primitive_order_boundaries() {
+        let tile = |kind, index| AtlasTile {
+            texture_id: AtlasTextureId { kind, index },
+            tile_id: crate::TileId(0),
+            padding: 0,
+            bounds: Bounds::default(),
+        };
+        let monochrome = |order, index| MonochromeSprite {
+            order,
+            pad: 0,
+            tile: tile(crate::AtlasTextureKind::Monochrome, index),
+            bounds: Bounds::default(),
+            content_mask: ContentMask::default(),
+            color: Hsla::default(),
+            transformation: TransformationMatrix::default(),
+        };
+        let polychrome = |order| PolychromeSprite {
+            order,
+            pad: 0,
+            tile: tile(crate::AtlasTextureKind::Polychrome, 0),
+            grayscale: false.into(),
+            opacity: 1.,
+            bounds: Bounds::default(),
+            content_mask: ContentMask::default(),
+            corner_radii: Corners::default(),
+        };
+        let mut quad = test_quad(BlendMode::Normal);
+        quad.order = 1;
+        let scene = Scene {
+            quads: vec![quad],
+            monochrome_sprites: vec![
+                monochrome(0, 1),
+                monochrome(0, 1),
+                monochrome(0, 2),
+                monochrome(1, 2),
+                monochrome(2, 2),
+            ],
+            polychrome_sprites: vec![polychrome(0), polychrome(1)],
+            ..Scene::default()
+        };
+        let batches = scene
+            .batches()
+            .map(|batch| match batch {
+                PrimitiveBatch::Quads(quads) => (PrimitiveKind::Quad, 0, quads.len()),
+                PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    sprites,
+                } => (
+                    PrimitiveKind::MonochromeSprite,
+                    texture_id.index,
+                    sprites.len(),
+                ),
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites,
+                } => (
+                    PrimitiveKind::PolychromeSprite,
+                    texture_id.index,
+                    sprites.len(),
+                ),
+                _ => panic!("unexpected primitive batch"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            batches,
+            [
+                (PrimitiveKind::MonochromeSprite, 1, 2),
+                (PrimitiveKind::MonochromeSprite, 2, 1),
+                (PrimitiveKind::PolychromeSprite, 0, 1),
+                (PrimitiveKind::Quad, 0, 1),
+                (PrimitiveKind::MonochromeSprite, 2, 1),
+                (PrimitiveKind::PolychromeSprite, 0, 1),
+                (PrimitiveKind::MonochromeSprite, 2, 1),
+            ]
+        );
     }
 
     #[test]

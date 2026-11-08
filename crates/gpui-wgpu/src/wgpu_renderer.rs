@@ -683,17 +683,29 @@ impl WgpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         };
 
-        let create_pipeline = |name: &str,
-                               vs_entry: &str,
-                               fs_entry: &str,
-                               globals_layout: &wgpu::BindGroupLayout,
-                               data_layout: &wgpu::BindGroupLayout,
-                               texture_layout: Option<&wgpu::BindGroupLayout>,
-                               topology: wgpu::PrimitiveTopology,
-                               color_targets: &[Option<wgpu::ColorTargetState>],
-                               sample_count: u32,
-                               module: &wgpu::ShaderModule| {
-            let mut bind_group_layouts = vec![Some(globals_layout), Some(data_layout)];
+        struct PipelineSpec<'a> {
+            name: &'a str,
+            vs_entry: &'a str,
+            fs_entry: &'a str,
+            data_layout: &'a wgpu::BindGroupLayout,
+            texture_layout: Option<&'a wgpu::BindGroupLayout>,
+            topology: wgpu::PrimitiveTopology,
+            color_targets: &'a [Option<wgpu::ColorTargetState>],
+            sample_count: u32,
+        }
+
+        let create_pipeline = |spec: PipelineSpec<'_>| {
+            let PipelineSpec {
+                name,
+                vs_entry,
+                fs_entry,
+                data_layout,
+                texture_layout,
+                topology,
+                color_targets,
+                sample_count,
+            } = spec;
+            let mut bind_group_layouts = vec![Some(&layouts.globals), Some(data_layout)];
             bind_group_layouts.extend(texture_layout.map(Some));
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
@@ -705,13 +717,13 @@ impl WgpuRenderer {
                 label: Some(name),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module,
+                    module: &shader_module,
                     entry_point: Some(vs_entry),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module,
+                    module: &shader_module,
                     entry_point: Some(fs_entry),
                     targets: color_targets,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -736,117 +748,101 @@ impl WgpuRenderer {
             })
         };
 
-        let quads = create_pipeline(
-            "quads",
-            "vs_quad",
-            "fs_quad",
-            &layouts.globals,
-            &layouts.instances,
-            None,
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(color_target.clone())],
-            1,
-            &shader_module,
-        );
+        let quads = create_pipeline(PipelineSpec {
+            name: "quads",
+            vs_entry: "vs_quad",
+            fs_entry: "fs_quad",
+            data_layout: &layouts.instances,
+            texture_layout: None,
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(color_target.clone())],
+            sample_count: 1,
+        });
 
-        let shadows = create_pipeline(
-            "shadows",
-            "vs_shadow",
-            "fs_shadow",
-            &layouts.globals,
-            &layouts.instances,
-            None,
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(color_target.clone())],
-            1,
-            &shader_module,
-        );
+        let shadows = create_pipeline(PipelineSpec {
+            name: "shadows",
+            vs_entry: "vs_shadow",
+            fs_entry: "fs_shadow",
+            data_layout: &layouts.instances,
+            texture_layout: None,
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(color_target.clone())],
+            sample_count: 1,
+        });
 
-        let path_rasterization = create_pipeline(
-            "path_rasterization",
-            "vs_path_rasterization",
-            "fs_path_rasterization",
-            &layouts.globals,
-            &layouts.instances,
-            None,
-            wgpu::PrimitiveTopology::TriangleList,
-            &[Some(wgpu::ColorTargetState {
+        let path_rasterization = create_pipeline(PipelineSpec {
+            name: "path_rasterization",
+            vs_entry: "vs_path_rasterization",
+            fs_entry: "fs_path_rasterization",
+            data_layout: &layouts.instances,
+            texture_layout: None,
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            color_targets: &[Some(wgpu::ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
-            path_sample_count,
-            &shader_module,
-        );
+            sample_count: path_sample_count,
+        });
 
-        let paths = create_pipeline(
-            "paths",
-            "vs_path",
-            "fs_path",
-            &layouts.globals,
-            &layouts.instances,
-            Some(&layouts.texture),
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(wgpu::ColorTargetState {
+        let paths = create_pipeline(PipelineSpec {
+            name: "paths",
+            vs_entry: "vs_path",
+            fs_entry: "fs_path",
+            data_layout: &layouts.instances,
+            texture_layout: Some(&layouts.texture),
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(wgpu::ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
-            1,
-            &shader_module,
-        );
+            sample_count: 1,
+        });
 
-        let underlines = create_pipeline(
-            "underlines",
-            "vs_underline",
-            "fs_underline",
-            &layouts.globals,
-            &layouts.instances,
-            None,
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(color_target.clone())],
-            1,
-            &shader_module,
-        );
+        let underlines = create_pipeline(PipelineSpec {
+            name: "underlines",
+            vs_entry: "vs_underline",
+            fs_entry: "fs_underline",
+            data_layout: &layouts.instances,
+            texture_layout: None,
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(color_target.clone())],
+            sample_count: 1,
+        });
 
-        let mono_sprites = create_pipeline(
-            "mono_sprites",
-            "vs_mono_sprite",
-            "fs_mono_sprite",
-            &layouts.globals,
-            &layouts.instances,
-            Some(&layouts.texture),
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(color_target.clone())],
-            1,
-            &shader_module,
-        );
+        let mono_sprites = create_pipeline(PipelineSpec {
+            name: "mono_sprites",
+            vs_entry: "vs_mono_sprite",
+            fs_entry: "fs_mono_sprite",
+            data_layout: &layouts.instances,
+            texture_layout: Some(&layouts.texture),
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(color_target.clone())],
+            sample_count: 1,
+        });
 
-        let poly_sprites = create_pipeline(
-            "poly_sprites",
-            "vs_poly_sprite",
-            "fs_poly_sprite",
-            &layouts.globals,
-            &layouts.instances,
-            Some(&layouts.texture),
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(color_target.clone())],
-            1,
-            &shader_module,
-        );
+        let poly_sprites = create_pipeline(PipelineSpec {
+            name: "poly_sprites",
+            vs_entry: "vs_poly_sprite",
+            fs_entry: "fs_poly_sprite",
+            data_layout: &layouts.instances,
+            texture_layout: Some(&layouts.texture),
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(color_target.clone())],
+            sample_count: 1,
+        });
 
-        let surfaces = create_pipeline(
-            "surfaces",
-            "vs_surface",
-            "fs_surface",
-            &layouts.globals,
-            &layouts.surfaces,
-            None,
-            wgpu::PrimitiveTopology::TriangleStrip,
-            &[Some(color_target)],
-            1,
-            &shader_module,
-        );
+        let surfaces = create_pipeline(PipelineSpec {
+            name: "surfaces",
+            vs_entry: "vs_surface",
+            fs_entry: "fs_surface",
+            data_layout: &layouts.surfaces,
+            texture_layout: None,
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            color_targets: &[Some(color_target)],
+            sample_count: 1,
+        });
 
         WgpuPipelines {
             quads,

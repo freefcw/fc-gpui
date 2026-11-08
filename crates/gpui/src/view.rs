@@ -31,6 +31,41 @@ struct ViewCacheKey {
     image_cache: Option<EntityId>,
 }
 
+impl ViewCacheKey {
+    fn capture(bounds: Bounds<Pixels>, window: &Window) -> Self {
+        Self {
+            bounds,
+            content_mask: window.content_mask(),
+            text_style: window.text_style(),
+            opacity: window.element_opacity(),
+            a11y_active: window.a11y.is_active(),
+            atlas_epoch: window.sprite_atlas_epoch(),
+            image_cache: window
+                .image_cache_stack
+                .last()
+                .map(|cache| cache.entity_id()),
+        }
+    }
+
+    fn has_opacity(&self, opacity: f32) -> bool {
+        // Opacity is compared by bits so that a NaN opacity still matches itself
+        // and the view keeps using its cache.
+        self.opacity.to_bits() == opacity.to_bits()
+    }
+}
+
+impl PartialEq for ViewCacheKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.bounds == other.bounds
+            && self.content_mask == other.content_mask
+            && self.text_style == other.text_style
+            && self.has_opacity(other.opacity)
+            && self.a11y_active == other.a11y_active
+            && self.atlas_epoch == other.atlas_epoch
+            && self.image_cache == other.image_cache
+    }
+}
+
 impl<V: Render> Element for Entity<V> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
@@ -224,26 +259,10 @@ impl Element for AnyView {
             window.with_element_state::<AnyViewState, _>(
                 global_id.unwrap(),
                 |element_state, window| {
-                    let content_mask = window.content_mask();
-                    let text_style = window.text_style();
-                    let opacity = window.element_opacity();
-                    let a11y_active = window.a11y.is_active();
-                    let atlas_epoch = window.sprite_atlas_epoch();
-                    let image_cache = window
-                        .image_cache_stack
-                        .last()
-                        .map(|cache| cache.entity_id());
+                    let cache_key = ViewCacheKey::capture(bounds, window);
 
-                    // Opacity is compared by bits so that a NaN opacity still matches itself
-                    // and the view keeps using its cache.
                     if let Some(mut element_state) = element_state
-                        && element_state.cache_key.bounds == bounds
-                        && element_state.cache_key.content_mask == content_mask
-                        && element_state.cache_key.text_style == text_style
-                        && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
-                        && element_state.cache_key.a11y_active == a11y_active
-                        && element_state.cache_key.atlas_epoch == atlas_epoch
-                        && element_state.cache_key.image_cache == image_cache
+                        && element_state.cache_key == cache_key
                         && !window.dirty_views.contains(&self.entity_id())
                         && !window.refreshing
                     {
@@ -275,15 +294,7 @@ impl Element for AnyView {
                             accessed_entities,
                             prepaint_range: prepaint_start..prepaint_end,
                             paint_range: PaintIndex::default()..PaintIndex::default(),
-                            cache_key: ViewCacheKey {
-                                bounds,
-                                content_mask,
-                                text_style,
-                                opacity,
-                                a11y_active,
-                                atlas_epoch,
-                                image_cache,
-                            },
+                            cache_key,
                         },
                     )
                 },
@@ -326,7 +337,7 @@ impl Element for AnyView {
                             element_state.cache_key.opacity = opacity;
                         } else {
                             window.reuse_paint(element_state.paint_range.clone());
-                            if element_state.cache_key.opacity.to_bits() != opacity.to_bits() {
+                            if !element_state.cache_key.has_opacity(opacity) {
                                 window.request_animation_frame();
                             }
                         }
