@@ -220,6 +220,10 @@ pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> 
 pub struct SanitizedPath(Path);
 
 impl SanitizedPath {
+    /// Borrows a path, simplifying Windows verbatim disk prefixes with `dunce`.
+    ///
+    /// Verbatim UNC prefixes are retained: this borrowed entry point cannot
+    /// allocate a rewritten path. On other platforms the path is unchanged.
     pub fn new<T: AsRef<Path> + ?Sized>(path: &T) -> &Self {
         #[cfg(not(target_os = "windows"))]
         return Self::unchecked_new(path.as_ref());
@@ -233,6 +237,11 @@ impl SanitizedPath {
         unsafe { mem::transmute::<&Path, &Self>(path.as_ref()) }
     }
 
+    /// Converts a shared path, also rewriting Windows verbatim UNC prefixes.
+    ///
+    /// Unlike [`Self::new`] and [`Self::new_arc`], this entry point can allocate
+    /// a path to rewrite `\\?\UNC\server\share` to `\\server\share`, then applies
+    /// the same `dunce` simplification. On other platforms the path is unchanged.
     pub fn from_arc(path: Arc<Path>) -> Arc<Self> {
         // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
         #[cfg(not(target_os = "windows"))]
@@ -254,6 +263,11 @@ impl SanitizedPath {
         }
     }
 
+    /// Copies the path returned by [`Self::new`] into a shared path.
+    ///
+    /// This retains `new`'s cleanup scope: Windows verbatim disk prefixes are
+    /// simplified, but verbatim UNC prefixes remain because the borrowed
+    /// conversion cannot allocate a rewritten path. Other platforms retain the path.
     pub fn new_arc<T: AsRef<Path> + ?Sized>(path: &T) -> Arc<Self> {
         Self::new(path).into()
     }
