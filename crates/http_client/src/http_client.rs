@@ -153,6 +153,12 @@ pub trait HttpClient: 'static + Send + Sync {
         panic!("called as_fake on {}", type_name::<Self>())
     }
 
+    /// Sends a multipart form through the `reqwest` compatibility API.
+    ///
+    /// Requires the `reqwest` feature. The default implementation reports that
+    /// multipart sending is unsupported by returning `"not implemented"`.
+    /// For protocol-level clients, encode the multipart body and headers in an
+    /// `http::Request<AsyncBody>` and use [`HttpClient::send`] instead.
     #[cfg(feature = "reqwest")]
     fn send_multipart_form<'a>(
         &'a self,

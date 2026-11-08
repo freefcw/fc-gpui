@@ -88,6 +88,12 @@ impl From<&'static str> for AsyncBody {
     }
 }
 
+/// Converts an in-memory `reqwest::Body` through the `reqwest` compatibility API.
+///
+/// Requires the `reqwest` feature. Streaming bodies are unsupported and return
+/// `"Underlying data is a stream"`. For protocol-level streaming bodies, use
+/// [`AsyncBody::from_reader`] and send an `http::Request<AsyncBody>` through
+/// [`crate::HttpClient::send`].
 #[cfg(feature = "reqwest")]
 impl TryFrom<reqwest::Body> for AsyncBody {
     type Error = anyhow::Error;
@@ -115,8 +121,7 @@ impl futures::AsyncRead for AsyncBody {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        // SAFETY: Standard Enum pin projection
-        let inner = unsafe { &mut self.get_unchecked_mut().0 };
+        let inner = &mut self.get_mut().0;
         match inner {
             Inner::Empty => Poll::Ready(Ok(0)),
             // Blocking call is over an in-memory buffer
