@@ -50,6 +50,15 @@ struct BackgroundQueueState {
 }
 
 impl BackgroundQueue {
+    fn enqueue(&self, priority: TaskPriority, runnable: Runnable, idle: &IdleTracker) {
+        idle.increment();
+        if let Err(runnable) = self.push(priority, runnable) {
+            idle.decrement();
+            drop(runnable);
+        }
+        idle.notify();
+    }
+
     fn push(&self, priority: TaskPriority, runnable: Runnable) -> Result<(), Runnable> {
         let mut state = self.state.lock();
         if state.closed {
@@ -228,14 +237,7 @@ impl ThreadedDispatcher {
                             let entry = state.heap.pop().expect("timer heap was non-empty");
                             drop(state);
 
-                            idle.increment();
-                            if let Err(runnable) =
-                                background.push(TaskPriority::Medium, entry.runnable)
-                            {
-                                idle.decrement();
-                                drop(runnable);
-                            }
-                            idle.notify();
+                            background.enqueue(TaskPriority::Medium, entry.runnable, &idle);
 
                             state = timers.state.lock();
                         }
@@ -449,15 +451,11 @@ impl PlatformDispatcher for ThreadedDispatcher {
     }
 
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>) {
-        self.idle.increment();
-        if let Err(runnable) = self
-            .background
-            .push(label.map(TaskLabel::priority).unwrap_or_default(), runnable)
-        {
-            self.idle.decrement();
-            drop(runnable);
-        }
-        self.idle.notify();
+        self.background.enqueue(
+            label.map(TaskLabel::priority).unwrap_or_default(),
+            runnable,
+            &self.idle,
+        );
         self.unparker.unpark();
     }
 
