@@ -208,7 +208,8 @@ jobs:
             cache-key: linux-screen-capture
             linux-native: true
             # scap is opt-in; these are the only jobs that compile its Linux
-            # engine (needs libx11-dev for the `x11` crate build script).
+            # engine. xcb's xlib_xcb feature links -lX11-xcb, which is
+            # libx11-xcb-dev (libx11-dev does not provide that symlink).
             command: >-
               cargo check -p fc-gpui --lib --no-default-features --features screen-capture,font-kit,x11 --locked &&
               cargo check -p fc-gpui-linux --features screen-capture --locked &&
