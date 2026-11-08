@@ -437,16 +437,44 @@ fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<
     }
 
     let cmd_output = String::from_utf8_lossy(&p_out.stdout);
+    Some(parse_hyperfine_markdown(&cmd_output))
+}
+
+/// Parses the fixed Hyperfine Markdown layout, panicking on malformed output.
+fn parse_hyperfine_markdown(cmd_output: &str) -> Timings {
+    const RESULTS_LINE_INDEX: usize = 3;
+    const MEAN_TOKEN_INDEX: usize = 5;
+    // `nth` consumes the mean token: skip one more token (the ± separator)
+    // from that position to reach the standard deviation, not absolute token 1.
+    const STDDEV_TOKENS_AFTER_MEAN: usize = 1;
+
     // Can't use .last() since we have a trailing newline. Sigh.
-    let results_line = cmd_output.lines().nth(3).unwrap();
+    let results_line = cmd_output
+        .lines()
+        .nth(RESULTS_LINE_INDEX)
+        .expect("hyperfine markdown layout changed: missing results line");
     // Grab the values out of the pretty-print.
     // TODO: Parse json instead.
     let mut res_iter = results_line.split_whitespace();
     // Durations are given in milliseconds, so account for that.
-    let mean = Duration::from_secs_f64(res_iter.nth(5).unwrap().parse::<f64>().unwrap() / 1000.);
-    let stddev = Duration::from_secs_f64(res_iter.nth(1).unwrap().parse::<f64>().unwrap() / 1000.);
+    let mean = Duration::from_secs_f64(
+        res_iter
+            .nth(MEAN_TOKEN_INDEX)
+            .expect("hyperfine markdown layout changed: missing mean token")
+            .parse::<f64>()
+            .expect("hyperfine markdown layout changed: mean is not a number")
+            / 1000.,
+    );
+    let stddev = Duration::from_secs_f64(
+        res_iter
+            .nth(STDDEV_TOKENS_AFTER_MEAN)
+            .expect("hyperfine markdown layout changed: missing stddev token")
+            .parse::<f64>()
+            .expect("hyperfine markdown layout changed: stddev is not a number")
+            / 1000.,
+    );
 
-    Some(Timings { mean, stddev })
+    Timings { mean, stddev }
 }
 
 fn main() {
