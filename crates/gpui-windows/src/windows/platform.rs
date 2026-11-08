@@ -1253,31 +1253,35 @@ impl WindowsPlatformInner {
                 }
                 self.state.borrow_mut().tray = tray;
             }
-            let mut state = self.state.borrow_mut();
-            let mut event_callback = state.callbacks.tray_icon_event.take();
-            let mut click_callback = state.callbacks.tray_icon_click_event.take();
-            drop(state);
-
-            let click_event = TrayIconClickEvent::new(event);
-            if let Some(ref mut callback) = event_callback {
-                callback(click_event.kind.clone());
-            }
-            if let Some(ref mut callback) = click_callback {
-                callback(click_event);
-            }
-
-            let mut state = self.state.borrow_mut();
-            if let Some(callback) = event_callback {
-                state.callbacks.tray_icon_event.get_or_insert(callback);
-            }
-            if let Some(callback) = click_callback {
-                state
-                    .callbacks
-                    .tray_icon_click_event
-                    .get_or_insert(callback);
-            }
+            self.dispatch_tray_icon_event(event);
         }
         Some(0)
+    }
+
+    fn dispatch_tray_icon_event(&self, event: TrayIconEvent) {
+        let mut state = self.state.borrow_mut();
+        let mut event_callback = state.callbacks.tray_icon_event.take();
+        let mut click_callback = state.callbacks.tray_icon_click_event.take();
+        drop(state);
+
+        let click_event = TrayIconClickEvent::new(event);
+        if let Some(ref mut callback) = event_callback {
+            callback(click_event.kind.clone());
+        }
+        if let Some(ref mut callback) = click_callback {
+            callback(click_event);
+        }
+
+        let mut state = self.state.borrow_mut();
+        if let Some(callback) = event_callback {
+            state.callbacks.tray_icon_event.get_or_insert(callback);
+        }
+        if let Some(callback) = click_callback {
+            state
+                .callbacks
+                .tray_icon_click_event
+                .get_or_insert(callback);
+        }
     }
 
     fn handle_tray_menu_command(&self, wparam: WPARAM) -> Option<isize> {

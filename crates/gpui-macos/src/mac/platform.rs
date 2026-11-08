@@ -343,26 +343,7 @@ define_class!(
             unsafe extern "C" fn invoke(ctx_ptr: *mut c_void) {
                 let ctx = unsafe { Box::from_raw(ctx_ptr as *mut TrayClickCtx) };
                 let platform = unsafe { &*ctx.platform };
-                let mut lock = platform.0.lock();
-                let mut event_callback = lock.tray_icon_callback.take();
-                let mut click_callback = lock.tray_icon_click_callback.take();
-                drop(lock);
-
-                let event = TrayIconClickEvent::new(ctx.kind);
-                if let Some(ref mut callback) = event_callback {
-                    callback(event.kind.clone());
-                }
-                if let Some(ref mut callback) = click_callback {
-                    callback(event);
-                }
-
-                let mut lock = platform.0.lock();
-                if let Some(callback) = event_callback {
-                    lock.tray_icon_callback.get_or_insert(callback);
-                }
-                if let Some(callback) = click_callback {
-                    lock.tray_icon_click_callback.get_or_insert(callback);
-                }
+                platform.dispatch_tray_icon_event(ctx.kind);
             }
 
             unsafe {
@@ -654,6 +635,29 @@ impl Default for MacPlatform {
 }
 
 impl MacPlatform {
+    fn dispatch_tray_icon_event(&self, kind: TrayIconEvent) {
+        let mut lock = self.0.lock();
+        let mut event_callback = lock.tray_icon_callback.take();
+        let mut click_callback = lock.tray_icon_click_callback.take();
+        drop(lock);
+
+        let event = TrayIconClickEvent::new(kind);
+        if let Some(ref mut callback) = event_callback {
+            callback(event.kind.clone());
+        }
+        if let Some(ref mut callback) = click_callback {
+            callback(event);
+        }
+
+        let mut lock = self.0.lock();
+        if let Some(callback) = event_callback {
+            lock.tray_icon_callback.get_or_insert(callback);
+        }
+        if let Some(callback) = click_callback {
+            lock.tray_icon_click_callback.get_or_insert(callback);
+        }
+    }
+
     pub(crate) fn new(headless: bool) -> Self {
         let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
         Self::new_with_marker(headless, marker)

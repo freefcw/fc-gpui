@@ -1398,13 +1398,9 @@ impl App {
     /// - Linux (StatusNotifierItem): left/secondary activation is mapped to
     ///   `LeftClick`/`RightClick` with a position hint; not every host (e.g.
     ///   some AppIndicator extensions) delivers activation events at all.
-    pub fn on_tray_icon_event(&self, mut callback: impl FnMut(TrayIconEvent, &mut App) + 'static) {
-        let this = self.this.clone();
-        self.platform.on_tray_icon_event(Box::new(move |event| {
-            if let Some(app) = this.upgrade() {
-                app.update(|cx| callback(event, cx));
-            }
-        }));
+    pub fn on_tray_icon_event(&self, callback: impl FnMut(TrayIconEvent, &mut App) + 'static) {
+        self.platform
+            .on_tray_icon_event(self.app_callback(callback));
     }
 
     /// Register a callback for system tray icon click events with optional
@@ -1416,25 +1412,16 @@ impl App {
     /// no click-position equivalent — use [`Self::tray_icon_bounds`] there.
     pub fn on_tray_icon_click_event(
         &self,
-        mut callback: impl FnMut(TrayIconClickEvent, &mut App) + 'static,
+        callback: impl FnMut(TrayIconClickEvent, &mut App) + 'static,
     ) {
-        let this = self.this.clone();
         self.platform
-            .on_tray_icon_click_event(Box::new(move |event| {
-                if let Some(app) = this.upgrade() {
-                    app.update(|cx| callback(event, cx));
-                }
-            }));
+            .on_tray_icon_click_event(self.app_callback(callback));
     }
 
     /// Register a callback for when a tray menu item is clicked.
-    pub fn on_tray_menu_action(&self, mut callback: impl FnMut(SharedString, &mut App) + 'static) {
-        let this = self.this.clone();
-        self.platform.on_tray_menu_action(Box::new(move |id| {
-            if let Some(app) = this.upgrade() {
-                app.update(|cx| callback(id, cx));
-            }
-        }));
+    pub fn on_tray_menu_action(&self, callback: impl FnMut(SharedString, &mut App) + 'static) {
+        self.platform
+            .on_tray_menu_action(self.app_callback(callback));
     }
 
     /// Register a global hotkey with the given ID and keystroke.
@@ -1506,14 +1493,10 @@ impl App {
     /// Register a callback for system power events (sleep, wake, shutdown).
     pub fn on_system_power_event(
         &self,
-        mut callback: impl FnMut(SystemPowerEvent, &mut App) + 'static,
+        callback: impl FnMut(SystemPowerEvent, &mut App) + 'static,
     ) {
-        let this = self.this.clone();
-        self.platform.on_system_power_event(Box::new(move |event| {
-            if let Some(app) = this.upgrade() {
-                app.update(|cx| callback(event, cx));
-            }
-        }));
+        self.platform
+            .on_system_power_event(self.app_callback(callback));
     }
 
     /// Start a power save blocker to prevent the system from sleeping or the display from dimming.
@@ -1539,25 +1522,16 @@ impl App {
     /// Register a callback for network connectivity status changes.
     pub fn on_network_status_change(
         &self,
-        mut callback: impl FnMut(NetworkStatus, &mut App) + 'static,
+        callback: impl FnMut(NetworkStatus, &mut App) + 'static,
     ) {
-        let this = self.this.clone();
         self.platform
-            .on_network_status_change(Box::new(move |status| {
-                if let Some(app) = this.upgrade() {
-                    app.update(|cx| callback(status, cx));
-                }
-            }));
+            .on_network_status_change(self.app_callback(callback));
     }
 
     /// Register a callback for media key events (play, pause, next, previous).
-    pub fn on_media_key_event(&self, mut callback: impl FnMut(MediaKeyEvent, &mut App) + 'static) {
-        let this = self.this.clone();
-        self.platform.on_media_key_event(Box::new(move |event| {
-            if let Some(app) = this.upgrade() {
-                app.update(|cx| callback(event, cx));
-            }
-        }));
+    pub fn on_media_key_event(&self, callback: impl FnMut(MediaKeyEvent, &mut App) + 'static) {
+        self.platform
+            .on_media_key_event(self.app_callback(callback));
     }
 
     /// Request the user's attention by bouncing the dock icon or flashing the taskbar.
@@ -1580,18 +1554,22 @@ impl App {
         &self,
         position: Point<Pixels>,
         items: Vec<TrayMenuItem>,
-        mut callback: impl FnMut(SharedString, &mut App) + 'static,
+        callback: impl FnMut(SharedString, &mut App) + 'static,
     ) {
+        self.platform
+            .show_context_menu(position, items, self.app_callback(callback));
+    }
+
+    fn app_callback<Event: 'static>(
+        &self,
+        mut callback: impl FnMut(Event, &mut App) + 'static,
+    ) -> Box<dyn FnMut(Event)> {
         let this = self.this.clone();
-        self.platform.show_context_menu(
-            position,
-            items,
-            Box::new(move |id| {
-                if let Some(app) = this.upgrade() {
-                    app.update(|cx| callback(id, cx));
-                }
-            }),
-        );
+        Box::new(move |event| {
+            if let Some(app) = this.upgrade() {
+                app.update(|cx| callback(event, cx));
+            }
+        })
     }
 
     /// Show a native dialog with the given options, returning the index of the clicked button.
