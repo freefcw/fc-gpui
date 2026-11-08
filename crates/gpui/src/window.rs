@@ -526,6 +526,14 @@ pub struct DismissEvent;
 
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 
+struct FrameCallbackState {
+    invalidator: WindowInvalidator,
+    active: Rc<Cell<bool>>,
+    needs_present: Rc<Cell<bool>>,
+    next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+}
+
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
@@ -763,9 +771,7 @@ pub(crate) struct DeferredDraw {
     current_view: EntityId,
     priority: usize,
     parent_node: DispatchNodeId,
-    element_id_stack: SmallVec<[ElementId; 32]>,
-    text_style_stack: SmallVec<[TextStyleRefinement; 4]>,
-    image_cache_stack: SmallVec<[AnyImageCache; 4]>,
+    draw_context: DrawContext,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
@@ -773,6 +779,40 @@ pub(crate) struct DeferredDraw {
     /// The entities the deferred element accessed while it was last drawn, in
     /// any phase, restored when its prepaint is reused.
     accessed_entities: FxHashSet<EntityId>,
+}
+
+#[derive(Clone)]
+struct DrawContext {
+    element_id_stack: SmallVec<[ElementId; 32]>,
+    text_style_stack: SmallVec<[TextStyleRefinement; 4]>,
+    image_cache_stack: SmallVec<[AnyImageCache; 4]>,
+}
+
+impl DrawContext {
+    fn capture(window: &Window) -> Self {
+        Self {
+            element_id_stack: window.element_id_stack.clone(),
+            text_style_stack: window.text_style_stack.clone(),
+            image_cache_stack: window.image_cache_stack.clone(),
+        }
+    }
+
+    fn apply_to(
+        &self,
+        element_id_stack: &mut SmallVec<[ElementId; 32]>,
+        text_style_stack: &mut SmallVec<[TextStyleRefinement; 4]>,
+        image_cache_stack: &mut SmallVec<[AnyImageCache; 4]>,
+    ) {
+        element_id_stack.clone_from(&self.element_id_stack);
+        text_style_stack.clone_from(&self.text_style_stack);
+        image_cache_stack.clone_from(&self.image_cache_stack);
+    }
+
+    fn clear(window: &mut Window) {
+        window.element_id_stack.clear();
+        window.text_style_stack.clear();
+        window.image_cache_stack.clear();
+    }
 }
 
 pub(crate) struct Frame {
@@ -1513,118 +1553,228 @@ impl Window {
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
-            let initial_tree = accesskit::TreeUpdate {
-                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
-                tree: Some(accesskit::TreeInfo::new(ROOT_NODE_ID)),
-                tree_id: accesskit::TreeId::ROOT,
-                focus: ROOT_NODE_ID,
-            };
-            let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
-            let (deactivation_sender, deactivation_receiver) = async_channel::unbounded::<()>();
-            let (action_sender, action_receiver) =
-                async_channel::unbounded::<accesskit::ActionRequest>();
+            Self::initialize_accessibility(handle, platform_window.as_mut(), &a11y_active_flag, cx);
+        }
 
-            platform_window.a11y_init(crate::A11yCallbacks {
-                activation: {
-                    let active_flag = a11y_active_flag.clone();
-                    Box::new(move || {
-                        log::info!("Accessibility activated");
-                        active_flag.store(true, SeqCst);
-                        activation_sender
-                            .send_blocking(())
-                            .with_context(|| {
-                                format!(
-                                    "queuing accessibility activation for window {:?}",
-                                    handle.window_id()
-                                )
-                            })
-                            .log_err();
-                        Some(initial_tree.clone())
-                    })
-                },
-                action: Box::new(move |request| {
-                    action_sender
-                        .send_blocking(request)
+        Self::register_close_callback(handle, platform_window.as_ref(), cx);
+        platform_window.on_request_frame(Self::frame_callback(
+            handle,
+            cx.to_async(),
+            FrameCallbackState {
+                invalidator: invalidator.clone(),
+                active: active.clone(),
+                needs_present: needs_present.clone(),
+                next_frame_callbacks: next_frame_callbacks.clone(),
+                input_rate_tracker: input_rate_tracker.clone(),
+            },
+            inactive_frame_interval,
+        ));
+        Self::register_window_callbacks(handle, platform_window.as_ref(), cx);
+        Self::register_tab_callbacks(handle, platform_window.as_ref(), cx);
+
+        if let Some(app_id) = app_id {
+            platform_window.set_app_id(&app_id);
+        }
+
+        // Map only after all callbacks above are registered, and only when
+        // the window is meant to be visible: backends that gate visibility on
+        // mapping (X11) honor `WindowOptions::show` this way, matching macOS
+        // where `show`/`focus` are consumed at window creation.
+        if show {
+            platform_window.map_window()?;
+        }
+
+        Ok(Window {
+            handle,
+            invalidator,
+            removed: false,
+            platform_window,
+            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
+            display_id,
+            sprite_atlas,
+            svg_atlas_keys: FxHashSet::default(),
+            svg_font_generation: cx.text_system().font_generation(),
+            text_system,
+            rem_size: px(16.),
+            rem_size_override_stack: SmallVec::new(),
+            viewport_size: content_size,
+            layout_engine: Some(TaffyLayoutEngine::new()),
+            root: None,
+            element_id_stack: SmallVec::default(),
+            text_style_stack: SmallVec::new(),
+            rendered_entity_stack: SmallVec::new(),
+            element_offset_stack: SmallVec::new(),
+            content_mask_stack: SmallVec::new(),
+            element_opacity: 1.0,
+            requested_autoscroll: None,
+            rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            next_frame_callbacks,
+            next_hitbox_id: HitboxId(0),
+            next_tooltip_id: TooltipId::default(),
+            tooltip_bounds: None,
+            dirty_views: FxHashSet::default(),
+            focus_listeners: SubscriberSet::new(),
+            focus_lost_listeners: SubscriberSet::new(),
+            focus_lost_path: SmallVec::new(),
+            default_prevented: true,
+            mouse_position,
+            mouse_hit_test: HitTest::default(),
+            modifiers,
+            capslock,
+            scale_factor,
+            bounds_observers: SubscriberSet::new(),
+            appearance,
+            appearance_observers: SubscriberSet::new(),
+            active,
+            visibility,
+            visibility_observers: SubscriberSet::new(),
+            hovered,
+            needs_present,
+            input_rate_tracker,
+            #[cfg(feature = "input-latency-histogram")]
+            input_latency_tracker: InputLatencyTracker::new()?,
+            last_input_was_keyboard: Cell::new(false),
+            refreshing: false,
+            activation_observers: SubscriberSet::new(),
+            focus: None,
+            focus_enabled: true,
+            pending_input: None,
+            pending_modifier: ModifierState::default(),
+            pending_input_observers: SubscriberSet::new(),
+            prompt: None,
+            client_inset: None,
+            image_cache_stack: SmallVec::new(),
+            captured_hitbox: None,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector: None,
+        })
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn initialize_accessibility(
+        handle: AnyWindowHandle,
+        platform_window: &mut dyn PlatformWindow,
+        a11y_active_flag: &Arc<AtomicBool>,
+        cx: &mut App,
+    ) {
+        let initial_tree = accesskit::TreeUpdate {
+            nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
+            tree: Some(accesskit::TreeInfo::new(ROOT_NODE_ID)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: ROOT_NODE_ID,
+        };
+        let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
+        let (deactivation_sender, deactivation_receiver) = async_channel::unbounded::<()>();
+        let (action_sender, action_receiver) =
+            async_channel::unbounded::<accesskit::ActionRequest>();
+
+        platform_window.a11y_init(crate::A11yCallbacks {
+            activation: {
+                let active_flag = a11y_active_flag.clone();
+                Box::new(move || {
+                    log::info!("Accessibility activated");
+                    active_flag.store(true, SeqCst);
+                    activation_sender
+                        .send_blocking(())
                         .with_context(|| {
                             format!(
-                                "queuing accessibility action for window {:?}",
+                                "queuing accessibility activation for window {:?}",
                                 handle.window_id()
                             )
                         })
                         .log_err();
-                }),
-                deactivation: {
-                    let active_flag = a11y_active_flag.clone();
-                    Box::new(move || {
-                        log::info!("Accessibility deactivated");
-                        active_flag.store(false, SeqCst);
-                        deactivation_sender
-                            .send_blocking(())
-                            .with_context(|| {
-                                format!(
-                                    "queuing accessibility deactivation for window {:?}",
-                                    handle.window_id()
-                                )
-                            })
-                            .log_err();
+                    Some(initial_tree.clone())
+                })
+            },
+            action: Box::new(move |request| {
+                action_sender
+                    .send_blocking(request)
+                    .with_context(|| {
+                        format!(
+                            "queuing accessibility action for window {:?}",
+                            handle.window_id()
+                        )
                     })
-                },
-            });
-
-            let mut async_cx = cx.to_async();
-            cx.foreground_executor()
-                .spawn(async move {
-                    while activation_receiver.recv().await.is_ok() {
-                        handle
-                            .update(&mut async_cx, |_, window, _| window.refresh())
-                            .with_context(|| {
-                                format!(
-                                    "handling accessibility activation for window {:?}",
-                                    handle.window_id()
-                                )
-                            })
-                            .log_err();
-                    }
+                    .log_err();
+            }),
+            deactivation: {
+                let active_flag = a11y_active_flag.clone();
+                Box::new(move || {
+                    log::info!("Accessibility deactivated");
+                    active_flag.store(false, SeqCst);
+                    deactivation_sender
+                        .send_blocking(())
+                        .with_context(|| {
+                            format!(
+                                "queuing accessibility deactivation for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
                 })
-                .detach();
+            },
+        });
 
-            let mut async_cx = cx.to_async();
-            cx.foreground_executor()
-                .spawn(async move {
-                    while deactivation_receiver.recv().await.is_ok() {
-                        handle
-                            .update(&mut async_cx, |_, window, _| window.refresh())
-                            .with_context(|| {
-                                format!(
-                                    "handling accessibility deactivation for window {:?}",
-                                    handle.window_id()
-                                )
-                            })
-                            .log_err();
-                    }
-                })
-                .detach();
+        let mut async_cx = cx.to_async();
+        cx.foreground_executor()
+            .spawn(async move {
+                while activation_receiver.recv().await.is_ok() {
+                    handle
+                        .update(&mut async_cx, |_, window, _| window.refresh())
+                        .with_context(|| {
+                            format!(
+                                "handling accessibility activation for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
 
-            let mut async_cx = cx.to_async();
-            cx.foreground_executor()
-                .spawn(async move {
-                    while let Ok(request) = action_receiver.recv().await {
-                        handle
-                            .update(&mut async_cx, |_, window, cx| {
-                                window.handle_a11y_action(request, cx);
-                            })
-                            .with_context(|| {
-                                format!(
-                                    "handling accessibility action for window {:?}",
-                                    handle.window_id()
-                                )
-                            })
-                            .log_err();
-                    }
-                })
-                .detach();
-        }
+        let mut async_cx = cx.to_async();
+        cx.foreground_executor()
+            .spawn(async move {
+                while deactivation_receiver.recv().await.is_ok() {
+                    handle
+                        .update(&mut async_cx, |_, window, _| window.refresh())
+                        .with_context(|| {
+                            format!(
+                                "handling accessibility deactivation for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
 
+        let mut async_cx = cx.to_async();
+        cx.foreground_executor()
+            .spawn(async move {
+                while let Ok(request) = action_receiver.recv().await {
+                    handle
+                        .update(&mut async_cx, |_, window, cx| {
+                            window.handle_a11y_action(request, cx);
+                        })
+                        .with_context(|| {
+                            format!(
+                                "handling accessibility action for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
+    }
+
+    fn register_close_callback(
+        handle: AnyWindowHandle,
+        platform_window: &dyn PlatformWindow,
+        cx: &App,
+    ) {
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
             let cx = cx.to_async();
@@ -1648,173 +1798,187 @@ impl Window {
                 .detach();
             }
         }));
-        platform_window.on_request_frame(Box::new({
-            let mut cx = cx.to_async();
-            let invalidator = invalidator.clone();
-            let active = active.clone();
-            let needs_present = needs_present.clone();
-            let next_frame_callbacks = next_frame_callbacks.clone();
-            let input_rate_tracker = input_rate_tracker.clone();
-            let mut deferred_force_render = false;
-            let mut frame_pacer = FramePacer::default();
-            move |request_frame_options| {
-                // This must be checked before anything else: if this request
-                // arrived re-entrantly while a draw is on this thread's stack
-                // (e.g. via a nested message pump in the Windows window
-                // procedure), drawing would nest draws, and even touching the
-                // App would panic on its already-mutable borrow. Skip instead;
-                // the platform leaves the window invalidated (or re-invalidates
-                // it), so a fresh request arrives once the in-progress draw
-                // unwinds. Remember force_render so the deferred frame still
-                // bypasses the view cache.
-                //
-                // Returning here skips a demand-driven `schedule_frame` retry.
-                // Calling into App would panic on its already-mutable borrow,
-                // and this branch is unreachable on Wayland in practice: only
-                // Windows pumps platform events (and thus requests frames)
-                // mid-draw.
-                if draw_in_progress() {
-                    log::debug!("deferring re-entrant window draw request");
-                    deferred_force_render |= request_frame_options.force_render;
-                    return;
-                }
-                // Take the deferred flag first: `||` short-circuits, and leaving
-                // the flag set when this request already forces a render would
-                // force a second, redundant render on the next frame.
-                let force_render =
-                    mem::take(&mut deferred_force_render) || request_frame_options.force_render;
+    }
 
-                let power_state = handle
-                    .update(&mut cx, |_, _, cx| (cx.thermal_state(), cx.power_mode()))
+    fn frame_callback(
+        handle: AnyWindowHandle,
+        mut cx: crate::AsyncApp,
+        state: FrameCallbackState,
+        inactive_frame_interval: Option<Duration>,
+    ) -> Box<dyn FnMut(crate::RequestFrameOptions)> {
+        let FrameCallbackState {
+            invalidator,
+            active,
+            needs_present,
+            next_frame_callbacks,
+            input_rate_tracker,
+        } = state;
+        let mut deferred_force_render = false;
+        let mut frame_pacer = FramePacer::default();
+        Box::new(move |request_frame_options: crate::RequestFrameOptions| {
+            // This must be checked before anything else: if this request
+            // arrived re-entrantly while a draw is on this thread's stack
+            // (e.g. via a nested message pump in the Windows window
+            // procedure), drawing would nest draws, and even touching the
+            // App would panic on its already-mutable borrow. Skip instead;
+            // the platform leaves the window invalidated (or re-invalidates
+            // it), so a fresh request arrives once the in-progress draw
+            // unwinds. Remember force_render so the deferred frame still
+            // bypasses the view cache.
+            //
+            // Returning here skips a demand-driven `schedule_frame` retry.
+            // Calling into App would panic on its already-mutable borrow,
+            // and this branch is unreachable on Wayland in practice: only
+            // Windows pumps platform events (and thus requests frames)
+            // mid-draw.
+            if draw_in_progress() {
+                log::debug!("deferring re-entrant window draw request");
+                deferred_force_render |= request_frame_options.force_render;
+                return;
+            }
+            // Take the deferred flag first: `||` short-circuits, and leaving
+            // the flag set when this request already forces a render would
+            // force a second, redundant render on the next frame.
+            let force_render =
+                mem::take(&mut deferred_force_render) || request_frame_options.force_render;
+
+            let power_state = handle
+                .update(&mut cx, |_, _, cx| (cx.thermal_state(), cx.power_mode()))
+                .with_context(|| {
+                    format!(
+                        "reading power state for frame request for window {:?}",
+                        handle.window_id()
+                    )
+                })
+                .log_err();
+
+            // Keep presenting briefly after high-rate input to prevent display
+            // underclocking, but subject to the same power limits as redraws.
+            let high_rate_input = input_rate_tracker.borrow().is_high_rate();
+            let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
+            let has_frame_demand = invalidator.is_dirty()
+                || force_render
+                || has_next_frame_callbacks
+                || request_frame_options.require_presentation
+                || needs_present.get()
+                || high_rate_input;
+
+            // Throttle frame rate based on conditions:
+            // - Thermal pressure (Serious/Critical): cap to ~60fps
+            // - Low power mode: cap to ~30fps
+            // - Inactive window (not focused): use its configured frame interval,
+            //   unless high-rate input is arriving under the pointer.
+            // Explicit mandatory platform presentations still bypass the limits.
+            let should_throttle = !request_frame_options.require_presentation;
+            let inactive_without_high_rate_input =
+                should_throttle && !active.get() && !high_rate_input;
+            let (thermal_state, power_mode) =
+                power_state.unwrap_or((ThermalState::Nominal, crate::PowerMode::Unknown));
+            let min_frame_interval = minimum_frame_interval(
+                should_throttle,
+                inactive_without_high_rate_input,
+                inactive_frame_interval,
+                thermal_state,
+                power_mode,
+            );
+
+            let now = Instant::now();
+            // Idle display-link ticks must neither consume a frame slot nor
+            // wake a demand-driven frame source.
+            if has_frame_demand && frame_pacer.should_defer(now, min_frame_interval) {
+                // Don't lose a pending forced render to throttling.
+                deferred_force_render |= force_render;
+                // Deferred by throttling: ask demand-driven platforms to retry.
+                // `schedule_frame` is this fork's demand-driven wakeup.
+                handle
+                    .update(&mut cx, |_, window, _| {
+                        window.platform_window.schedule_frame();
+                    })
                     .with_context(|| {
                         format!(
-                            "reading power state for frame request for window {:?}",
+                            "rescheduling throttled frame for window {:?}",
                             handle.window_id()
                         )
                     })
                     .log_err();
+                return;
+            }
 
-                // Keep presenting briefly after high-rate input to prevent display
-                // underclocking, but subject to the same power limits as redraws.
-                let high_rate_input = input_rate_tracker.borrow().is_high_rate();
-                let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
-                let has_frame_demand = invalidator.is_dirty()
-                    || force_render
-                    || has_next_frame_callbacks
-                    || request_frame_options.require_presentation
-                    || needs_present.get()
-                    || high_rate_input;
-
-                // Throttle frame rate based on conditions:
-                // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Low power mode: cap to ~30fps
-                // - Inactive window (not focused): use its configured frame interval,
-                //   unless high-rate input is arriving under the pointer.
-                // Explicit mandatory platform presentations still bypass the limits.
-                let should_throttle = !request_frame_options.require_presentation;
-                let inactive_without_high_rate_input =
-                    should_throttle && !active.get() && !high_rate_input;
-                let (thermal_state, power_mode) =
-                    power_state.unwrap_or((ThermalState::Nominal, crate::PowerMode::Unknown));
-                let min_frame_interval = minimum_frame_interval(
-                    should_throttle,
-                    inactive_without_high_rate_input,
-                    inactive_frame_interval,
-                    thermal_state,
-                    power_mode,
-                );
-
-                let now = Instant::now();
-                // Idle display-link ticks must neither consume a frame slot nor
-                // wake a demand-driven frame source.
-                if has_frame_demand && frame_pacer.should_defer(now, min_frame_interval) {
-                    // Don't lose a pending forced render to throttling.
-                    deferred_force_render |= force_render;
-                    // Deferred by throttling: ask demand-driven platforms to retry.
-                    // `schedule_frame` is this fork's demand-driven wakeup.
-                    handle
-                        .update(&mut cx, |_, window, _| {
-                            window.platform_window.schedule_frame();
-                        })
-                        .with_context(|| {
-                            format!(
-                                "rescheduling throttled frame for window {:?}",
-                                handle.window_id()
-                            )
-                        })
-                        .log_err();
-                    return;
-                }
-
-                let pending_next_frame_callbacks = next_frame_callbacks.take();
-                if !pending_next_frame_callbacks.is_empty() {
-                    handle
-                        .update(&mut cx, |_, window, cx| {
-                            for callback in pending_next_frame_callbacks {
-                                callback(window, cx);
-                            }
-                        })
-                        .with_context(|| {
-                            format!(
-                                "running next-frame callbacks for window {:?}",
-                                handle.window_id()
-                            )
-                        })
-                        .log_err();
-                }
-
-                // Keep presenting if input was recently arriving at a high rate (>= 60fps),
-                // including while an unfocused window receives pointer input.
-                let needs_present = request_frame_options.require_presentation
-                    || needs_present.get()
-                    || high_rate_input;
-
-                if invalidator.is_dirty() || force_render {
-                    measure("frame duration", || {
-                        handle
-                            .update(&mut cx, |_, window, cx| {
-                                if force_render {
-                                    window.refresh();
-                                }
-                                let arena_clear_needed = window.draw(cx);
-                                window.present();
-                                // drop the arena elements after present to reduce latency
-                                arena_clear_needed.clear();
-                            })
-                            .with_context(|| {
-                                format!(
-                                    "drawing and presenting frame for window {:?}",
-                                    handle.window_id()
-                                )
-                            })
-                            .log_err();
-                    })
-                } else if needs_present {
-                    handle
-                        .update(&mut cx, |_, window, _| window.present())
-                        .with_context(|| {
-                            format!("presenting frame for window {:?}", handle.window_id())
-                        })
-                        .log_err();
-                }
-
+            let pending_next_frame_callbacks = next_frame_callbacks.take();
+            if !pending_next_frame_callbacks.is_empty() {
                 handle
-                    .update(&mut cx, |_, window, _| {
-                        if window.invalidator.is_dirty()
-                            || !window.next_frame_callbacks.borrow().is_empty()
-                        {
-                            window.platform_window.schedule_frame();
+                    .update(&mut cx, |_, window, cx| {
+                        for callback in pending_next_frame_callbacks {
+                            callback(window, cx);
                         }
                     })
                     .with_context(|| {
                         format!(
-                            "scheduling follow-up frame for window {:?}",
+                            "running next-frame callbacks for window {:?}",
                             handle.window_id()
                         )
                     })
                     .log_err();
             }
-        }));
+
+            // Keep presenting if input was recently arriving at a high rate (>= 60fps),
+            // including while an unfocused window receives pointer input.
+            let needs_present = request_frame_options.require_presentation
+                || needs_present.get()
+                || high_rate_input;
+
+            if invalidator.is_dirty() || force_render {
+                measure("frame duration", || {
+                    handle
+                        .update(&mut cx, |_, window, cx| {
+                            if force_render {
+                                window.refresh();
+                            }
+                            let arena_clear_needed = window.draw(cx);
+                            window.present();
+                            // drop the arena elements after present to reduce latency
+                            arena_clear_needed.clear();
+                        })
+                        .with_context(|| {
+                            format!(
+                                "drawing and presenting frame for window {:?}",
+                                handle.window_id()
+                            )
+                        })
+                        .log_err();
+                })
+            } else if needs_present {
+                handle
+                    .update(&mut cx, |_, window, _| window.present())
+                    .with_context(|| {
+                        format!("presenting frame for window {:?}", handle.window_id())
+                    })
+                    .log_err();
+            }
+
+            handle
+                .update(&mut cx, |_, window, _| {
+                    if window.invalidator.is_dirty()
+                        || !window.next_frame_callbacks.borrow().is_empty()
+                    {
+                        window.platform_window.schedule_frame();
+                    }
+                })
+                .with_context(|| {
+                    format!(
+                        "scheduling follow-up frame for window {:?}",
+                        handle.window_id()
+                    )
+                })
+                .log_err();
+        })
+    }
+
+    fn register_window_callbacks(
+        handle: AnyWindowHandle,
+        platform_window: &dyn PlatformWindow,
+        cx: &App,
+    ) {
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             let foreground_executor = cx.foreground_executor().clone();
@@ -1996,6 +2160,13 @@ impl Window {
                     .unwrap_or(None)
             })
         });
+    }
+
+    fn register_tab_callbacks(
+        handle: AnyWindowHandle,
+        platform_window: &dyn PlatformWindow,
+        cx: &App,
+    ) {
         platform_window.on_move_tab_to_new_window({
             let mut cx = cx.to_async();
             Box::new(move || {
@@ -2065,84 +2236,6 @@ impl Window {
                     .log_err();
             })
         });
-
-        if let Some(app_id) = app_id {
-            platform_window.set_app_id(&app_id);
-        }
-
-        // Map only after all callbacks above are registered, and only when
-        // the window is meant to be visible: backends that gate visibility on
-        // mapping (X11) honor `WindowOptions::show` this way, matching macOS
-        // where `show`/`focus` are consumed at window creation.
-        if show {
-            platform_window.map_window()?;
-        }
-
-        Ok(Window {
-            handle,
-            invalidator,
-            removed: false,
-            platform_window,
-            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
-            display_id,
-            sprite_atlas,
-            svg_atlas_keys: FxHashSet::default(),
-            svg_font_generation: cx.text_system().font_generation(),
-            text_system,
-            rem_size: px(16.),
-            rem_size_override_stack: SmallVec::new(),
-            viewport_size: content_size,
-            layout_engine: Some(TaffyLayoutEngine::new()),
-            root: None,
-            element_id_stack: SmallVec::default(),
-            text_style_stack: SmallVec::new(),
-            rendered_entity_stack: SmallVec::new(),
-            element_offset_stack: SmallVec::new(),
-            content_mask_stack: SmallVec::new(),
-            element_opacity: 1.0,
-            requested_autoscroll: None,
-            rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
-            next_frame_callbacks,
-            next_hitbox_id: HitboxId(0),
-            next_tooltip_id: TooltipId::default(),
-            tooltip_bounds: None,
-            dirty_views: FxHashSet::default(),
-            focus_listeners: SubscriberSet::new(),
-            focus_lost_listeners: SubscriberSet::new(),
-            focus_lost_path: SmallVec::new(),
-            default_prevented: true,
-            mouse_position,
-            mouse_hit_test: HitTest::default(),
-            modifiers,
-            capslock,
-            scale_factor,
-            bounds_observers: SubscriberSet::new(),
-            appearance,
-            appearance_observers: SubscriberSet::new(),
-            active,
-            visibility,
-            visibility_observers: SubscriberSet::new(),
-            hovered,
-            needs_present,
-            input_rate_tracker,
-            #[cfg(feature = "input-latency-histogram")]
-            input_latency_tracker: InputLatencyTracker::new()?,
-            last_input_was_keyboard: Cell::new(false),
-            refreshing: false,
-            activation_observers: SubscriberSet::new(),
-            focus: None,
-            focus_enabled: true,
-            pending_input: None,
-            pending_modifier: ModifierState::default(),
-            pending_input_observers: SubscriberSet::new(),
-            prompt: None,
-            client_inset: None,
-            image_cache_stack: SmallVec::new(),
-            captured_hitbox: None,
-            #[cfg(any(feature = "inspector", debug_assertions))]
-            inspector: None,
-        })
     }
 
     pub(crate) fn new_focus_listener(
@@ -3339,12 +3432,11 @@ impl Window {
             for deferred_draw_ix in traversal_order {
                 let (element, parent_node, current_view, absolute_offset, prepaint_range) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
-                    self.element_id_stack
-                        .clone_from(&deferred_draw.element_id_stack);
-                    self.text_style_stack
-                        .clone_from(&deferred_draw.text_style_stack);
-                    self.image_cache_stack
-                        .clone_from(&deferred_draw.image_cache_stack);
+                    deferred_draw.draw_context.apply_to(
+                        &mut self.element_id_stack,
+                        &mut self.text_style_stack,
+                        &mut self.image_cache_stack,
+                    );
                     (
                         deferred_draw.element.take(),
                         deferred_draw.parent_node,
@@ -3381,9 +3473,7 @@ impl Window {
                     prepaint_start..prepaint_end;
             }
 
-            self.element_id_stack.clear();
-            self.text_style_stack.clear();
-            self.image_cache_stack.clear();
+            DrawContext::clear(self);
             round_start = round_end;
         }
     }
@@ -3394,12 +3484,11 @@ impl Window {
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.element_id_stack
-                .clone_from(&deferred_draw.element_id_stack);
-            self.text_style_stack
-                .clone_from(&deferred_draw.text_style_stack);
-            self.image_cache_stack
-                .clone_from(&deferred_draw.image_cache_stack);
+            deferred_draw.draw_context.apply_to(
+                &mut self.element_id_stack,
+                &mut self.text_style_stack,
+                &mut self.image_cache_stack,
+            );
             self.next_frame
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
@@ -3419,9 +3508,7 @@ impl Window {
             deferred_draw.paint_range = paint_start..paint_end;
         }
         self.next_frame.deferred_draws = deferred_draws;
-        self.element_id_stack.clear();
-        self.text_style_stack.clear();
-        self.image_cache_stack.clear();
+        DrawContext::clear(self);
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -3478,9 +3565,7 @@ impl Window {
                 .map(|deferred_draw| DeferredDraw {
                     current_view: deferred_draw.current_view,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: deferred_draw.element_id_stack.clone(),
-                    text_style_stack: deferred_draw.text_style_stack.clone(),
-                    image_cache_stack: deferred_draw.image_cache_stack.clone(),
+                    draw_context: deferred_draw.draw_context.clone(),
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -3980,9 +4065,7 @@ impl Window {
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
             parent_node,
-            element_id_stack: self.element_id_stack.clone(),
-            text_style_stack: self.text_style_stack.clone(),
-            image_cache_stack: self.image_cache_stack.clone(),
+            draw_context: DrawContext::capture(self),
             priority,
             element: Some(element),
             absolute_offset,
@@ -7125,7 +7208,10 @@ mod tests {
             assert_eq!(renders.get(), fresh_renders + 1);
             let new_tile = window.rendered_frame.scene.polychrome_sprites[0].tile;
             assert!(window.sprite_atlas.is_tile_live(&new_tile));
-            assert_ne!(new_tile.padding, old_tile.padding);
+            assert_ne!(
+                new_tile.allocation_identity(),
+                old_tile.allocation_identity()
+            );
         })
         .unwrap();
     }
