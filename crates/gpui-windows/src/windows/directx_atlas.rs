@@ -95,10 +95,7 @@ impl PlatformAtlas for DirectXAtlas {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let mut tile = lock
-                .allocate(size, key.texture_kind())
-                .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
-            lock.tile_registry.register(&mut tile)?;
+            let tile = lock.allocate_registered_tile(size, key.texture_kind())?;
             let texture = lock
                 .texture(tile.texture_id)
                 .ok_or_else(|| anyhow::anyhow!("allocated tile refers to a missing texture"))?;
@@ -111,30 +108,7 @@ impl PlatformAtlas for DirectXAtlas {
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
-        let Some(tile) = lock.tiles_by_key.remove(key) else {
-            return;
-        };
-        lock.tile_registry.remove(&tile);
-        let id = tile.texture_id;
-
-        let textures = match id.kind {
-            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-        };
-
-        let Some(texture_slot) = textures.textures.get_mut(id.index as usize) else {
-            return;
-        };
-
-        if let Some(mut texture) = texture_slot.take() {
-            texture.allocator.deallocate(tile.tile_id.into());
-            texture.decrement_ref_count();
-            if texture.is_unreferenced() {
-                textures.free_list.push(texture.id.index as usize);
-            } else {
-                *texture_slot = Some(texture);
-            }
-        }
+        lock.remove_tile(key);
     }
 
     fn epoch(&self) -> u64 {
@@ -146,17 +120,62 @@ impl PlatformAtlas for DirectXAtlas {
     }
 }
 
+// The helpers in this impl mirror the same-named ones in
+// gpui-macos/src/mac/metal_atlas.rs and gpui-wgpu/src/wgpu_atlas.rs;
+// keep them in sync when changing the allocate/remove flow.
 impl DirectXAtlasState {
+    fn textures_mut(
+        &mut self,
+        kind: AtlasTextureKind,
+    ) -> &mut AtlasTextureList<DirectXAtlasTexture> {
+        match kind {
+            AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+        }
+    }
+
+    fn allocate_registered_tile(
+        &mut self,
+        size: Size<DevicePixels>,
+        kind: AtlasTextureKind,
+    ) -> anyhow::Result<AtlasTile> {
+        let mut tile = self
+            .allocate(size, kind)
+            .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
+        self.tile_registry.register(&mut tile)?;
+        Ok(tile)
+    }
+
+    fn remove_tile(&mut self, key: &AtlasKey) {
+        let Some(tile) = self.tiles_by_key.remove(key) else {
+            return;
+        };
+        self.tile_registry.remove(&tile);
+        let id = tile.texture_id;
+
+        let textures = self.textures_mut(id.kind);
+
+        let Some(texture_slot) = textures.textures.get_mut(id.index as usize) else {
+            return;
+        };
+
+        if let Some(mut texture) = texture_slot.take() {
+            texture.deallocate(&tile);
+            if texture.is_unreferenced() {
+                textures.free_list.push(texture.id.index as usize);
+            } else {
+                *texture_slot = Some(texture);
+            }
+        }
+    }
+
     fn allocate(
         &mut self,
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
     ) -> Option<AtlasTile> {
         {
-            let textures = match texture_kind {
-                AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
-                AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-            };
+            let textures = self.textures_mut(texture_kind);
 
             if let Some(tile) = textures
                 .iter_mut()
@@ -223,11 +242,7 @@ impl DirectXAtlasState {
         }
         let texture = texture.unwrap();
 
-        let texture_list = match kind {
-            AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-        };
-        let index = texture_list.free_list.pop();
+        let index = self.textures_mut(kind).free_list.pop();
         let view = unsafe {
             let mut view = None;
             self.device
@@ -235,6 +250,7 @@ impl DirectXAtlasState {
                 .ok()?;
             [view]
         };
+        let texture_list = self.textures_mut(kind);
         let atlas_texture = DirectXAtlasTexture {
             id: AtlasTextureId {
                 index: index.unwrap_or(texture_list.textures.len()) as u32,
@@ -322,7 +338,8 @@ impl DirectXAtlasTexture {
         }
     }
 
-    fn decrement_ref_count(&mut self) {
+    fn deallocate(&mut self, tile: &AtlasTile) {
+        self.allocator.deallocate(tile.tile_id.into());
         self.live_atlas_keys -= 1;
     }
 

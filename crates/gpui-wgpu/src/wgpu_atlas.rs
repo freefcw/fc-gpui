@@ -102,10 +102,7 @@ impl WgpuAtlas {
     /// Use this for incremental recovery when the device is still valid.
     pub fn clear(&self) {
         let mut lock = self.0.lock();
-        lock.storage = WgpuAtlasStorage::default();
-        lock.tiles_by_key.clear();
-        lock.tile_registry.clear();
-        lock.pending_uploads.clear();
+        lock.clear();
     }
 
     /// Handles device lost by clearing all textures and cached tiles.
@@ -115,10 +112,7 @@ impl WgpuAtlas {
         lock.device = context.device.clone();
         lock.queue = context.queue.clone();
         lock.color_texture_format = context.color_texture_format();
-        lock.storage = WgpuAtlasStorage::default();
-        lock.tiles_by_key.clear();
-        lock.tile_registry.clear();
-        lock.pending_uploads.clear();
+        lock.clear();
     }
 }
 
@@ -136,10 +130,7 @@ impl PlatformAtlas for WgpuAtlas {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let mut tile = lock
-                .allocate(size, key.texture_kind())
-                .context("failed to allocate")?;
-            lock.tile_registry.register(&mut tile)?;
+            let tile = lock.allocate_registered_tile(size, key.texture_kind())?;
             lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
@@ -149,29 +140,7 @@ impl PlatformAtlas for WgpuAtlas {
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
 
-        let Some(tile) = lock.tiles_by_key.remove(key) else {
-            return;
-        };
-        lock.tile_registry.remove(&tile);
-        let id = tile.texture_id;
-
-        let Some(texture_slot) = lock.storage[id.kind].textures.get_mut(id.index as usize) else {
-            return;
-        };
-
-        if let Some(mut texture) = texture_slot.take() {
-            texture.allocator.deallocate(tile.tile_id.into());
-            texture.decrement_ref_count();
-            if texture.is_unreferenced() {
-                lock.pending_uploads
-                    .retain(|upload| upload.id != texture.id);
-                lock.storage[id.kind]
-                    .free_list
-                    .push(texture.id.index as usize);
-            } else {
-                *texture_slot = Some(texture);
-            }
-        }
+        lock.remove_tile(key);
     }
 
     fn epoch(&self) -> u64 {
@@ -183,7 +152,52 @@ impl PlatformAtlas for WgpuAtlas {
     }
 }
 
+// The helpers in this impl mirror the same-named ones in
+// gpui-macos/src/mac/metal_atlas.rs and gpui-windows/src/windows/directx_atlas.rs;
+// keep them in sync when changing the allocate/remove flow.
 impl WgpuAtlasState {
+    fn clear(&mut self) {
+        self.storage = WgpuAtlasStorage::default();
+        self.tiles_by_key.clear();
+        self.tile_registry.clear();
+        self.pending_uploads.clear();
+    }
+
+    fn allocate_registered_tile(
+        &mut self,
+        size: Size<DevicePixels>,
+        kind: AtlasTextureKind,
+    ) -> Result<AtlasTile> {
+        let mut tile = self.allocate(size, kind).context("failed to allocate")?;
+        self.tile_registry.register(&mut tile)?;
+        Ok(tile)
+    }
+
+    fn remove_tile(&mut self, key: &AtlasKey) {
+        let Some(tile) = self.tiles_by_key.remove(key) else {
+            return;
+        };
+        self.tile_registry.remove(&tile);
+        let id = tile.texture_id;
+
+        let Some(texture_slot) = self.storage[id.kind].textures.get_mut(id.index as usize) else {
+            return;
+        };
+
+        if let Some(mut texture) = texture_slot.take() {
+            texture.deallocate(&tile);
+            if texture.is_unreferenced() {
+                self.pending_uploads
+                    .retain(|upload| upload.id != texture.id);
+                self.storage[id.kind]
+                    .free_list
+                    .push(texture.id.index as usize);
+            } else {
+                *texture_slot = Some(texture);
+            }
+        }
+    }
+
     fn allocate(
         &mut self,
         size: Size<DevicePixels>,
@@ -387,7 +401,8 @@ impl WgpuAtlasTexture {
         }
     }
 
-    fn decrement_ref_count(&mut self) {
+    fn deallocate(&mut self, tile: &AtlasTile) {
+        self.allocator.deallocate(tile.tile_id.into());
         self.live_atlas_keys -= 1;
     }
 
@@ -579,7 +594,10 @@ mod tests {
         assert_ne!(second_generation, first_generation);
         assert!(!atlas.is_tile_live(&first_tile));
         assert!(atlas.is_tile_live(&second_tile));
-        assert_ne!(second_tile.padding, first_tile.padding);
+        assert_ne!(
+            second_tile.allocation_identity(),
+            first_tile.allocation_identity()
+        );
         Ok(())
     }
 

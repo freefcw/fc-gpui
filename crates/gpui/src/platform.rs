@@ -1412,6 +1412,18 @@ pub struct AtlasTile {
     pub bounds: Bounds<DevicePixels>,
 }
 
+impl AtlasTile {
+    /// Returns the CPU allocation identity stored in the padding word.
+    pub fn allocation_identity(&self) -> u32 {
+        self.padding
+    }
+
+    /// Sets the CPU allocation identity without changing the GPU instance layout.
+    pub fn set_allocation_identity(&mut self, identity: u32) {
+        self.padding = identity;
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 #[allow(missing_docs)]
