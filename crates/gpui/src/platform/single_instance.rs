@@ -5,6 +5,9 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+const ACTIVATE_MESSAGE: &[u8] = b"activate";
+
 /// Error returned when another instance of the application is already running.
 #[derive(Debug)]
 pub struct AlreadyRunning;
@@ -122,7 +125,7 @@ impl SingleInstance {
                     Ok(mut stream) => {
                         let mut buf = [0u8; 64];
                         if let Ok(n) = stream.read(&mut buf) {
-                            if n > 0 && &buf[..n.min(8)] == b"activate" {
+                            if n > 0 && &buf[..n.min(ACTIVATE_MESSAGE.len())] == ACTIVATE_MESSAGE {
                                 callback();
                             }
                         }
@@ -148,7 +151,7 @@ fn platform_send_activate(app_id: &str) -> Result<()> {
 
     let path = socket_path(app_id);
     let mut stream = UnixStream::connect(&path)?;
-    stream.write_all(b"activate")?;
+    stream.write_all(ACTIVATE_MESSAGE)?;
     Ok(())
 }
 
