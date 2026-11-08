@@ -8,6 +8,7 @@ use objc2::{AnyThread, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSControlStateValueOff, NSControlStateValueOn,
     NSEventMask, NSEventType, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
+    NSVariableStatusItemLength,
 };
 use objc2_foundation::{NSData, NSSize, NSString};
 use std::cell::{Cell, RefCell};
@@ -24,8 +25,7 @@ impl MacTray {
     pub fn new() -> Self {
         unsafe {
             let status_bar = NSStatusBar::systemStatusBar();
-            let length: f64 = -1.0;
-            let status_item = status_bar.statusItemWithLength(length);
+            let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
             status_item.setVisible(true);
 
             if let Some(button) = status_item.button(main_thread_marker()) {

@@ -5,7 +5,8 @@ use anyhow::{Result, anyhow};
 use core_graphics::event::CGKeyCode;
 
 use super::events::{
-    CMD_MOD, NO_MOD, SHIFT_MOD, always_use_command_layout, chars_for_modified_key,
+    NO_MOD, SHIFT_MOD, always_use_command_layout, apply_command_layout, chars_for_modified_key,
+    normalize_shifted_key, special_key_name,
 };
 
 const CMD_KEY: u32 = 1 << 8;
@@ -167,8 +168,6 @@ fn suppress_function_modifier_for_key_code(key_code: CGKeyCode) -> bool {
 }
 
 fn semantic_hotkey_for_key_code(key_code: CGKeyCode, actual_modifiers: Modifiers) -> Keystroke {
-    use objc2_app_kit::*;
-
     let special_key = special_key_for_key_code(key_code);
     let first_char = if special_key.is_none() {
         chars_for_modified_key(key_code, NO_MOD)
@@ -185,91 +184,22 @@ fn semantic_hotkey_for_key_code(key_code: CGKeyCode, actual_modifiers: Modifiers
     let command = actual_modifiers.platform;
     let function = actual_modifiers.function && !suppress_function_modifier_for_key_code(key_code);
 
-    #[allow(non_upper_case_globals)]
-    let key = match special_key {
+    let key = match special_key.or_else(|| special_key_name(first_char)) {
         Some(key) => key.to_string(),
-        None => match first_char {
-            Some(0x20) => "space".to_string(),
-            Some(0x09) => "tab".to_string(),
-            Some(0x0d) | Some(0x03) => "enter".to_string(),
-            Some(0x7f) => "backspace".to_string(),
-            Some(0x1b) => "escape".to_string(),
-            Some(0x19) => "tab".to_string(),
-            Some(NSUpArrowFunctionKey) => "up".to_string(),
-            Some(NSDownArrowFunctionKey) => "down".to_string(),
-            Some(NSLeftArrowFunctionKey) => "left".to_string(),
-            Some(NSRightArrowFunctionKey) => "right".to_string(),
-            Some(NSPageUpFunctionKey) => "pageup".to_string(),
-            Some(NSPageDownFunctionKey) => "pagedown".to_string(),
-            Some(NSHomeFunctionKey) => "home".to_string(),
-            Some(NSEndFunctionKey) => "end".to_string(),
-            Some(NSDeleteFunctionKey) => "delete".to_string(),
-            Some(NSHelpFunctionKey) => "insert".to_string(),
-            Some(NSF1FunctionKey) => "f1".to_string(),
-            Some(NSF2FunctionKey) => "f2".to_string(),
-            Some(NSF3FunctionKey) => "f3".to_string(),
-            Some(NSF4FunctionKey) => "f4".to_string(),
-            Some(NSF5FunctionKey) => "f5".to_string(),
-            Some(NSF6FunctionKey) => "f6".to_string(),
-            Some(NSF7FunctionKey) => "f7".to_string(),
-            Some(NSF8FunctionKey) => "f8".to_string(),
-            Some(NSF9FunctionKey) => "f9".to_string(),
-            Some(NSF10FunctionKey) => "f10".to_string(),
-            Some(NSF11FunctionKey) => "f11".to_string(),
-            Some(NSF12FunctionKey) => "f12".to_string(),
-            Some(NSF13FunctionKey) => "f13".to_string(),
-            Some(NSF14FunctionKey) => "f14".to_string(),
-            Some(NSF15FunctionKey) => "f15".to_string(),
-            Some(NSF16FunctionKey) => "f16".to_string(),
-            Some(NSF17FunctionKey) => "f17".to_string(),
-            Some(NSF18FunctionKey) => "f18".to_string(),
-            Some(NSF19FunctionKey) => "f19".to_string(),
-            Some(NSF20FunctionKey) => "f20".to_string(),
-            Some(NSF21FunctionKey) => "f21".to_string(),
-            Some(NSF22FunctionKey) => "f22".to_string(),
-            Some(NSF23FunctionKey) => "f23".to_string(),
-            Some(NSF24FunctionKey) => "f24".to_string(),
-            Some(NSF25FunctionKey) => "f25".to_string(),
-            Some(NSF26FunctionKey) => "f26".to_string(),
-            Some(NSF27FunctionKey) => "f27".to_string(),
-            Some(NSF28FunctionKey) => "f28".to_string(),
-            Some(NSF29FunctionKey) => "f29".to_string(),
-            Some(NSF30FunctionKey) => "f30".to_string(),
-            Some(NSF31FunctionKey) => "f31".to_string(),
-            Some(NSF32FunctionKey) => "f32".to_string(),
-            Some(NSF33FunctionKey) => "f33".to_string(),
-            Some(NSF34FunctionKey) => "f34".to_string(),
-            Some(NSF35FunctionKey) => "f35".to_string(),
-            _ => {
-                let mut chars_ignoring_modifiers = chars_for_modified_key(key_code, NO_MOD);
-                let mut chars_with_shift = chars_for_modified_key(key_code, SHIFT_MOD);
+        None => {
+            let mut chars_ignoring_modifiers = chars_for_modified_key(key_code, NO_MOD);
+            let mut chars_with_shift = chars_for_modified_key(key_code, SHIFT_MOD);
 
-                if command || always_use_command_layout() {
-                    let chars_with_cmd = chars_for_modified_key(key_code, CMD_MOD);
-                    let chars_with_both = chars_for_modified_key(key_code, CMD_MOD | SHIFT_MOD);
-
-                    if chars_with_both != chars_with_cmd {
-                        chars_with_shift = chars_with_both;
-                    } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
-                        chars_with_shift = chars_with_cmd.to_ascii_uppercase();
-                    }
-                    chars_ignoring_modifiers = chars_with_cmd;
-                }
-
-                if shift
-                    && chars_ignoring_modifiers
-                        .chars()
-                        .all(|ch| ch.is_ascii_lowercase())
-                {
-                    chars_ignoring_modifiers
-                } else if shift {
-                    shift = false;
-                    chars_with_shift
-                } else {
-                    chars_ignoring_modifiers
-                }
+            if command || always_use_command_layout() {
+                apply_command_layout(
+                    key_code,
+                    &mut chars_ignoring_modifiers,
+                    &mut chars_with_shift,
+                );
             }
-        },
+
+            normalize_shifted_key(chars_ignoring_modifiers, chars_with_shift, &mut shift)
+        }
     };
 
     Keystroke {

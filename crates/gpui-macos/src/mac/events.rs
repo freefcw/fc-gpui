@@ -310,69 +310,16 @@ unsafe fn parse_keystroke(native_event: &NSEvent) -> Keystroke {
             && first_char
                 .is_none_or(|ch| !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch));
 
-        #[allow(non_upper_case_globals)]
-        let key = match first_char {
-            Some(SPACE_KEY) => {
-                key_char = Some(" ".to_string());
-                "space".to_string()
+        let key = match special_key_name(first_char) {
+            Some(key) => {
+                key_char = match first_char {
+                    Some(SPACE_KEY) => Some(" ".to_string()),
+                    Some(TAB_KEY) => Some("\t".to_string()),
+                    Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => Some("\n".to_string()),
+                    _ => None,
+                };
+                key.to_string()
             }
-            Some(TAB_KEY) => {
-                key_char = Some("\t".to_string());
-                "tab".to_string()
-            }
-            Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => {
-                key_char = Some("\n".to_string());
-                "enter".to_string()
-            }
-            Some(BACKSPACE_KEY) => "backspace".to_string(),
-            Some(ESCAPE_KEY) => "escape".to_string(),
-            Some(SHIFT_TAB_KEY) => "tab".to_string(),
-            Some(NSUpArrowFunctionKey) => "up".to_string(),
-            Some(NSDownArrowFunctionKey) => "down".to_string(),
-            Some(NSLeftArrowFunctionKey) => "left".to_string(),
-            Some(NSRightArrowFunctionKey) => "right".to_string(),
-            Some(NSPageUpFunctionKey) => "pageup".to_string(),
-            Some(NSPageDownFunctionKey) => "pagedown".to_string(),
-            Some(NSHomeFunctionKey) => "home".to_string(),
-            Some(NSEndFunctionKey) => "end".to_string(),
-            Some(NSDeleteFunctionKey) => "delete".to_string(),
-            // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
-            Some(NSHelpFunctionKey) => "insert".to_string(),
-            Some(NSF1FunctionKey) => "f1".to_string(),
-            Some(NSF2FunctionKey) => "f2".to_string(),
-            Some(NSF3FunctionKey) => "f3".to_string(),
-            Some(NSF4FunctionKey) => "f4".to_string(),
-            Some(NSF5FunctionKey) => "f5".to_string(),
-            Some(NSF6FunctionKey) => "f6".to_string(),
-            Some(NSF7FunctionKey) => "f7".to_string(),
-            Some(NSF8FunctionKey) => "f8".to_string(),
-            Some(NSF9FunctionKey) => "f9".to_string(),
-            Some(NSF10FunctionKey) => "f10".to_string(),
-            Some(NSF11FunctionKey) => "f11".to_string(),
-            Some(NSF12FunctionKey) => "f12".to_string(),
-            Some(NSF13FunctionKey) => "f13".to_string(),
-            Some(NSF14FunctionKey) => "f14".to_string(),
-            Some(NSF15FunctionKey) => "f15".to_string(),
-            Some(NSF16FunctionKey) => "f16".to_string(),
-            Some(NSF17FunctionKey) => "f17".to_string(),
-            Some(NSF18FunctionKey) => "f18".to_string(),
-            Some(NSF19FunctionKey) => "f19".to_string(),
-            Some(NSF20FunctionKey) => "f20".to_string(),
-            Some(NSF21FunctionKey) => "f21".to_string(),
-            Some(NSF22FunctionKey) => "f22".to_string(),
-            Some(NSF23FunctionKey) => "f23".to_string(),
-            Some(NSF24FunctionKey) => "f24".to_string(),
-            Some(NSF25FunctionKey) => "f25".to_string(),
-            Some(NSF26FunctionKey) => "f26".to_string(),
-            Some(NSF27FunctionKey) => "f27".to_string(),
-            Some(NSF28FunctionKey) => "f28".to_string(),
-            Some(NSF29FunctionKey) => "f29".to_string(),
-            Some(NSF30FunctionKey) => "f30".to_string(),
-            Some(NSF31FunctionKey) => "f31".to_string(),
-            Some(NSF32FunctionKey) => "f32".to_string(),
-            Some(NSF33FunctionKey) => "f33".to_string(),
-            Some(NSF34FunctionKey) => "f34".to_string(),
-            Some(NSF35FunctionKey) => "f35".to_string(),
             _ => {
                 // Cases to test when modifying this:
                 //
@@ -393,21 +340,11 @@ unsafe fn parse_keystroke(native_event: &NSEvent) -> Keystroke {
 
                 // Handle Dvorak+QWERTY / Russian / Armenian
                 if command || always_use_cmd_layout {
-                    let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), CMD_MOD);
-                    let chars_with_both =
-                        chars_for_modified_key(native_event.keyCode(), CMD_MOD | SHIFT_MOD);
-
-                    // We don't do this in the case that the shifted command key generates
-                    // the same character as the unshifted command key (Norwegian, e.g.)
-                    if chars_with_both != chars_with_cmd {
-                        chars_with_shift = chars_with_both;
-
-                    // Handle edge-case where cmd-shift-s reports cmd-s instead of
-                    // cmd-shift-s (Ukrainian, etc.)
-                    } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
-                        chars_with_shift = chars_with_cmd.to_ascii_uppercase();
-                    }
-                    chars_ignoring_modifiers = chars_with_cmd;
+                    apply_command_layout(
+                        native_event.keyCode(),
+                        &mut chars_ignoring_modifiers,
+                        &mut chars_with_shift,
+                    );
                 }
 
                 if !control && !command && !function {
@@ -422,18 +359,7 @@ unsafe fn parse_keystroke(native_event: &NSEvent) -> Keystroke {
                     key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
                 }
 
-                if shift
-                    && chars_ignoring_modifiers
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase())
-                {
-                    chars_ignoring_modifiers
-                } else if shift {
-                    shift = false;
-                    chars_with_shift
-                } else {
-                    chars_ignoring_modifiers
-                }
+                normalize_shifted_key(chars_ignoring_modifiers, chars_with_shift, &mut shift)
             }
         };
 
@@ -448,6 +374,107 @@ unsafe fn parse_keystroke(native_event: &NSEvent) -> Keystroke {
             key,
             key_char,
         }
+    }
+}
+
+#[allow(non_upper_case_globals)]
+pub(super) fn special_key_name(first_char: Option<u32>) -> Option<&'static str> {
+    use objc2_app_kit::*;
+
+    Some(match first_char {
+        Some(SPACE_KEY) => "space",
+        Some(TAB_KEY) => "tab",
+        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
+        Some(BACKSPACE_KEY) => "backspace",
+        Some(ESCAPE_KEY) => "escape",
+        Some(SHIFT_TAB_KEY) => "tab",
+        Some(NSUpArrowFunctionKey) => "up",
+        Some(NSDownArrowFunctionKey) => "down",
+        Some(NSLeftArrowFunctionKey) => "left",
+        Some(NSRightArrowFunctionKey) => "right",
+        Some(NSPageUpFunctionKey) => "pageup",
+        Some(NSPageDownFunctionKey) => "pagedown",
+        Some(NSHomeFunctionKey) => "home",
+        Some(NSEndFunctionKey) => "end",
+        Some(NSDeleteFunctionKey) => "delete",
+        // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
+        Some(NSHelpFunctionKey) => "insert",
+        Some(NSF1FunctionKey) => "f1",
+        Some(NSF2FunctionKey) => "f2",
+        Some(NSF3FunctionKey) => "f3",
+        Some(NSF4FunctionKey) => "f4",
+        Some(NSF5FunctionKey) => "f5",
+        Some(NSF6FunctionKey) => "f6",
+        Some(NSF7FunctionKey) => "f7",
+        Some(NSF8FunctionKey) => "f8",
+        Some(NSF9FunctionKey) => "f9",
+        Some(NSF10FunctionKey) => "f10",
+        Some(NSF11FunctionKey) => "f11",
+        Some(NSF12FunctionKey) => "f12",
+        Some(NSF13FunctionKey) => "f13",
+        Some(NSF14FunctionKey) => "f14",
+        Some(NSF15FunctionKey) => "f15",
+        Some(NSF16FunctionKey) => "f16",
+        Some(NSF17FunctionKey) => "f17",
+        Some(NSF18FunctionKey) => "f18",
+        Some(NSF19FunctionKey) => "f19",
+        Some(NSF20FunctionKey) => "f20",
+        Some(NSF21FunctionKey) => "f21",
+        Some(NSF22FunctionKey) => "f22",
+        Some(NSF23FunctionKey) => "f23",
+        Some(NSF24FunctionKey) => "f24",
+        Some(NSF25FunctionKey) => "f25",
+        Some(NSF26FunctionKey) => "f26",
+        Some(NSF27FunctionKey) => "f27",
+        Some(NSF28FunctionKey) => "f28",
+        Some(NSF29FunctionKey) => "f29",
+        Some(NSF30FunctionKey) => "f30",
+        Some(NSF31FunctionKey) => "f31",
+        Some(NSF32FunctionKey) => "f32",
+        Some(NSF33FunctionKey) => "f33",
+        Some(NSF34FunctionKey) => "f34",
+        Some(NSF35FunctionKey) => "f35",
+        _ => return None,
+    })
+}
+
+pub(super) fn apply_command_layout(
+    key_code: CGKeyCode,
+    chars_ignoring_modifiers: &mut String,
+    chars_with_shift: &mut String,
+) {
+    let chars_with_cmd = chars_for_modified_key(key_code, CMD_MOD);
+    let chars_with_both = chars_for_modified_key(key_code, CMD_MOD | SHIFT_MOD);
+
+    // We don't do this in the case that the shifted command key generates
+    // the same character as the unshifted command key (Norwegian, e.g.)
+    if chars_with_both != chars_with_cmd {
+        *chars_with_shift = chars_with_both;
+
+    // Handle edge-case where cmd-shift-s reports cmd-s instead of
+    // cmd-shift-s (Ukrainian, etc.)
+    } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
+        *chars_with_shift = chars_with_cmd.to_ascii_uppercase();
+    }
+    *chars_ignoring_modifiers = chars_with_cmd;
+}
+
+pub(super) fn normalize_shifted_key(
+    chars_ignoring_modifiers: String,
+    chars_with_shift: String,
+    shift: &mut bool,
+) -> String {
+    if *shift
+        && chars_ignoring_modifiers
+            .chars()
+            .all(|c| c.is_ascii_lowercase())
+    {
+        chars_ignoring_modifiers
+    } else if *shift {
+        *shift = false;
+        chars_with_shift
+    } else {
+        chars_ignoring_modifiers
     }
 }
 
