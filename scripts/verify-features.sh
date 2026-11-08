@@ -14,49 +14,42 @@ set -euo pipefail
 
 echo "=== Feature contracts ==="
 
-echo "[1/14] facade: no default features..."
-cargo check --locked -q -p fc-gpui --lib --no-default-features
+# Each entry declares the displayed scenario and its cargo-check arguments.
+COMPILE_SCENARIOS=(
+    "facade: no default features...|-p fc-gpui --lib --no-default-features"
+    "facade: accessibility + font-kit + X11...|-p fc-gpui --lib --no-default-features --features accessibility,font-kit,x11"
+    "facade: accessibility + font-kit + Wayland...|-p fc-gpui --lib --no-default-features --features accessibility,font-kit,wayland"
+    "facade: wgpu headless marker (docs/plans runbook)...|-p fc-gpui --no-default-features --features wgpu"
+    "facade: wgpu + Wayland + X11 (docs/sync migration runbook)...|-p fc-gpui --no-default-features --features wgpu,wayland,x11"
+    "core: no default features...|-p fc-gpui-core --no-default-features"
+    "core: test-support...|-p fc-gpui-core --features test-support"
+    "HTTP client: protocol only...|-p fc-gpui-http-client --lib --no-default-features"
+    "HTTP client: default reqwest compatibility...|-p fc-gpui-http-client --lib"
+    "HTTP client: opt-in macOS system proxy...|-p fc-gpui-http-client --lib --no-default-features --features macos-system-proxy"
+    "core: explicit reqwest compatibility...|-p fc-gpui-core --lib --no-default-features --features http-client-reqwest"
+    "facade: explicit reqwest compatibility...|-p fc-gpui --lib --no-default-features --features http-client-reqwest"
+)
+scenario_index=0
 
-echo "[2/14] facade: accessibility + font-kit + X11..."
-cargo check --locked -q -p fc-gpui --lib --no-default-features \
-    --features accessibility,font-kit,x11
+report_scenario() {
+    scenario_index=$((scenario_index + 1))
+    echo "[$scenario_index] $1"
+}
 
-echo "[3/14] facade: accessibility + font-kit + Wayland..."
-cargo check --locked -q -p fc-gpui --lib --no-default-features \
-    --features accessibility,font-kit,wayland
+check_scenario() {
+    local label="$1"
+    shift
+    report_scenario "$label"
+    cargo check --locked -q "$@"
+}
 
-echo "[4/14] facade: wgpu headless marker (docs/plans runbook)..."
-cargo check --locked -q -p fc-gpui --no-default-features --features wgpu
+for scenario in "${COMPILE_SCENARIOS[@]}"; do
+    IFS='|' read -r label arguments <<< "$scenario"
+    read -r -a check_args <<< "$arguments"
+    check_scenario "$label" "${check_args[@]}"
+done
 
-echo "[5/14] facade: wgpu + Wayland + X11 (docs/sync migration runbook)..."
-cargo check --locked -q -p fc-gpui --no-default-features \
-    --features wgpu,wayland,x11
-
-echo "[6/14] core: no default features..."
-cargo check --locked -q -p fc-gpui-core --no-default-features
-
-echo "[7/14] core: test-support..."
-cargo check --locked -q -p fc-gpui-core --features test-support
-
-echo "[8/14] HTTP client: protocol only..."
-cargo check --locked -q -p fc-gpui-http-client --lib --no-default-features
-
-echo "[9/14] HTTP client: default reqwest compatibility..."
-cargo check --locked -q -p fc-gpui-http-client --lib
-
-echo "[10/14] HTTP client: opt-in macOS system proxy..."
-cargo check --locked -q -p fc-gpui-http-client --lib --no-default-features \
-    --features macos-system-proxy
-
-echo "[11/14] core: explicit reqwest compatibility..."
-cargo check --locked -q -p fc-gpui-core --lib --no-default-features \
-    --features http-client-reqwest
-
-echo "[12/14] facade: explicit reqwest compatibility..."
-cargo check --locked -q -p fc-gpui --lib --no-default-features \
-    --features http-client-reqwest
-
-echo "[13/14] core: protocol-only dependency graph excludes reqwest..."
+report_scenario "core: protocol-only dependency graph excludes reqwest..."
 python3 - <<'PY'
 import subprocess
 
@@ -70,7 +63,7 @@ if any(line.startswith("reqwest ") for line in tree.splitlines()):
 print("protocol-only HTTP dependency contract OK")
 PY
 
-echo "[14/14] public feature whitelist..."
+report_scenario "public feature whitelist..."
 python3 - <<'PY'
 import json
 import subprocess
@@ -137,64 +130,89 @@ meta = json.loads(
     ).stdout
 )
 
-failed = False
-for package in meta["packages"]:
-    name = package["name"]
-    if name not in EXPECTED:
-        continue
-    actual = set(package["features"])
-    expected = set(EXPECTED[name])
-    if actual == expected:
-        continue
-    failed = True
-    print(f"FAIL {name}:")
-    added = sorted(actual - expected)
-    removed = sorted(expected - actual)
-    if added:
-        print(f"  unexpected features: {added}")
-    if removed:
-        print(f"  missing features:    {removed}")
+# Keep EXPECTED independent from the manifests so API changes require review.
+def check_whitelist(packages):
+    failed = False
+    for package in packages:
+        name = package["name"]
+        if name not in EXPECTED:
+            continue
+        actual = set(package["features"])
+        expected = set(EXPECTED[name])
+        if actual == expected:
+            continue
+        failed = True
+        print(f"FAIL {name}:")
+        added = sorted(actual - expected)
+        removed = sorted(expected - actual)
+        if added:
+            print(f"  unexpected features: {added}")
+        if removed:
+            print(f"  missing features:    {removed}")
+
+    return failed
+
 
 HTTP_FEATURES = {
     "fc-gpui": ("http-client-reqwest", "gpui_core/http-client-reqwest"),
     "fc-gpui-core": ("http-client-reqwest", "http_client/reqwest"),
     "fc-gpui-http-client": ("reqwest", "dep:reqwest"),
 }
-for package in meta["packages"]:
-    if package["name"] not in HTTP_FEATURES:
-        continue
-    feature, target = HTTP_FEATURES[package["name"]]
-    features = package["features"]
-    if feature not in features.get("default", []) or target not in features.get(feature, []):
-        failed = True
-        print(f"FAIL {package['name']}: default HTTP compatibility forwarding changed")
-    if package["name"] == "fc-gpui-http-client":
-        reqwest = next(dep for dep in package["dependencies"] if dep["name"] == "reqwest")
-        if not reqwest["optional"] or "reqwest" not in features["macos-system-proxy"]:
-            failed = True
-            print("FAIL fc-gpui-http-client: reqwest must be optional and enabled by macos-system-proxy")
 
-for package in meta["packages"]:
-    if package["name"] != "fc-gpui-macos":
-        continue
-    deps = {d["name"]: d for d in package["dependencies"]}
-    screen_capture = package["features"].get("screen-capture", [])
-    violations = []
-    for dep_name in ("objc2-core-media", "objc2-screen-capture-kit"):
-        dep = deps.get(dep_name)
-        if dep is None or not dep["optional"]:
-            violations.append(f"{dep_name} is not an optional dependency")
-        if f"dep:{dep_name}" not in screen_capture:
-            violations.append(f"screen-capture does not enable dep:{dep_name}")
-    for dep_name in ("objc2-app-kit", "objc2-foundation"):
-        dep = deps.get(dep_name)
-        if dep is None or dep["uses_default_features"]:
-            violations.append(f"{dep_name} does not set default-features = false")
-    if violations:
-        failed = True
-        print("FAIL fc-gpui-macos:")
-        for violation in violations:
-            print(f"  {violation}")
+
+def check_http_forwarding(packages):
+    failed = False
+    for package in packages:
+        if package["name"] not in HTTP_FEATURES:
+            continue
+        feature, target = HTTP_FEATURES[package["name"]]
+        features = package["features"]
+        if feature not in features.get("default", []) or target not in features.get(feature, []):
+            failed = True
+            print(f"FAIL {package['name']}: default HTTP compatibility forwarding changed")
+        if package["name"] == "fc-gpui-http-client":
+            reqwest = next(dep for dep in package["dependencies"] if dep["name"] == "reqwest")
+            if not reqwest["optional"] or "reqwest" not in features["macos-system-proxy"]:
+                failed = True
+                print("FAIL fc-gpui-http-client: reqwest must be optional and enabled by macos-system-proxy")
+
+    return failed
+
+
+def check_macos_dependencies(packages):
+    failed = False
+    for package in packages:
+        if package["name"] != "fc-gpui-macos":
+            continue
+        deps = {d["name"]: d for d in package["dependencies"]}
+        screen_capture = package["features"].get("screen-capture", [])
+        violations = []
+        for dep_name in ("objc2-core-media", "objc2-screen-capture-kit"):
+            dep = deps.get(dep_name)
+            if dep is None or not dep["optional"]:
+                violations.append(f"{dep_name} is not an optional dependency")
+            if f"dep:{dep_name}" not in screen_capture:
+                violations.append(f"screen-capture does not enable dep:{dep_name}")
+        for dep_name in ("objc2-app-kit", "objc2-foundation"):
+            dep = deps.get(dep_name)
+            if dep is None or dep["uses_default_features"]:
+                violations.append(f"{dep_name} does not set default-features = false")
+        if violations:
+            failed = True
+            print("FAIL fc-gpui-macos:")
+            for violation in violations:
+                print(f"  {violation}")
+
+    return failed
+
+
+# Run all checks before reporting failure; preserve their diagnostic order.
+results = [
+    check_whitelist(meta["packages"]),
+    check_http_forwarding(meta["packages"]),
+    check_macos_dependencies(meta["packages"]),
+]
+failed = any(results)
 
 if failed:
     print()

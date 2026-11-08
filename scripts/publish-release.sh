@@ -17,6 +17,11 @@ cd "$REPO_ROOT"
 # Topological publish order, shared with verify-release-archives.sh.
 source "$SCRIPT_DIR/release-packages.sh"
 
+readonly INDEX_CHECK_ATTEMPTS=30
+readonly INDEX_CHECK_INTERVAL_SECONDS=5
+readonly PUBLISH_ATTEMPTS=5
+readonly PUBLISH_RETRY_DELAY_SECONDS=30
+
 readonly USER_AGENT="fc-gpui-release (https://github.com/freefcw/fc-gpui)"
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -52,12 +57,12 @@ wait_for_index() {
     local url
     url="https://index.crates.io/$(index_path "$name")"
     local attempt
-    for attempt in $(seq 1 30); do
+    for attempt in $(seq 1 "$INDEX_CHECK_ATTEMPTS"); do
         if curl -sf -H "User-Agent: $USER_AGENT" "$url" | grep -F "\"vers\":\"$version\"" >/dev/null; then
             echo "index lists $name $version after ${attempt} check(s)"
             return 0
         fi
-        sleep 5
+        sleep "$INDEX_CHECK_INTERVAL_SECONDS"
     done
     echo "timed out waiting for $name $version in the sparse index" >&2
     return 1
@@ -69,7 +74,7 @@ publish_one() {
 
     local attempt log
     log="$(mktemp)"
-    for attempt in 1 2 3 4 5; do
+    for ((attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt++)); do
         if cargo "${args[@]}" >"$log" 2>&1; then
             rm -f "$log"
             return 0
@@ -80,9 +85,9 @@ publish_one() {
             rm -f "$log"
             return 0
         fi
-        echo "cargo publish failed for $name (attempt $attempt/5); retrying in $((30 * attempt))s" >&2
+        echo "cargo publish failed for $name (attempt $attempt/$PUBLISH_ATTEMPTS); retrying in $((PUBLISH_RETRY_DELAY_SECONDS * attempt))s" >&2
         cat "$log" >&2
-        sleep $((30 * attempt))
+        sleep $((PUBLISH_RETRY_DELAY_SECONDS * attempt))
     done
     echo "giving up on $name" >&2
     rm -f "$log"
