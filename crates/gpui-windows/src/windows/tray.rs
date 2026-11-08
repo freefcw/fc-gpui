@@ -18,6 +18,9 @@ use windows::{
 use crate::{SharedString, TrayMenuItem, WM_GPUI_TRAY_ICON};
 
 const TRAY_ICON_ID: u32 = 1;
+// CreateIconFromResourceEx requires the Windows 3.x icon resource format (dwVer).
+// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createiconfromresourceex
+const ICON_RESOURCE_VERSION: u32 = 0x00030000;
 
 pub(crate) struct WindowsTray {
     icon_added: bool,
@@ -250,7 +253,14 @@ fn create_hicon_from_bytes(data: &[u8]) -> Option<HICON> {
             return None;
         }
         let icon_data = &data[offset as usize..];
-        let hicon = CreateIconFromResourceEx(icon_data, true, 0x00030000, 0, 0, LR_DEFAULTCOLOR);
+        let hicon = CreateIconFromResourceEx(
+            icon_data,
+            true,
+            ICON_RESOURCE_VERSION,
+            0,
+            0,
+            LR_DEFAULTCOLOR,
+        );
         hicon.ok()
     }
 }
