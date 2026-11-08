@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![cfg_attr(not(any(feature = "wayland", feature = "x11")), allow(dead_code))]
 
 use std::{
     path::Path,

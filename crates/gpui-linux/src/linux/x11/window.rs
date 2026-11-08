@@ -313,7 +313,7 @@ pub struct X11WindowState {
     /// `VisibilityNotify`; this is the last value it reported.
     visibility: WindowVisibility,
     hovered: bool,
-    force_render_after_recovery: bool,
+    force_next_render: bool,
     fullscreen: bool,
     is_resizable: bool,
     client_side_decorations_supported: bool,
@@ -567,26 +567,36 @@ pub(crate) fn handle_connection_error(err: ConnectionError) -> anyhow::Error {
     }
 }
 
-impl X11WindowState {
-    pub fn new(
-        handle: AnyWindowHandle,
-        client: X11ClientStatePtr,
-        executor: ForegroundExecutor,
-        gpu_context: GpuContext,
-        params: WindowParams,
-        gpu_resource_budget: &GpuResourceBudget,
-        xcb: &Rc<XCBConnection>,
-        client_side_decorations_supported: bool,
-        x_main_screen_index: usize,
-        x_window: xproto::Window,
-        atoms: &XcbAtoms,
-        scale_factor: f32,
-        appearance: WindowAppearance,
-        supports_xinput_gestures: bool,
-        parent_window: Option<xproto::Window>,
-    ) -> anyhow::Result<Self> {
-        ensure_window_kind_supported(&params.kind)?;
+struct X11WindowCreateContext<'a> {
+    // Native connection and protocol data.
+    xcb: &'a Rc<XCBConnection>,
+    x_main_screen_index: usize,
+    x_window: xproto::Window,
+    atoms: &'a XcbAtoms,
+    supports_xinput_gestures: bool,
+    // Window configuration.
+    handle: AnyWindowHandle,
+    client: X11ClientStatePtr,
+    params: WindowParams,
+    client_side_decorations_supported: bool,
+    scale_factor: f32,
+    appearance: WindowAppearance,
+    parent_window: Option<xproto::Window>,
+    // Rendering dependencies.
+    executor: ForegroundExecutor,
+    gpu_context: GpuContext,
+    gpu_resource_budget: &'a GpuResourceBudget,
+}
 
+impl X11WindowCreateContext<'_> {
+    fn create_native_window(
+        &self,
+    ) -> anyhow::Result<(usize, VisualSet, Visual, Bounds<DevicePixels>)> {
+        let xcb = self.xcb;
+        let x_main_screen_index = self.x_main_screen_index;
+        let x_window = self.x_window;
+        let params = &self.params;
+        let scale_factor = self.scale_factor;
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, gpui::DisplayId::index);
@@ -667,211 +677,293 @@ impl X11WindowState {
             ),
         )?;
 
+        Ok((x_screen_index, visual_set, visual, bounds))
+    }
+}
+
+fn initialize_window_geometry(
+    xcb: &Rc<XCBConnection>,
+    x_window: xproto::Window,
+    atoms: &XcbAtoms,
+    params: &WindowParams,
+    bounds: &mut Bounds<DevicePixels>,
+) -> anyhow::Result<()> {
+    let pid = std::process::id();
+    check_reply(
+        || "X11 ChangeProperty for _NET_WM_PID failed.",
+        xcb.change_property32(
+            xproto::PropMode::REPLACE,
+            x_window,
+            atoms._NET_WM_PID,
+            xproto::AtomEnum::CARDINAL,
+            &[pid],
+        ),
+    )?;
+
+    if let Some(size_hints) = normal_size_hints(params) {
+        check_reply(
+            || {
+                format!(
+                    "X11 change of WM_SIZE_HINTS failed. size_hints: {:?}",
+                    size_hints
+                )
+            },
+            size_hints.set_normal_hints(xcb, x_window),
+        )?;
+    }
+
+    let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
+    if reply.x == 0 && reply.y == 0 {
+        bounds.origin.x.0 += 2;
+        // Work around a bug where our rendered content appears
+        // outside the window bounds when opened at the default position
+        // (14px, 49px on X + Gnome + Ubuntu 22).
+        let x = bounds.origin.x.0;
+        let y = bounds.origin.y.0;
+        check_reply(
+            || format!("X11 ConfigureWindow failed. x: {}, y: {}", x, y),
+            xcb.configure_window(x_window, &xproto::ConfigureWindowAux::new().x(x).y(y)),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn initialize_window_properties(
+    xcb: &Rc<XCBConnection>,
+    x_window: xproto::Window,
+    atoms: &XcbAtoms,
+    titlebar: Option<gpui::TitlebarOptions>,
+    kind: &WindowKind,
+    mouse_passthrough: bool,
+    parent_window: Option<xproto::Window>,
+) -> anyhow::Result<()> {
+    if let Some(titlebar) = titlebar
+        && let Some(title) = titlebar.title
+    {
+        check_reply(
+            || "X11 ChangeProperty8 on window title failed.",
+            xcb.change_property8(
+                xproto::PropMode::REPLACE,
+                x_window,
+                xproto::AtomEnum::WM_NAME,
+                xproto::AtomEnum::STRING,
+                title.as_bytes(),
+            ),
+        )?;
+    }
+
+    let window_type = window_type_atom(kind, atoms);
+    check_reply(
+        || "X11 ChangeProperty32 setting window type failed.",
+        xcb.change_property32(
+            xproto::PropMode::REPLACE,
+            x_window,
+            atoms._NET_WM_WINDOW_TYPE,
+            xproto::AtomEnum::ATOM,
+            &[window_type],
+        ),
+    )?;
+
+    if *kind == WindowKind::Floating {
+        if let Some(parent_window) = parent_window {
+            // WM_TRANSIENT_FOR hint indicating the main application window. For floating windows, we set
+            // a parent window (WM_TRANSIENT_FOR) such that the window manager knows where to
+            // place the floating window in relation to the main window.
+            // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
+            check_reply(
+                || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR for floating window failed.",
+                xcb.change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms.WM_TRANSIENT_FOR,
+                    xproto::AtomEnum::WINDOW,
+                    &[parent_window],
+                ),
+            )?;
+        }
+    } else if *kind == WindowKind::Overlay {
+        check_reply(
+            || "X11 ChangeProperty32 setting _NET_WM_STATE_ABOVE for overlay failed.",
+            xcb.change_property32(
+                xproto::PropMode::REPLACE,
+                x_window,
+                atoms._NET_WM_STATE,
+                xproto::AtomEnum::ATOM,
+                &[atoms._NET_WM_STATE_ABOVE],
+            ),
+        )?;
+    }
+
+    if mouse_passthrough {
+        use x11rb::protocol::shape;
+        check_reply(
+            || "X11 shape::rectangles for mouse passthrough failed.",
+            shape::rectangles(
+                xcb.as_ref(),
+                shape::SO::SET,
+                shape::SK::INPUT,
+                xproto::ClipOrdering::UNSORTED,
+                x_window,
+                0,
+                0,
+                &[],
+            ),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn initialize_window_protocols(
+    xcb: &Rc<XCBConnection>,
+    x_window: xproto::Window,
+    atoms: &XcbAtoms,
+    supports_xinput_gestures: bool,
+) -> anyhow::Result<sync::Counter> {
+    check_reply(
+        || "X11 ChangeProperty32 setting protocols failed.",
+        xcb.change_property32(
+            xproto::PropMode::REPLACE,
+            x_window,
+            atoms.WM_PROTOCOLS,
+            xproto::AtomEnum::ATOM,
+            &[atoms.WM_DELETE_WINDOW, atoms._NET_WM_SYNC_REQUEST],
+        ),
+    )?;
+
+    get_reply(
+        || "X11 sync protocol initialize failed.",
+        sync::initialize(xcb, 3, 1),
+    )?;
+    let sync_request_counter = xcb.generate_id()?;
+    check_reply(
+        || "X11 sync CreateCounter failed.",
+        sync::create_counter(xcb, sync_request_counter, sync::Int64 { lo: 0, hi: 0 }),
+    )?;
+
+    check_reply(
+        || "X11 ChangeProperty32 setting sync request counter failed.",
+        xcb.change_property32(
+            xproto::PropMode::REPLACE,
+            x_window,
+            atoms._NET_WM_SYNC_REQUEST_COUNTER,
+            xproto::AtomEnum::CARDINAL,
+            &[sync_request_counter],
+        ),
+    )?;
+
+    let mut xi_event_mask = xinput::XIEventMask::MOTION
+        | xinput::XIEventMask::BUTTON_PRESS
+        | xinput::XIEventMask::BUTTON_RELEASE
+        | xinput::XIEventMask::ENTER
+        | xinput::XIEventMask::LEAVE;
+    if supports_xinput_gestures {
+        xi_event_mask |= xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_BEGIN_EVENT)
+            | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_UPDATE_EVENT)
+            | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_END_EVENT);
+    }
+
+    check_reply(
+        || "X11 XiSelectEvents failed.",
+        xcb.xinput_xi_select_events(
+            x_window,
+            &[xinput::EventMask {
+                deviceid: XINPUT_ALL_DEVICE_GROUPS,
+                mask: vec![xi_event_mask],
+            }],
+        ),
+    )?;
+
+    check_reply(
+        || "X11 XiSelectEvents for device changes failed.",
+        xcb.xinput_xi_select_events(
+            x_window,
+            &[xinput::EventMask {
+                deviceid: XINPUT_ALL_DEVICES,
+                mask: vec![xinput::XIEventMask::HIERARCHY | xinput::XIEventMask::DEVICE_CHANGED],
+            }],
+        ),
+    )?;
+
+    xcb_flush(xcb);
+
+    Ok(sync_request_counter)
+}
+
+fn initialize_window_renderer(
+    xcb: &Rc<XCBConnection>,
+    x_window: xproto::Window,
+    x_screen_index: usize,
+    visual: Visual,
+    gpu_context: GpuContext,
+    gpu_resource_budget: &GpuResourceBudget,
+) -> anyhow::Result<WgpuRenderer> {
+    let raw_window = RawWindow {
+        connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(xcb) as *mut _,
+        screen_id: x_screen_index,
+        window_id: x_window,
+        visual_id: visual.id,
+    };
+    let config = WgpuSurfaceConfig {
+        // Note: this has to be done after the GPU init, or otherwise
+        // the sizes are immediately invalidated.
+        size: query_render_extent(xcb, x_window)?,
+        // We set it to transparent by default, even if we have client-side
+        // decorations, since those seem to work on X11 even without `true` here.
+        // If the window appearance changes, then the renderer will get updated
+        // too
+        transparent: false,
+        preferred_present_mode: None,
+    };
+    WgpuRenderer::new(gpu_context, &raw_window, config, None, gpu_resource_budget)
+}
+
+impl X11WindowState {
+    fn new(context: X11WindowCreateContext<'_>) -> anyhow::Result<Self> {
+        ensure_window_kind_supported(&context.params.kind)?;
+        let (x_screen_index, visual_set, visual, mut bounds) = context.create_native_window()?;
+        let X11WindowCreateContext {
+            handle,
+            client,
+            executor,
+            gpu_context,
+            params,
+            gpu_resource_budget,
+            xcb,
+            client_side_decorations_supported,
+            x_main_screen_index: _,
+            x_window,
+            atoms,
+            scale_factor,
+            appearance,
+            supports_xinput_gestures,
+            parent_window,
+        } = context;
+
         // Collect errors during setup, so that window can be destroyed on failure.
         let setup_result = maybe!({
-            let pid = std::process::id();
-            check_reply(
-                || "X11 ChangeProperty for _NET_WM_PID failed.",
-                xcb.change_property32(
-                    xproto::PropMode::REPLACE,
-                    x_window,
-                    atoms._NET_WM_PID,
-                    xproto::AtomEnum::CARDINAL,
-                    &[pid],
-                ),
+            initialize_window_geometry(xcb, x_window, atoms, &params, &mut bounds)?;
+            initialize_window_properties(
+                xcb,
+                x_window,
+                atoms,
+                params.titlebar,
+                &params.kind,
+                params.mouse_passthrough,
+                parent_window,
             )?;
+            let sync_request_counter =
+                initialize_window_protocols(xcb, x_window, atoms, supports_xinput_gestures)?;
 
-            if let Some(size_hints) = normal_size_hints(&params) {
-                check_reply(
-                    || {
-                        format!(
-                            "X11 change of WM_SIZE_HINTS failed. size_hints: {:?}",
-                            size_hints
-                        )
-                    },
-                    size_hints.set_normal_hints(xcb, x_window),
-                )?;
-            }
-
-            let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
-            if reply.x == 0 && reply.y == 0 {
-                bounds.origin.x.0 += 2;
-                // Work around a bug where our rendered content appears
-                // outside the window bounds when opened at the default position
-                // (14px, 49px on X + Gnome + Ubuntu 22).
-                let x = bounds.origin.x.0;
-                let y = bounds.origin.y.0;
-                check_reply(
-                    || format!("X11 ConfigureWindow failed. x: {}, y: {}", x, y),
-                    xcb.configure_window(x_window, &xproto::ConfigureWindowAux::new().x(x).y(y)),
-                )?;
-            }
-            if let Some(titlebar) = params.titlebar
-                && let Some(title) = titlebar.title
-            {
-                check_reply(
-                    || "X11 ChangeProperty8 on window title failed.",
-                    xcb.change_property8(
-                        xproto::PropMode::REPLACE,
-                        x_window,
-                        xproto::AtomEnum::WM_NAME,
-                        xproto::AtomEnum::STRING,
-                        title.as_bytes(),
-                    ),
-                )?;
-            }
-
-            let window_type = window_type_atom(&params.kind, atoms);
-            check_reply(
-                || "X11 ChangeProperty32 setting window type failed.",
-                xcb.change_property32(
-                    xproto::PropMode::REPLACE,
-                    x_window,
-                    atoms._NET_WM_WINDOW_TYPE,
-                    xproto::AtomEnum::ATOM,
-                    &[window_type],
-                ),
+            let renderer = initialize_window_renderer(
+                xcb,
+                x_window,
+                x_screen_index,
+                visual,
+                gpu_context,
+                gpu_resource_budget,
             )?;
-
-            if params.kind == WindowKind::Floating {
-                if let Some(parent_window) = parent_window {
-                    // WM_TRANSIENT_FOR hint indicating the main application window. For floating windows, we set
-                    // a parent window (WM_TRANSIENT_FOR) such that the window manager knows where to
-                    // place the floating window in relation to the main window.
-                    // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
-                    check_reply(
-                        || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR for floating window failed.",
-                        xcb.change_property32(
-                            xproto::PropMode::REPLACE,
-                            x_window,
-                            atoms.WM_TRANSIENT_FOR,
-                            xproto::AtomEnum::WINDOW,
-                            &[parent_window],
-                        ),
-                    )?;
-                }
-            } else if params.kind == WindowKind::Overlay {
-                check_reply(
-                    || "X11 ChangeProperty32 setting _NET_WM_STATE_ABOVE for overlay failed.",
-                    xcb.change_property32(
-                        xproto::PropMode::REPLACE,
-                        x_window,
-                        atoms._NET_WM_STATE,
-                        xproto::AtomEnum::ATOM,
-                        &[atoms._NET_WM_STATE_ABOVE],
-                    ),
-                )?;
-            }
-
-            if params.mouse_passthrough {
-                use x11rb::protocol::shape;
-                check_reply(
-                    || "X11 shape::rectangles for mouse passthrough failed.",
-                    shape::rectangles(
-                        xcb.as_ref(),
-                        shape::SO::SET,
-                        shape::SK::INPUT,
-                        xproto::ClipOrdering::UNSORTED,
-                        x_window,
-                        0,
-                        0,
-                        &[],
-                    ),
-                )?;
-            }
-
-            check_reply(
-                || "X11 ChangeProperty32 setting protocols failed.",
-                xcb.change_property32(
-                    xproto::PropMode::REPLACE,
-                    x_window,
-                    atoms.WM_PROTOCOLS,
-                    xproto::AtomEnum::ATOM,
-                    &[atoms.WM_DELETE_WINDOW, atoms._NET_WM_SYNC_REQUEST],
-                ),
-            )?;
-
-            get_reply(
-                || "X11 sync protocol initialize failed.",
-                sync::initialize(xcb, 3, 1),
-            )?;
-            let sync_request_counter = xcb.generate_id()?;
-            check_reply(
-                || "X11 sync CreateCounter failed.",
-                sync::create_counter(xcb, sync_request_counter, sync::Int64 { lo: 0, hi: 0 }),
-            )?;
-
-            check_reply(
-                || "X11 ChangeProperty32 setting sync request counter failed.",
-                xcb.change_property32(
-                    xproto::PropMode::REPLACE,
-                    x_window,
-                    atoms._NET_WM_SYNC_REQUEST_COUNTER,
-                    xproto::AtomEnum::CARDINAL,
-                    &[sync_request_counter],
-                ),
-            )?;
-
-            let mut xi_event_mask = xinput::XIEventMask::MOTION
-                | xinput::XIEventMask::BUTTON_PRESS
-                | xinput::XIEventMask::BUTTON_RELEASE
-                | xinput::XIEventMask::ENTER
-                | xinput::XIEventMask::LEAVE;
-            if supports_xinput_gestures {
-                xi_event_mask |=
-                    xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_BEGIN_EVENT)
-                        | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_UPDATE_EVENT)
-                        | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_END_EVENT);
-            }
-
-            check_reply(
-                || "X11 XiSelectEvents failed.",
-                xcb.xinput_xi_select_events(
-                    x_window,
-                    &[xinput::EventMask {
-                        deviceid: XINPUT_ALL_DEVICE_GROUPS,
-                        mask: vec![xi_event_mask],
-                    }],
-                ),
-            )?;
-
-            check_reply(
-                || "X11 XiSelectEvents for device changes failed.",
-                xcb.xinput_xi_select_events(
-                    x_window,
-                    &[xinput::EventMask {
-                        deviceid: XINPUT_ALL_DEVICES,
-                        mask: vec![
-                            xinput::XIEventMask::HIERARCHY | xinput::XIEventMask::DEVICE_CHANGED,
-                        ],
-                    }],
-                ),
-            )?;
-
-            xcb_flush(xcb);
-
-            let renderer = {
-                let raw_window = RawWindow {
-                    connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
-                        xcb,
-                    ) as *mut _,
-                    screen_id: x_screen_index,
-                    window_id: x_window,
-                    visual_id: visual.id,
-                };
-                let config = WgpuSurfaceConfig {
-                    // Note: this has to be done after the GPU init, or otherwise
-                    // the sizes are immediately invalidated.
-                    size: query_render_extent(xcb, x_window)?,
-                    // We set it to transparent by default, even if we have client-side
-                    // decorations, since those seem to work on X11 even without `true` here.
-                    // If the window appearance changes, then the renderer will get updated
-                    // too
-                    transparent: false,
-                    preferred_present_mode: None,
-                };
-                WgpuRenderer::new(gpu_context, &raw_window, config, None, gpu_resource_budget)?
-            };
 
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
@@ -891,7 +983,7 @@ impl X11WindowState {
                 // The window is not mapped until the client sees `MapNotify`.
                 visibility: WindowVisibility::Hidden,
                 hovered: false,
-                force_render_after_recovery: false,
+                force_next_render: false,
                 fullscreen: false,
                 is_resizable: params.is_resizable,
                 maximized_vertical: false,
@@ -997,7 +1089,7 @@ impl X11Window {
     ) -> anyhow::Result<Self> {
         let icon = params.icon.clone();
         let ptr = X11WindowStatePtr {
-            state: Rc::new(RefCell::new(X11WindowState::new(
+            state: Rc::new(RefCell::new(X11WindowState::new(X11WindowCreateContext {
                 handle,
                 client,
                 executor,
@@ -1013,7 +1105,7 @@ impl X11Window {
                 appearance,
                 supports_xinput_gestures,
                 parent_window,
-            )?)),
+            })?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),
             x_window,
@@ -1237,15 +1329,15 @@ impl X11WindowStatePtr {
     }
 
     pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
-        let force_render_after_recovery = {
+        let force_next_render = {
             let mut state = self.state.borrow_mut();
-            std::mem::take(&mut state.force_render_after_recovery)
+            std::mem::take(&mut state.force_next_render)
         };
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(ref mut fun) = cb.request_frame {
             fun(RequestFrameOptions {
-                force_render: request_frame_options.force_render || force_render_after_recovery,
+                force_render: request_frame_options.force_render || force_next_render,
                 ..request_frame_options
             });
         }
@@ -1787,7 +1879,7 @@ impl PlatformWindow for X11Window {
                 log::warn!("GPU recovery failed, will retry on next frame: {err}");
             }
 
-            inner.force_render_after_recovery = true;
+            inner.force_next_render = true;
             return;
         }
 
@@ -1796,11 +1888,11 @@ impl PlatformWindow for X11Window {
         // this result can leave a static window stale until the next input or
         // expose event. Wayland already carries the same retry state explicitly.
         if !inner.renderer.draw(scene) {
-            inner.force_render_after_recovery = true;
+            inner.force_next_render = true;
         }
 
         if inner.renderer.needs_redraw() {
-            inner.force_render_after_recovery = true;
+            inner.force_next_render = true;
         }
     }
 

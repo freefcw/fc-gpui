@@ -355,6 +355,33 @@ pub(crate) struct WaylandClientState {
 }
 
 impl WaylandClientState {
+    fn apply_pointer_cursor(
+        &mut self,
+        wl_pointer: &wl_pointer::WlPointer,
+        serial: u32,
+        window: &WaylandWindowStatePtr,
+    ) {
+        if let Some(style) = self.cursor_style {
+            if let CursorStyle::None = style {
+                let wl_pointer = self
+                    .wl_pointer
+                    .clone()
+                    .expect("window is focused by pointer");
+                wl_pointer.set_cursor(serial, None, 0, 0);
+            } else if let Some(cursor_shape_device) = &self.cursor_shape_device {
+                cursor_shape_device.set_shape(serial, crate::linux::cursor_shape(style));
+            } else {
+                let scale = window.primary_output_scale();
+                self.cursor.set_icon(
+                    wl_pointer,
+                    serial,
+                    crate::linux::cursor_icon_names(style),
+                    scale,
+                );
+            }
+        }
+    }
+
     fn destroy_pinch_gesture(&mut self) {
         if let Some(pinch_gesture) = self.pinch_gesture.take() {
             pinch_gesture.destroy();
@@ -1967,43 +1994,25 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.mouse_location = Some(position);
                 state.button_pressed = None;
 
-                if let Some(window) = get_window(&mut state, &surface.id()) {
-                    state.mouse_focused_window = Some(window.clone());
+                let Some(window) = get_window(&mut state, &surface.id()) else {
+                    return;
+                };
+                state.mouse_focused_window = Some(window.clone());
 
-                    if state.enter_token.is_some() {
-                        state.enter_token = None;
-                    }
-                    if let Some(style) = state.cursor_style {
-                        if let CursorStyle::None = style {
-                            let wl_pointer = state
-                                .wl_pointer
-                                .clone()
-                                .expect("window is focused by pointer");
-                            wl_pointer.set_cursor(serial, None, 0, 0);
-                        } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                            cursor_shape_device
-                                .set_shape(serial, crate::linux::cursor_shape(style));
-                        } else {
-                            let scale = window.primary_output_scale();
-                            state.cursor.set_icon(
-                                wl_pointer,
-                                serial,
-                                crate::linux::cursor_icon_names(style),
-                                scale,
-                            );
-                        }
-                    }
-                    let modifiers = state.modifiers;
-                    drop(state);
-                    window.set_hovered(true);
-                    // No Motion follows Enter unless the pointer keeps moving, so synthesize
-                    // a MouseMove to establish hover at the entry position.
-                    window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button: None,
-                        modifiers,
-                    }));
+                if state.enter_token.is_some() {
+                    state.enter_token = None;
                 }
+                state.apply_pointer_cursor(wl_pointer, serial, &window);
+                let modifiers = state.modifiers;
+                drop(state);
+                window.set_hovered(true);
+                // No Motion follows Enter unless the pointer keeps moving, so synthesize
+                // a MouseMove to establish hover at the entry position.
+                window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                }));
             }
             wl_pointer::Event::Leave { .. } => {
                 if let Some(focused_window) = state.mouse_focused_window.clone() {

@@ -1,34 +1,8 @@
-#![allow(dead_code)]
-
-use anyhow::Result;
-use collections::HashMap;
-
-use gpui::Keystroke;
-
-pub struct LinuxGlobalHotkey {
-    registered: HashMap<u32, Keystroke>,
-}
-
-impl LinuxGlobalHotkey {
-    pub fn new() -> Self {
-        Self {
-            registered: HashMap::default(),
-        }
-    }
-
-    pub fn register(&mut self, id: u32, keystroke: &Keystroke) -> Result<()> {
-        self.registered.insert(id, keystroke.clone());
-        Ok(())
-    }
-
-    pub fn unregister(&mut self, id: u32) {
-        self.registered.remove(&id);
-    }
-}
-
 #[cfg(feature = "x11")]
 pub mod x11 {
-    use super::*;
+    use anyhow::Result;
+    use collections::HashMap;
+    use gpui::Keystroke;
     use std::rc::Rc;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{self, ConnectionExt as _, GrabMode, ModMask};
@@ -174,14 +148,12 @@ pub mod x11 {
     }
 
     pub struct X11GlobalHotkey {
-        inner: LinuxGlobalHotkey,
         keycodes: HashMap<u32, (u8, u16)>,
     }
 
     impl X11GlobalHotkey {
         pub fn new() -> Self {
             Self {
-                inner: LinuxGlobalHotkey::new(),
                 keycodes: HashMap::default(),
             }
         }
@@ -220,7 +192,7 @@ pub mod x11 {
             }
 
             self.keycodes.insert(id, (keycode, modmask));
-            self.inner.register(id, keystroke)
+            Ok(())
         }
 
         pub fn unregister(
@@ -234,24 +206,23 @@ pub mod x11 {
                     let _ = xcb.ungrab_key(keycode, root_window, modmask_variant.into());
                 }
             }
-            self.inner.unregister(id);
         }
     }
 }
 
 #[cfg(feature = "wayland")]
 pub mod wayland {
-    use super::*;
+    use anyhow::Result;
+    use gpui::Keystroke;
 
-    pub struct WaylandGlobalHotkey {
-        _inner: LinuxGlobalHotkey,
-    }
+    // The runtime rejects hotkeys directly; this wrapper retains its unsupported-operation contract.
+    #[allow(dead_code)]
+    pub struct WaylandGlobalHotkey;
 
+    #[allow(dead_code)] // Kept for the unsupported-operation wrapper and its contract test.
     impl WaylandGlobalHotkey {
         pub fn new() -> Self {
-            Self {
-                _inner: LinuxGlobalHotkey::new(),
-            }
+            Self
         }
 
         pub fn register(&mut self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
