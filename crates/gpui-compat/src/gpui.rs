@@ -16,7 +16,6 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     gpui_platform::current_platform(headless)
 }
 
-/// Real-renderer visual test context composed with the current desktop platform.
 #[cfg(all(
     feature = "test-support",
     any(
@@ -26,53 +25,63 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         target_os = "windows"
     )
 ))]
-pub struct RealVisualTestContext(gpui_core::RealVisualTestContext);
+mod real_visual_test_context {
+    use super::*;
 
-#[cfg(all(
-    feature = "test-support",
-    any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "windows"
-    )
-))]
-impl RealVisualTestContext {
-    /// Creates a context when the current platform supports real visual capture.
-    pub fn new_if_supported() -> Option<Self> {
-        let capabilities = VisualTestCapabilities::detect();
-        (capabilities.real_renderer && capabilities.screenshot_capture).then(Self::new)
-    }
+    /// Real-renderer visual test context composed with the current desktop platform.
+    pub struct RealVisualTestContext(gpui_core::RealVisualTestContext);
 
-    /// Creates a context with the default empty asset source.
-    pub fn new() -> Self {
-        Self(gpui_core::RealVisualTestContext::with_platform(
-            gpui_platform::current_platform(false),
-        ))
-    }
+    impl RealVisualTestContext {
+        /// Creates a context when the current platform supports real visual capture.
+        pub fn new_if_supported() -> Option<Self> {
+            let capabilities = VisualTestCapabilities::detect();
+            (capabilities.real_renderer && capabilities.screenshot_capture).then(Self::new)
+        }
 
-    /// Creates a context with a custom asset source.
-    pub fn with_asset_source(asset_source: Arc<dyn AssetSource>) -> Self {
-        Self(
-            gpui_core::RealVisualTestContext::with_platform_and_asset_source(
+        /// Creates a context with the default empty asset source.
+        pub fn new() -> Self {
+            Self(gpui_core::RealVisualTestContext::with_platform(
                 gpui_platform::current_platform(false),
-                asset_source,
-            ),
-        )
+            ))
+        }
+
+        /// Creates a context with a custom asset source.
+        pub fn with_asset_source(asset_source: Arc<dyn AssetSource>) -> Self {
+            Self(
+                gpui_core::RealVisualTestContext::with_platform_and_asset_source(
+                    gpui_platform::current_platform(false),
+                    asset_source,
+                ),
+            )
+        }
+
+        /// Starts the real platform run loop and invokes the callback after launch.
+        pub fn run<F>(self, on_finish_launching: F)
+        where
+            F: 'static + FnOnce(&mut Self),
+        {
+            let platform = self.0.visual_test_platform();
+            let mut cx = Some(self);
+            platform.run(Box::new(move || {
+                if let Some(mut cx) = cx.take() {
+                    on_finish_launching(&mut cx);
+                }
+            }));
+        }
     }
 
-    /// Starts the real platform run loop and invokes the callback after launch.
-    pub fn run<F>(self, on_finish_launching: F)
-    where
-        F: 'static + FnOnce(&mut Self),
-    {
-        let platform = self.0.visual_test_platform();
-        let mut cx = Some(self);
-        platform.run(Box::new(move || {
-            if let Some(mut cx) = cx.take() {
-                on_finish_launching(&mut cx);
-            }
-        }));
+    impl std::ops::Deref for RealVisualTestContext {
+        type Target = gpui_core::RealVisualTestContext;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl std::ops::DerefMut for RealVisualTestContext {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
     }
 }
 
@@ -85,28 +94,7 @@ impl RealVisualTestContext {
         target_os = "windows"
     )
 ))]
-impl std::ops::Deref for RealVisualTestContext {
-    type Target = gpui_core::RealVisualTestContext;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[cfg(all(
-    feature = "test-support",
-    any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "windows"
-    )
-))]
-impl std::ops::DerefMut for RealVisualTestContext {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+pub use real_visual_test_context::RealVisualTestContext;
 
 /// Configures and launches a GPUI application.
 ///

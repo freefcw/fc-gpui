@@ -40,6 +40,183 @@ fn main() {
     target_os = "freebsd",
     target_os = "windows"
 ))]
+mod screenshot_checks {
+    use gpui::{Bounds, Pixels, Size, VisualTestCapabilities, px};
+    use std::{fmt::Debug, ops::Index};
+
+    pub(super) fn check_native_handles(window: &gpui::Window) -> anyhow::Result<()> {
+        use raw_window_handle::{
+            HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+        };
+
+        let window_handle = HasWindowHandle::window_handle(window)
+            .map_err(|error| anyhow::anyhow!("failed to get native window handle: {error}"))?
+            .as_raw();
+        let display_handle = HasDisplayHandle::display_handle(window)
+            .map_err(|error| anyhow::anyhow!("failed to get native display handle: {error}"))?
+            .as_raw();
+
+        let matches_platform = match (window_handle, display_handle) {
+            (RawWindowHandle::Win32(_), RawDisplayHandle::Windows(_)) => {
+                cfg!(target_os = "windows")
+            }
+            (RawWindowHandle::AppKit(_), RawDisplayHandle::AppKit(_)) => {
+                cfg!(target_os = "macos")
+            }
+            (RawWindowHandle::Xcb(_), RawDisplayHandle::Xcb(_))
+            | (RawWindowHandle::Wayland(_), RawDisplayHandle::Wayland(_)) => {
+                cfg!(any(target_os = "linux", target_os = "freebsd"))
+            }
+            _ => false,
+        };
+        anyhow::ensure!(
+            matches_platform,
+            "unexpected native handles: window={window_handle:?}, display={display_handle:?}"
+        );
+        Ok(())
+    }
+
+    struct ScreenshotStats<P> {
+        first_pixel: P,
+        channel_min: [u8; 4],
+        channel_max: [u8; 4],
+        nonzero_rgb_pixels: usize,
+        nonzero_alpha_pixels: usize,
+        opaque_red_pixels: usize,
+        transparent_pixels: usize,
+        different_pixels: usize,
+    }
+
+    fn screenshot_stats<P>(pixels: impl Iterator<Item = P>) -> anyhow::Result<ScreenshotStats<P>>
+    where
+        P: Copy + PartialEq + Index<usize, Output = u8>,
+    {
+        let mut pixels = pixels.peekable();
+        let Some(first_pixel) = pixels.peek().copied() else {
+            anyhow::bail!("screenshot is empty");
+        };
+        let mut channel_min = [u8::MAX; 4];
+        let mut channel_max = [u8::MIN; 4];
+        let mut nonzero_rgb_pixels = 0usize;
+        let mut nonzero_alpha_pixels = 0usize;
+        let mut opaque_red_pixels = 0usize;
+        let mut transparent_pixels = 0usize;
+        let mut different_pixels = 0usize;
+        for pixel in pixels {
+            for channel in 0..4 {
+                channel_min[channel] = channel_min[channel].min(pixel[channel]);
+                channel_max[channel] = channel_max[channel].max(pixel[channel]);
+            }
+            nonzero_rgb_pixels += (pixel[0] > 0 || pixel[1] > 0 || pixel[2] > 0) as usize;
+            nonzero_alpha_pixels += (pixel[3] > 0) as usize;
+            opaque_red_pixels +=
+                (pixel[3] == u8::MAX && pixel[0] > pixel[1] && pixel[0] > pixel[2]) as usize;
+            transparent_pixels += (pixel[3] == 0) as usize;
+            different_pixels += (pixel != first_pixel) as usize;
+        }
+        Ok(ScreenshotStats {
+            first_pixel,
+            channel_min,
+            channel_max,
+            nonzero_rgb_pixels,
+            nonzero_alpha_pixels,
+            opaque_red_pixels,
+            transparent_pixels,
+            different_pixels,
+        })
+    }
+
+    pub(super) fn assert_screenshot<P>(
+        bounds: Bounds<Pixels>,
+        requested_size: Size<Pixels>,
+        scale_factor: f32,
+        capabilities: VisualTestCapabilities,
+        image_size: (u32, u32),
+        pixels: impl Iterator<Item = P>,
+    ) -> anyhow::Result<()>
+    where
+        P: Copy + PartialEq + Index<usize, Output = u8> + Debug,
+    {
+        let expected_origin = gpui::point(px(-10000.0), px(-10000.0));
+        let expected_width = (f32::from(bounds.size.width) * scale_factor).round() as u32;
+        let expected_height = (f32::from(bounds.size.height) * scale_factor).round() as u32;
+
+        if capabilities.offscreen_positioned_window {
+            anyhow::ensure!(
+                bounds.origin == expected_origin,
+                "expected origin {:?}, got {:?}",
+                expected_origin,
+                bounds.origin
+            );
+        }
+        anyhow::ensure!(
+            bounds.size.width >= requested_size.width
+                && bounds.size.height >= requested_size.height,
+            "expected size at least {:?}, got {:?}",
+            requested_size,
+            bounds.size
+        );
+        anyhow::ensure!(
+            image_size.0 == expected_width,
+            "expected image width {}, got {}",
+            expected_width,
+            image_size.0
+        );
+        anyhow::ensure!(
+            image_size.1 == expected_height,
+            "expected image height {}, got {}",
+            expected_height,
+            image_size.1
+        );
+        let ScreenshotStats {
+            first_pixel,
+            channel_min,
+            channel_max,
+            nonzero_rgb_pixels,
+            nonzero_alpha_pixels,
+            opaque_red_pixels,
+            transparent_pixels,
+            different_pixels,
+        } = screenshot_stats(pixels)?;
+        anyhow::ensure!(
+            nonzero_alpha_pixels > 0,
+            "screenshot is fully transparent: channel_min={:?}, channel_max={:?}, nonzero_rgb_pixels={}",
+            channel_min,
+            channel_max,
+            nonzero_rgb_pixels
+        );
+        anyhow::ensure!(
+            opaque_red_pixels > 0,
+            "screenshot does not contain the expected opaque red content: channel_min={:?}, channel_max={:?}, nonzero_alpha_pixels={}",
+            channel_min,
+            channel_max,
+            nonzero_alpha_pixels
+        );
+        anyhow::ensure!(
+            transparent_pixels > 0,
+            "screenshot does not contain the expected transparent background: channel_min={:?}, channel_max={:?}, opaque_red_pixels={}",
+            channel_min,
+            channel_max,
+            opaque_red_pixels
+        );
+        anyhow::ensure!(
+            different_pixels > 0,
+            "screenshot is a solid color: pixel={:?}, channel_min={:?}, channel_max={:?}, nonzero_alpha_pixels={}",
+            first_pixel,
+            channel_min,
+            channel_max,
+            nonzero_alpha_pixels
+        );
+        Ok(())
+    }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "windows"
+))]
 fn run() -> anyhow::Result<()> {
     use gpui::{
         AppContext as _, Context, IntoElement, RealVisualTestContext, Render, Styled as _,
@@ -80,35 +257,7 @@ fn run() -> anyhow::Result<()> {
                 cx.open_offscreen_window(requested_size, |_, app| app.new(|_| PaintedView))?;
             let window = window.into();
             cx.update_window(window, |_, window, _| -> anyhow::Result<()> {
-                use raw_window_handle::{
-                    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
-                };
-
-                let window_handle = HasWindowHandle::window_handle(window)
-                    .map_err(|error| anyhow::anyhow!("failed to get native window handle: {error}"))?
-                    .as_raw();
-                let display_handle = HasDisplayHandle::display_handle(window)
-                    .map_err(|error| anyhow::anyhow!("failed to get native display handle: {error}"))?
-                    .as_raw();
-
-                let matches_platform = match (window_handle, display_handle) {
-                    (RawWindowHandle::Win32(_), RawDisplayHandle::Windows(_)) => {
-                        cfg!(target_os = "windows")
-                    }
-                    (RawWindowHandle::AppKit(_), RawDisplayHandle::AppKit(_)) => {
-                        cfg!(target_os = "macos")
-                    }
-                    (RawWindowHandle::Xcb(_), RawDisplayHandle::Xcb(_))
-                    | (RawWindowHandle::Wayland(_), RawDisplayHandle::Wayland(_)) => {
-                        cfg!(any(target_os = "linux", target_os = "freebsd"))
-                    }
-                    _ => false,
-                };
-                anyhow::ensure!(
-                    matches_platform,
-                    "unexpected native handles: window={window_handle:?}, display={display_handle:?}"
-                );
-                Ok(())
+                screenshot_checks::check_native_handles(window)
             })??;
             let (bounds, scale_factor, artifact) = cx.update_window(window, |_, window, app| {
                 let clear = window.draw(app);
@@ -124,90 +273,14 @@ fn run() -> anyhow::Result<()> {
                 artifact
             );
             let image = cx.capture_screenshot(window)?;
-            let expected_origin = gpui::point(px(-10000.0), px(-10000.0));
-            let expected_width = (f32::from(bounds.size.width) * scale_factor).round() as u32;
-            let expected_height = (f32::from(bounds.size.height) * scale_factor).round() as u32;
-
-            if capabilities.offscreen_positioned_window {
-                anyhow::ensure!(
-                    bounds.origin == expected_origin,
-                    "expected origin {:?}, got {:?}",
-                    expected_origin,
-                    bounds.origin
-                );
-            }
-            anyhow::ensure!(
-                bounds.size.width >= requested_size.width
-                    && bounds.size.height >= requested_size.height,
-                "expected size at least {:?}, got {:?}",
+            screenshot_checks::assert_screenshot(
+                bounds,
                 requested_size,
-                bounds.size
-            );
-            anyhow::ensure!(
-                image.width() == expected_width,
-                "expected image width {}, got {}",
-                expected_width,
-                image.width()
-            );
-            anyhow::ensure!(
-                image.height() == expected_height,
-                "expected image height {}, got {}",
-                expected_height,
-                image.height()
-            );
-            let Some(first_pixel) = image.pixels().next().copied() else {
-                anyhow::bail!("screenshot is empty");
-            };
-            let mut channel_min = [u8::MAX; 4];
-            let mut channel_max = [u8::MIN; 4];
-            let mut nonzero_rgb_pixels = 0usize;
-            let mut nonzero_alpha_pixels = 0usize;
-            let mut opaque_red_pixels = 0usize;
-            let mut transparent_pixels = 0usize;
-            let mut different_pixels = 0usize;
-            for pixel in image.pixels() {
-                for channel in 0..4 {
-                    channel_min[channel] = channel_min[channel].min(pixel[channel]);
-                    channel_max[channel] = channel_max[channel].max(pixel[channel]);
-                }
-                nonzero_rgb_pixels +=
-                    (pixel[0] > 0 || pixel[1] > 0 || pixel[2] > 0) as usize;
-                nonzero_alpha_pixels += (pixel[3] > 0) as usize;
-                opaque_red_pixels += (pixel[3] == u8::MAX
-                    && pixel[0] > pixel[1]
-                    && pixel[0] > pixel[2]) as usize;
-                transparent_pixels += (pixel[3] == 0) as usize;
-                different_pixels += (*pixel != first_pixel) as usize;
-            }
-            anyhow::ensure!(
-                nonzero_alpha_pixels > 0,
-                "screenshot is fully transparent: channel_min={:?}, channel_max={:?}, nonzero_rgb_pixels={}",
-                channel_min,
-                channel_max,
-                nonzero_rgb_pixels
-            );
-            anyhow::ensure!(
-                opaque_red_pixels > 0,
-                "screenshot does not contain the expected opaque red content: channel_min={:?}, channel_max={:?}, nonzero_alpha_pixels={}",
-                channel_min,
-                channel_max,
-                nonzero_alpha_pixels
-            );
-            anyhow::ensure!(
-                transparent_pixels > 0,
-                "screenshot does not contain the expected transparent background: channel_min={:?}, channel_max={:?}, opaque_red_pixels={}",
-                channel_min,
-                channel_max,
-                opaque_red_pixels
-            );
-            anyhow::ensure!(
-                different_pixels > 0,
-                "screenshot is a solid color: pixel={:?}, channel_min={:?}, channel_max={:?}, nonzero_alpha_pixels={}",
-                first_pixel,
-                channel_min,
-                channel_max,
-                nonzero_alpha_pixels
-            );
+                scale_factor,
+                capabilities,
+                (image.width(), image.height()),
+                image.pixels().copied(),
+            )?;
             run_layer_shell_smoke(cx)?;
             Ok(())
         })();
