@@ -359,19 +359,19 @@ pub fn border_style_methods(input: TokenStream) -> TokenStream {
         ));
 
         for border_style_suffix in border_suffixes() {
-            methods.push(generate_predefined_setter(
-                visibility.clone(),
-                border_style_prefix.prefix,
-                border_style_suffix.suffix,
-                &border_style_prefix.fields,
-                &border_style_suffix.width_tokens,
-                false,
-                &format!(
+            methods.push(generate_predefined_setter(PredefinedSetter {
+                visibility: visibility.clone(),
+                prefix: border_style_prefix.prefix,
+                suffix: border_style_suffix.suffix,
+                fields: &border_style_prefix.fields,
+                length_tokens: &border_style_suffix.width_tokens,
+                negate: false,
+                doc_string: &format!(
                     "{prefix}\n\n{suffix}",
                     prefix = border_style_prefix.doc_string_prefix,
                     suffix = border_style_suffix.doc_string_suffix,
                 ),
-            ));
+            }));
         }
     }
 
@@ -594,35 +594,35 @@ fn generate_box_style_methods(
 
         for box_style_suffix in &suffixes {
             if box_style_suffix.suffix != "auto" || box_style_prefix.auto_allowed {
-                methods.push(generate_predefined_setter(
-                    visibility.clone(),
-                    box_style_prefix.prefix,
-                    box_style_suffix.suffix,
-                    &box_style_prefix.fields,
-                    &box_style_suffix.length_tokens,
-                    false,
-                    &format!(
+                methods.push(generate_predefined_setter(PredefinedSetter {
+                    visibility: visibility.clone(),
+                    prefix: box_style_prefix.prefix,
+                    suffix: box_style_suffix.suffix,
+                    fields: &box_style_prefix.fields,
+                    length_tokens: &box_style_suffix.length_tokens,
+                    negate: false,
+                    doc_string: &format!(
                         "{prefix}\n\n{suffix}",
                         prefix = box_style_prefix.doc_string_prefix,
                         suffix = box_style_suffix.doc_string_suffix,
                     ),
-                ));
+                }));
             }
 
             if box_style_suffix.suffix != "auto" {
-                methods.push(generate_predefined_setter(
-                    visibility.clone(),
-                    box_style_prefix.prefix,
-                    box_style_suffix.suffix,
-                    &box_style_prefix.fields,
-                    &box_style_suffix.length_tokens,
-                    true,
-                    &format!(
+                methods.push(generate_predefined_setter(PredefinedSetter {
+                    visibility: visibility.clone(),
+                    prefix: box_style_prefix.prefix,
+                    suffix: box_style_suffix.suffix,
+                    fields: &box_style_prefix.fields,
+                    length_tokens: &box_style_suffix.length_tokens,
+                    negate: true,
+                    doc_string: &format!(
                         "{prefix}\n\n{suffix}",
                         prefix = box_style_prefix.doc_string_prefix,
                         suffix = box_style_suffix.doc_string_suffix,
                     ),
-                ));
+                }));
             }
         }
     }
@@ -645,34 +645,45 @@ fn generate_methods() -> Vec<TokenStream2> {
         ));
 
         for corner_style_suffix in corner_suffixes() {
-            methods.push(generate_predefined_setter(
-                visibility.clone(),
-                corner_style_prefix.prefix,
-                corner_style_suffix.suffix,
-                &corner_style_prefix.fields,
-                &corner_style_suffix.radius_tokens,
-                false,
-                &format!(
+            methods.push(generate_predefined_setter(PredefinedSetter {
+                visibility: visibility.clone(),
+                prefix: corner_style_prefix.prefix,
+                suffix: corner_style_suffix.suffix,
+                fields: &corner_style_prefix.fields,
+                length_tokens: &corner_style_suffix.radius_tokens,
+                negate: false,
+                doc_string: &format!(
                     "{prefix}\n\n{suffix}",
                     prefix = corner_style_prefix.doc_string_prefix,
                     suffix = corner_style_suffix.doc_string_suffix,
                 ),
-            ));
+            }));
         }
     }
 
     methods
 }
 
-fn generate_predefined_setter(
+struct PredefinedSetter<'a> {
     visibility: Visibility,
-    name: &'static str,
-    length: &'static str,
-    fields: &[TokenStream2],
-    length_tokens: &TokenStream2,
+    prefix: &'static str,
+    suffix: &'static str,
+    fields: &'a [TokenStream2],
+    length_tokens: &'a TokenStream2,
     negate: bool,
-    doc_string: &str,
-) -> TokenStream2 {
+    doc_string: &'a str,
+}
+
+fn generate_predefined_setter(setter: PredefinedSetter<'_>) -> TokenStream2 {
+    let PredefinedSetter {
+        visibility,
+        prefix,
+        suffix,
+        fields,
+        length_tokens,
+        negate,
+        doc_string,
+    } = setter;
     let gpui = crate::gpui_crate_path();
     let (negation_qualifier, negation_token) = if negate {
         ("_neg", quote! { - })
@@ -680,10 +691,10 @@ fn generate_predefined_setter(
         ("", quote! {})
     };
 
-    let method_name = if length.is_empty() {
-        format_ident!("{name}{negation_qualifier}")
+    let method_name = if suffix.is_empty() {
+        format_ident!("{prefix}{negation_qualifier}")
     } else {
-        format_ident!("{name}{negation_qualifier}_{length}")
+        format_ident!("{prefix}{negation_qualifier}_{suffix}")
     };
 
     let field_assignments = fields

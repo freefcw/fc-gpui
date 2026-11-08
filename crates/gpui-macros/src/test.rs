@@ -94,35 +94,22 @@ impl Parse for Args {
 
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(args as Args);
-    let mut inner_fn = match syn::parse::<ItemFn>(function) {
+    let inner_fn = match syn::parse::<ItemFn>(function) {
         Ok(f) => f,
         Err(err) => return error_to_stream(err),
     };
 
-    let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
-    let inner_fn_name = format_ident!("__{}", inner_fn.sig.ident);
-    let outer_fn_name = mem::replace(&mut inner_fn.sig.ident, inner_fn_name.clone());
-
-    let result = generate_test_function(
-        args,
-        inner_fn,
-        inner_fn_attributes,
-        inner_fn_name,
-        outer_fn_name,
-    );
+    let result = generate_test_function(args, inner_fn);
     match result {
         Ok(tokens) => tokens,
         Err(tokens) => tokens,
     }
 }
 
-fn generate_test_function(
-    args: Args,
-    inner_fn: ItemFn,
-    inner_fn_attributes: Vec<syn::Attribute>,
-    inner_fn_name: Ident,
-    outer_fn_name: Ident,
-) -> Result<TokenStream, TokenStream> {
+fn generate_test_function(args: Args, mut inner_fn: ItemFn) -> Result<TokenStream, TokenStream> {
+    let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
+    let inner_fn_name = format_ident!("__{}", inner_fn.sig.ident);
+    let outer_fn_name = mem::replace(&mut inner_fn.sig.ident, inner_fn_name.clone());
     let gpui = crate::gpui_crate_path();
     let seeds = &args.seeds;
     let max_retries = args.max_retries;
@@ -130,60 +117,14 @@ fn generate_test_function(
     let on_failure_fn_name = &args.on_failure_fn_name;
     let seeds = quote!( #(#seeds),* );
 
-    let mut outer_fn: ItemFn = if inner_fn.sig.asyncness.is_some() {
-        // Pass to the test function the number of app contexts that it needs,
-        // based on its parameter list.
-        let mut cx_vars = proc_macro2::TokenStream::new();
-        let mut cx_teardowns = proc_macro2::TokenStream::new();
-        let mut inner_fn_args = proc_macro2::TokenStream::new();
-        for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
-            if let FnArg::Typed(arg) = arg {
-                if let Type::Path(ty) = &*arg.ty {
-                    let last_segment = ty.path.segments.last();
-                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        Some("StdRng") => {
-                            inner_fn_args.extend(
-                                quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),),
-                            );
-                            continue;
-                        }
-                        Some("BackgroundExecutor") => {
-                            inner_fn_args.extend(quote!(#gpui::BackgroundExecutor::new(
-                                std::sync::Arc::new(dispatcher.clone()),
-                            ),));
-                            continue;
-                        }
-                        _ => {}
-                    }
-                } else if let Type::Reference(ty) = &*arg.ty
-                    && let Type::Path(ty) = &*ty.elem
-                {
-                    let last_segment = ty.path.segments.last();
-                    if let Some("TestAppContext") =
-                        last_segment.map(|s| s.ident.to_string()).as_deref()
-                    {
-                        let cx_varname = format_ident!("cx_{}", ix);
-                        cx_vars.extend(quote!(
-                            let mut #cx_varname = #gpui::TestAppContext::build(
-                                dispatcher.clone(),
-                                Some(stringify!(#outer_fn_name)),
-                            );
-                        ));
-                        cx_teardowns.extend(quote!(
-                            dispatcher.run_until_parked();
-                            #cx_varname.executor().forbid_parking();
-                            #cx_varname.quit();
-                            dispatcher.run_until_parked();
-                        ));
-                        inner_fn_args.extend(quote!(&mut #cx_varname,));
-                        continue;
-                    }
-                }
-            }
+    let is_async = inner_fn.sig.asyncness.is_some();
+    let TestArguments {
+        cx_vars,
+        cx_teardowns,
+        inner_fn_args,
+    } = generate_test_arguments(&inner_fn, &outer_fn_name, &gpui, is_async)?;
 
-            return Err(error_with_message("invalid function signature", arg));
-        }
-
+    let mut outer_fn: ItemFn = if is_async {
         parse_quote! {
             // Use the built-in test attribute via the prelude path so a glob-imported
             // `gpui::test` proc macro cannot recursively capture this expansion.
@@ -206,71 +147,6 @@ fn generate_test_function(
             }
         }
     } else {
-        // Pass to the test function the number of app contexts that it needs,
-        // based on its parameter list.
-        let mut cx_vars = proc_macro2::TokenStream::new();
-        let mut cx_teardowns = proc_macro2::TokenStream::new();
-        let mut inner_fn_args = proc_macro2::TokenStream::new();
-        for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
-            if let FnArg::Typed(arg) = arg {
-                if let Type::Path(ty) = &*arg.ty {
-                    let last_segment = ty.path.segments.last();
-
-                    if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        inner_fn_args.extend(
-                            quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),),
-                        );
-                        continue;
-                    }
-                } else if let Type::Reference(ty) = &*arg.ty
-                    && let Type::Path(ty) = &*ty.elem
-                {
-                    let last_segment = ty.path.segments.last();
-                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        Some("App") => {
-                            let cx_varname = format_ident!("cx_{}", ix);
-                            let cx_varname_lock = format_ident!("cx_{}_lock", ix);
-                            cx_vars.extend(quote!(
-                                let mut #cx_varname = #gpui::TestAppContext::build(
-                                   dispatcher.clone(),
-                                   Some(stringify!(#outer_fn_name))
-                                );
-                                let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
-                            ));
-                            inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
-                            cx_teardowns.extend(quote!(
-                                    drop(#cx_varname_lock);
-                                    dispatcher.run_until_parked();
-                                    #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
-                                    dispatcher.run_until_parked();
-                                ));
-                            continue;
-                        }
-                        Some("TestAppContext") => {
-                            let cx_varname = format_ident!("cx_{}", ix);
-                            cx_vars.extend(quote!(
-                                let mut #cx_varname = #gpui::TestAppContext::build(
-                                    dispatcher.clone(),
-                                    Some(stringify!(#outer_fn_name))
-                                );
-                            ));
-                            cx_teardowns.extend(quote!(
-                                dispatcher.run_until_parked();
-                                #cx_varname.executor().forbid_parking();
-                                #cx_varname.quit();
-                                dispatcher.run_until_parked();
-                            ));
-                            inner_fn_args.extend(quote!(&mut #cx_varname,));
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            return Err(error_with_message("invalid function signature", arg));
-        }
-
         parse_quote! {
             // Use the built-in test attribute via the prelude path so a glob-imported
             // `gpui::test` proc macro cannot recursively capture this expansion.
@@ -295,6 +171,147 @@ fn generate_test_function(
     outer_fn.attrs.extend(inner_fn_attributes);
 
     Ok(TokenStream::from(quote!(#outer_fn)))
+}
+
+struct TestArguments {
+    cx_vars: proc_macro2::TokenStream,
+    cx_teardowns: proc_macro2::TokenStream,
+    inner_fn_args: proc_macro2::TokenStream,
+}
+
+enum TestParameter {
+    Rng,
+    BackgroundExecutor,
+    App,
+    TestAppContext,
+}
+
+fn test_parameter(arg: &FnArg) -> Option<TestParameter> {
+    let FnArg::Typed(arg) = arg else { return None };
+    match &*arg.ty {
+        Type::Path(ty) => match ty.path.segments.last()?.ident.to_string().as_str() {
+            "StdRng" => Some(TestParameter::Rng),
+            "BackgroundExecutor" => Some(TestParameter::BackgroundExecutor),
+            _ => None,
+        },
+        Type::Reference(ty) => {
+            let Type::Path(ty) = &*ty.elem else {
+                return None;
+            };
+            match ty.path.segments.last()?.ident.to_string().as_str() {
+                "App" => Some(TestParameter::App),
+                "TestAppContext" => Some(TestParameter::TestAppContext),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn generate_test_arguments(
+    inner_fn: &ItemFn,
+    outer_fn_name: &Ident,
+    gpui: &proc_macro2::TokenStream,
+    is_async: bool,
+) -> Result<TestArguments, TokenStream> {
+    let mut result = TestArguments {
+        cx_vars: proc_macro2::TokenStream::new(),
+        cx_teardowns: proc_macro2::TokenStream::new(),
+        inner_fn_args: proc_macro2::TokenStream::new(),
+    };
+    for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
+        match test_parameter(arg) {
+            Some(TestParameter::Rng) => {
+                result
+                    .inner_fn_args
+                    .extend(quote!(#gpui::private::rand::SeedableRng::seed_from_u64(_seed),));
+            }
+            Some(TestParameter::BackgroundExecutor) if is_async => {
+                result
+                    .inner_fn_args
+                    .extend(quote!(#gpui::BackgroundExecutor::new(
+                    std::sync::Arc::new(dispatcher.clone()),
+                ),));
+            }
+            Some(TestParameter::App) if !is_async => {
+                let cx_varname = format_ident!("cx_{}", ix);
+                let cx_varname_lock = format_ident!("cx_{}_lock", ix);
+                result.cx_vars.extend(test_context_initialization(
+                    gpui,
+                    &cx_varname,
+                    outer_fn_name,
+                    is_async,
+                ));
+                result.cx_vars.extend(quote!(
+                    let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
+                ));
+                result.inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
+                result
+                    .cx_teardowns
+                    .extend(test_context_teardown(&cx_varname, Some(&cx_varname_lock)));
+            }
+            Some(TestParameter::TestAppContext) => {
+                let cx_varname = format_ident!("cx_{}", ix);
+                result.cx_vars.extend(test_context_initialization(
+                    gpui,
+                    &cx_varname,
+                    outer_fn_name,
+                    is_async,
+                ));
+                result
+                    .cx_teardowns
+                    .extend(test_context_teardown(&cx_varname, None));
+                result.inner_fn_args.extend(quote!(&mut #cx_varname,));
+            }
+            _ => return Err(error_with_message("invalid function signature", arg)),
+        }
+    }
+    Ok(result)
+}
+
+fn test_context_initialization(
+    gpui: &proc_macro2::TokenStream,
+    cx_varname: &Ident,
+    outer_fn_name: &Ident,
+    is_async: bool,
+) -> proc_macro2::TokenStream {
+    // Preserve the distinct call syntax in the synchronous and asynchronous expansions.
+    if is_async {
+        quote!(
+            let mut #cx_varname = #gpui::TestAppContext::build(
+                dispatcher.clone(),
+                Some(stringify!(#outer_fn_name)),
+            );
+        )
+    } else {
+        quote!(
+            let mut #cx_varname = #gpui::TestAppContext::build(
+                dispatcher.clone(),
+                Some(stringify!(#outer_fn_name))
+            );
+        )
+    }
+}
+
+fn test_context_teardown(
+    cx_varname: &Ident,
+    cx_varname_lock: Option<&Ident>,
+) -> proc_macro2::TokenStream {
+    if let Some(cx_varname_lock) = cx_varname_lock {
+        quote!(
+            drop(#cx_varname_lock);
+            dispatcher.run_until_parked();
+            #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
+            dispatcher.run_until_parked();
+        )
+    } else {
+        quote!(
+            dispatcher.run_until_parked();
+            #cx_varname.executor().forbid_parking();
+            #cx_varname.quit();
+            dispatcher.run_until_parked();
+        )
+    }
 }
 
 fn parse_usize_from_expr(expr: &Expr) -> Result<usize, syn::Error> {
