@@ -175,6 +175,7 @@ version = "1.0.6"
 
 [dependencies.smol_str]
 version = "0.3"
+features = ["serde"]
 
 [dependencies.stacksafe]
 version = "1.0"

@@ -179,8 +179,7 @@ impl<'de> Deserialize<'de> for SharedString {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        Ok(SharedString::from(s))
+        SmolStr::deserialize(deserializer).map(SharedString)
     }
 }
 
@@ -229,6 +228,21 @@ mod tests {
         assert_eq!(static_text, static_clone);
         assert_eq!(hash_of(&static_text), hash_of(&static_clone));
         assert_eq!(static_text, "static label longer than the inline capacity");
+    }
+
+    #[test]
+    fn deserializes_through_smolstr_and_roundtrips() {
+        let short: SharedString = serde_json::from_str("\"hi\"").unwrap();
+        assert_eq!(short.as_str(), "hi");
+
+        let escaped: SharedString = serde_json::from_str("\"a\\nb\"").unwrap();
+        assert_eq!(escaped.as_str(), "a\nb");
+
+        let long_text = "this string is longer than smolstr inline capacity";
+        let encoded = serde_json::to_string(&SharedString::from(long_text)).unwrap();
+        let long: SharedString = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(long.as_str(), long_text);
+        assert_eq!(serde_json::to_string(&long).unwrap(), encoded);
     }
 
     fn hash_of(value: &impl Hash) -> u64 {
