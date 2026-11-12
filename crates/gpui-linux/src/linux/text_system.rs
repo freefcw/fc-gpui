@@ -755,7 +755,10 @@ impl CosmicTextSystemState {
 
             let shaped_glyph = ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
-                position: point(glyph.x.into(), glyph.y.into()),
+                position: point(
+                    (glyph.x + glyph.x_offset * f32::from(font_size)).into(),
+                    (glyph.y - glyph.y_offset * f32::from(font_size)).into(),
+                ),
                 index: glyph.start,
                 is_emoji,
             };
@@ -1202,6 +1205,42 @@ mod tests {
                 assert!(text.is_char_boundary(glyph.index));
             }
         }
+    }
+
+    /// `v` + U+0304 has no precomposed glyph in IBM Plex Sans, so the shaper
+    /// emits a separate mark. Its GPOS offset must land between the base and
+    /// the following glyph, not at the pen after the base.
+    #[test]
+    fn combining_marks_are_positioned_over_their_base() -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts();
+        text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX_SANS)])?;
+        let font_id = text_system.font_id(&font("IBM Plex Sans"))?;
+        let text = "v\u{0304}v";
+        let layout = text_system.layout_line(
+            text,
+            px(14.0),
+            &[FontRun {
+                len: text.len(),
+                font_id,
+            }],
+        );
+        let glyphs = layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(glyphs.len(), 3);
+        let base = glyphs[0].position;
+        let mark = glyphs[1].position;
+        let next = glyphs[2].position;
+        assert!(mark.x > base.x);
+        assert!(
+            mark.x < next.x,
+            "combining mark positioned after its base: mark.x={:?}, next.x={:?}",
+            mark.x,
+            next.x
+        );
+        Ok(())
     }
 
     /// cosmic-text sums word widths to get a line's width but accumulates glyph
