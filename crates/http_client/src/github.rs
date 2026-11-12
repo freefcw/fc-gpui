@@ -2,7 +2,7 @@ use crate::{AsyncBody, HttpClient, HttpRequestExt};
 use anyhow::{Context as _, Result, anyhow, bail};
 use futures::AsyncReadExt;
 use http::Request;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{sync::Arc, time::Duration};
 use url::Url;
 
@@ -28,7 +28,23 @@ pub struct GithubRelease {
 pub struct GithubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
+    #[serde(default, deserialize_with = "deserialize_sha256_digest")]
     pub digest: Option<String>,
+}
+
+fn deserialize_sha256_digest<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    const PREFIX: &str = "sha256:";
+
+    let mut digest = Option::<String>::deserialize(deserializer)?;
+    if let Some(digest) = digest.as_mut()
+        && digest.starts_with(PREFIX)
+    {
+        digest.replace_range(..PREFIX.len(), "");
+    }
+    Ok(digest)
 }
 
 pub async fn latest_github_release(
@@ -53,7 +69,7 @@ pub async fn latest_github_release(
         }
     };
 
-    let mut release = releases
+    releases
         .into_iter()
         .filter(|release| !require_assets || !release.assets.is_empty())
         .find(|release| release.pre_release == pre_release)
@@ -61,15 +77,7 @@ pub async fn latest_github_release(
             "finding a prerelease"
         } else {
             "finding a stable release"
-        })?;
-    release.assets.iter_mut().for_each(|asset| {
-        if let Some(digest) = &mut asset.digest
-            && let Some(stripped) = digest.strip_prefix("sha256:")
-        {
-            *digest = stripped.to_owned();
-        }
-    });
-    Ok(release)
+        })
 }
 
 pub async fn get_release_by_tag_name(
@@ -159,8 +167,34 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
 mod tests {
     use crate::{
         RequestTimeout,
-        github::{AssetKind, GITHUB_RELEASE_REQUEST_TIMEOUT, build_asset_url, github_api_request},
+        github::{
+            AssetKind, GITHUB_RELEASE_REQUEST_TIMEOUT, GithubReleaseAsset, build_asset_url,
+            github_api_request,
+        },
     };
+
+    #[test]
+    fn test_asset_digest_deserialization() {
+        let parse = |json: &str| {
+            serde_json::from_str::<GithubReleaseAsset>(json)
+                .unwrap()
+                .digest
+        };
+
+        assert_eq!(
+            parse(r#"{"name":"a","browser_download_url":"u","digest":"sha256:abc"}"#),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            parse(r#"{"name":"a","browser_download_url":"u","digest":"abc"}"#),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            parse(r#"{"name":"a","browser_download_url":"u","digest":null}"#),
+            None
+        );
+        assert_eq!(parse(r#"{"name":"a","browser_download_url":"u"}"#), None);
+    }
 
     #[test]
     fn github_api_requests_have_a_total_deadline() {
