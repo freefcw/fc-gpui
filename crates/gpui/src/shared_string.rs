@@ -10,8 +10,21 @@ use std::{
 
 /// A shared string is an immutable string that can be cheaply cloned in GPUI
 /// tasks. Uses SmolStr for efficient storage with inline optimization for small strings.
-#[derive(Eq, PartialEq, PartialOrd, Ord, Hash, Clone, Default)]
+#[derive(Eq, PartialOrd, Ord, Clone, Default)]
 pub struct SharedString(SmolStr);
+
+impl PartialEq for SharedString {
+    fn eq(&self, other: &Self) -> bool {
+        let (this, other_str) = (self.as_str(), other.as_str());
+        (this.as_ptr() == other_str.as_ptr() && this.len() == other_str.len()) || self.0 == other.0
+    }
+}
+
+impl std::hash::Hash for SharedString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 impl SharedString {
     /// Creates a static [`SharedString`] from a `&'static str`.
@@ -174,6 +187,8 @@ impl<'de> Deserialize<'de> for SharedString {
 #[cfg(test)]
 mod tests {
     use super::SharedString;
+    use std::collections::HashSet;
+    use std::hash::{Hash, Hasher};
 
     #[test]
     fn from_char_builds_a_one_character_string() {
@@ -181,5 +196,44 @@ mod tests {
         assert_eq!(SharedString::from('字').as_str(), "字");
         let emoji: SharedString = '😀'.into();
         assert_eq!(emoji.as_str(), "😀");
+    }
+
+    #[test]
+    fn pointer_equal_clones_match_and_hash_like_distinct_copies() {
+        let long = SharedString::from("a shared string longer than the inline capacity");
+        let clone = long.clone();
+        assert_eq!(long.as_str().as_ptr(), clone.as_str().as_ptr());
+        assert_eq!(long, clone);
+
+        let same_bytes = SharedString::from(long.as_str().to_string());
+        assert_ne!(long.as_str().as_ptr(), same_bytes.as_str().as_ptr());
+        assert_eq!(long, same_bytes);
+        assert_eq!(long, same_bytes.as_str());
+        assert_eq!(long, same_bytes.to_string());
+        assert_eq!(same_bytes.to_string(), long);
+
+        assert_eq!(hash_of(&long), hash_of(&clone));
+        assert_eq!(hash_of(&long), hash_of(&same_bytes));
+
+        let mut set = HashSet::new();
+        set.insert(long);
+        assert!(set.contains(&clone));
+        assert!(set.contains(&same_bytes));
+
+        let static_text = SharedString::new_static("static label longer than the inline capacity");
+        let static_clone = static_text.clone();
+        assert_eq!(
+            static_text.as_str().as_ptr(),
+            static_clone.as_str().as_ptr()
+        );
+        assert_eq!(static_text, static_clone);
+        assert_eq!(hash_of(&static_text), hash_of(&static_clone));
+        assert_eq!(static_text, "static label longer than the inline capacity");
+    }
+
+    fn hash_of(value: &impl Hash) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
     }
 }
