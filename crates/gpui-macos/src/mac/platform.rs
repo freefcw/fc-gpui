@@ -1,7 +1,8 @@
 use super::tray::MacTray;
 use super::{
-    MacKeyboardLayout, MacKeyboardMapper, events::key_to_native, global_hotkey::NativeHotkeyMapper,
-    global_point_to_native_screen_point, main_thread_marker, renderer,
+    MacKeyboardLayout, MacKeyboardMapper, events::key_to_menu_equivalent,
+    global_hotkey::NativeHotkeyMapper, global_point_to_native_screen_point, main_thread_marker,
+    renderer,
 };
 use crate::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString,
@@ -904,8 +905,9 @@ impl MacPlatform {
                                 }
                             }
 
-                            let key_equivalent =
-                                Objc2NSString::from_str(key_to_native(keystroke.key()).as_ref());
+                            let key_equivalent = Objc2NSString::from_str(
+                                key_to_menu_equivalent(keystroke.key()).as_ref(),
+                            );
                             item = Objc2NSMenuItem::initWithTitle_action_keyEquivalent(
                                 Objc2NSMenuItem::alloc(main_thread_marker()),
                                 &title,

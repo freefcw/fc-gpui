@@ -78,6 +78,24 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
     Cow::Owned(String::from_utf16(&[code as u16]).unwrap())
 }
 
+// AppKit menu key equivalents are not the characters NSEvent yields for the
+// same physical keys. Backspace is 0x08 and forward-delete is 0x7f; NSEvent
+// reports backspace as 0x7f and forward-delete as NSDeleteFunctionKey.
+// `key_to_native` stays on the NSEvent mapping so event decoding is unchanged.
+//
+// https://developer.apple.com/documentation/appkit/nsmenuitem/keyequivalent#Discussion
+const BACKSPACE_KEY_EQUIVALENT: u32 = 0x08;
+const DELETE_KEY_EQUIVALENT: u32 = 0x7f;
+
+pub(crate) fn key_to_menu_equivalent(key: &str) -> Cow<'_, str> {
+    let code = match key {
+        "backspace" => BACKSPACE_KEY_EQUIVALENT,
+        "delete" => DELETE_KEY_EQUIVALENT,
+        _ => return key_to_native(key),
+    };
+    Cow::Owned(String::from_utf16(&[code as u16]).unwrap())
+}
+
 unsafe fn as_event<'a>(native_event: *mut AnyObject) -> &'a NSEvent {
     unsafe { &*native_event.cast::<NSEvent>() }
 }
@@ -553,4 +571,42 @@ pub(super) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String 
         CFRelease(keyboard.cast());
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BACKSPACE_KEY, DELETE_KEY_EQUIVALENT, key_to_menu_equivalent, key_to_native,
+        special_key_name,
+    };
+
+    #[test]
+    fn menu_key_equivalents_differ_from_event_characters() {
+        assert_eq!(key_to_menu_equivalent("backspace").as_ref(), "\u{8}");
+        assert_eq!(key_to_menu_equivalent("delete").as_ref(), "\u{7f}");
+        assert_eq!(DELETE_KEY_EQUIVALENT, 0x7f);
+
+        // NSEvent reports backspace as 0x7f. Decoding stays on that mapping.
+        assert_eq!(key_to_native("backspace").as_ref(), "\u{7f}");
+        assert_eq!(special_key_name(Some(BACKSPACE_KEY)), Some("backspace"));
+        assert_eq!(special_key_name(Some(0x08)), None);
+
+        assert_ne!(
+            key_to_menu_equivalent("delete").as_ref(),
+            key_to_native("delete").as_ref()
+        );
+        let delete_event = key_to_native("delete");
+        let delete_code = delete_event.encode_utf16().next().unwrap() as u32;
+        assert_eq!(special_key_name(Some(delete_code)), Some("delete"));
+
+        assert_eq!(
+            key_to_menu_equivalent("escape").as_ref(),
+            key_to_native("escape").as_ref()
+        );
+        assert_eq!(
+            key_to_menu_equivalent("up").as_ref(),
+            key_to_native("up").as_ref()
+        );
+        assert_eq!(key_to_menu_equivalent("a").as_ref(), "a");
+    }
 }
