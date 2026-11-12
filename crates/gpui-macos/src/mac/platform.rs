@@ -589,7 +589,8 @@ pub(crate) struct MacPlatformState {
     renderer_context: renderer::Context,
     atlas_initial_size: Size<DevicePixels>,
     headless: bool,
-    pasteboard: Retained<Objc2NSPasteboard>,
+    // None when +[NSPasteboard generalPasteboard] returns nil.
+    pasteboard: Option<Retained<Objc2NSPasteboard>>,
     text_hash_pasteboard_type: Retained<Objc2NSString>,
     metadata_pasteboard_type: Retained<Objc2NSString>,
     reopen: Option<Box<dyn FnMut()>>,
@@ -676,8 +677,11 @@ impl MacPlatform {
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
         let global_hotkey_mapper = NativeHotkeyMapper::new();
-        #[allow(unused_unsafe)]
-        let pasteboard = unsafe { Objc2NSPasteboard::generalPasteboard() };
+        // The generated binding marks generalPasteboard as nonnull, but AppKit
+        // returns nil when the pasteboard server is unavailable (for example an
+        // SSH session). Read it as optional so startup does not abort.
+        let pasteboard: Option<Retained<Objc2NSPasteboard>> =
+            unsafe { objc2::msg_send![Objc2NSPasteboard::class(), generalPasteboard] };
 
         let state = Mutex::new(MacPlatformState {
             headless,
@@ -1601,7 +1605,9 @@ impl Platform for MacPlatform {
                     None => {
                         // Writing an empty list of entries just clears the clipboard.
                         let state = self.0.lock();
-                        state.pasteboard.clearContents();
+                        if let Some(pasteboard) = state.pasteboard.as_deref() {
+                            pasteboard.clearContents();
+                        }
                     }
                 }
             } else {
@@ -1628,7 +1634,10 @@ impl Platform for MacPlatform {
                 };
 
                 let state = self.0.lock();
-                state.pasteboard.clearContents();
+                let Some(pasteboard) = state.pasteboard.as_deref() else {
+                    return;
+                };
+                pasteboard.clearContents();
 
                 // Only set rich text clipboard types if we actually have 1+ images to include.
                 if any_images {
@@ -1639,32 +1648,29 @@ impl Platform for MacPlatform {
                         .as_super()
                         .RTFDFromRange_documentAttributes(range, &attrs)
                     {
-                        state
-                            .pasteboard
-                            .setData_forType(Some(&rtfd_data), Objc2NSPasteboardTypeRTFD);
+                        pasteboard.setData_forType(Some(&rtfd_data), Objc2NSPasteboardTypeRTFD);
                     }
 
                     if let Some(rtf_data) = attributed_string
                         .as_super()
                         .RTFFromRange_documentAttributes(range, &attrs)
                     {
-                        state
-                            .pasteboard
-                            .setData_forType(Some(&rtf_data), Objc2NSPasteboardTypeRTF);
+                        pasteboard.setData_forType(Some(&rtf_data), Objc2NSPasteboardTypeRTF);
                     }
                 }
 
                 let plain_text = attributed_string.string();
-                state
-                    .pasteboard
-                    .setString_forType(&plain_text, Objc2NSPasteboardTypeString);
+                pasteboard.setString_forType(&plain_text, Objc2NSPasteboardTypeString);
             }
         }
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
-        let pasteboard = &state.pasteboard;
+        // Clone so metadata lookups can borrow the other pasteboard types
+        // while this handle is still in use. A nil general pasteboard reads
+        // as an empty clipboard.
+        let pasteboard = state.pasteboard.clone()?;
 
         // First, see if it's a string.
         unsafe {
@@ -1673,7 +1679,12 @@ impl Platform for MacPlatform {
             {
                 let data = pasteboard.dataForType(Objc2NSPasteboardTypeString)?;
                 let bytes = data.to_vec();
-                return Some(self.read_string_from_clipboard(&state, &bytes));
+                return Some(self.read_string_from_clipboard(
+                    &pasteboard,
+                    &state.text_hash_pasteboard_type,
+                    &state.metadata_pasteboard_type,
+                    &bytes,
+                ));
             }
 
             // If it wasn't a string, try the various supported image types.
@@ -2172,18 +2183,20 @@ impl Platform for MacPlatform {
 impl MacPlatform {
     unsafe fn read_string_from_clipboard(
         &self,
-        state: &MacPlatformState,
+        pasteboard: &Objc2NSPasteboard,
+        text_hash_pasteboard_type: &NSPasteboardType,
+        metadata_pasteboard_type: &NSPasteboardType,
         text_bytes: &[u8],
     ) -> ClipboardItem {
         unsafe {
             let text = String::from_utf8_lossy(text_bytes).to_string();
             let metadata = self
-                .read_from_pasteboard(&state.pasteboard, &state.text_hash_pasteboard_type)
+                .read_from_pasteboard(pasteboard, text_hash_pasteboard_type)
                 .and_then(|hash_bytes| {
                     let hash_bytes = hash_bytes.try_into().ok()?;
                     let hash = u64::from_be_bytes(hash_bytes);
-                    let metadata = self
-                        .read_from_pasteboard(&state.pasteboard, &state.metadata_pasteboard_type)?;
+                    let metadata =
+                        self.read_from_pasteboard(pasteboard, metadata_pasteboard_type)?;
 
                     if hash == ClipboardString::text_hash(&text) {
                         String::from_utf8(metadata).ok()
@@ -2203,24 +2216,21 @@ impl MacPlatform {
     unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
         unsafe {
             let state = self.0.lock();
-            state.pasteboard.clearContents();
+            let Some(pasteboard) = state.pasteboard.as_deref() else {
+                return;
+            };
+            pasteboard.clearContents();
 
             let text_bytes = Objc2NSData::with_bytes(string.text().as_bytes());
-            state
-                .pasteboard
-                .setData_forType(Some(&text_bytes), Objc2NSPasteboardTypeString);
+            pasteboard.setData_forType(Some(&text_bytes), Objc2NSPasteboardTypeString);
 
             if let Some(metadata) = string.metadata() {
                 let hash_bytes = ClipboardString::text_hash(string.text()).to_be_bytes();
                 let hash_bytes = Objc2NSData::with_bytes(&hash_bytes);
-                state
-                    .pasteboard
-                    .setData_forType(Some(&hash_bytes), &state.text_hash_pasteboard_type);
+                pasteboard.setData_forType(Some(&hash_bytes), &state.text_hash_pasteboard_type);
 
                 let metadata_bytes = Objc2NSData::with_bytes(metadata.as_bytes());
-                state
-                    .pasteboard
-                    .setData_forType(Some(&metadata_bytes), &state.metadata_pasteboard_type);
+                pasteboard.setData_forType(Some(&metadata_bytes), &state.metadata_pasteboard_type);
             }
         }
     }
@@ -2228,16 +2238,17 @@ impl MacPlatform {
     #[allow(unused_unsafe)]
     unsafe fn write_image_to_clipboard(&self, image: &Image) {
         let state = self.0.lock();
+        let Some(pasteboard) = state.pasteboard.as_deref() else {
+            return;
+        };
         unsafe {
-            state.pasteboard.clearContents();
+            pasteboard.clearContents();
         }
 
         let bytes = Objc2NSData::with_bytes(&image.bytes);
 
         unsafe {
-            state
-                .pasteboard
-                .setData_forType(Some(&bytes), Into::<UTType>::into(image.format).inner());
+            pasteboard.setData_forType(Some(&bytes), Into::<UTType>::into(image.format).inner());
         }
     }
 }
@@ -2809,6 +2820,8 @@ mod tests {
                 .0
                 .lock()
                 .pasteboard
+                .as_deref()
+                .expect("unique pasteboard")
                 .setData_forType(Some(&bytes), Objc2NSPasteboardTypeString);
         }
         assert_eq!(
@@ -2830,7 +2843,27 @@ mod tests {
             unsafe { MainThreadMarker::new_unchecked() }
         });
         let platform = MacPlatform::new_with_marker(false, marker);
-        platform.0.lock().pasteboard = Objc2NSPasteboard::pasteboardWithUniqueName();
+        platform.0.lock().pasteboard = Some(Objc2NSPasteboard::pasteboardWithUniqueName());
         platform
+    }
+
+    #[test]
+    fn clipboard_is_noop_when_pasteboard_is_nil() {
+        let platform = build_platform();
+        platform.0.lock().pasteboard = None;
+
+        assert_eq!(platform.read_from_clipboard(), None);
+
+        platform.write_to_clipboard(ClipboardItem::new_string("ignored".to_string()));
+        platform.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            "ignored".to_string(),
+            "meta".to_string(),
+        ));
+        platform.write_to_clipboard(ClipboardItem::new_image(&Image::new(
+            ImageFormat::Png,
+            vec![0, 1, 2],
+        )));
+
+        assert_eq!(platform.read_from_clipboard(), None);
     }
 }
