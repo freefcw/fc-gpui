@@ -394,8 +394,11 @@ impl TextLayout {
                     return size;
                 }
 
-                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let text = if let Some(truncate_width) = truncate_width {
+                    // Taking a wrapper from the pool locks it twice and moves its
+                    // character width cache around, so only do it when truncating.
+                    let mut line_wrapper =
+                        cx.text_system().line_wrapper(text_style.font(), font_size);
                     let unclipped_text_fits = wrap_width.is_none()
                         && window
                             .text_system()
