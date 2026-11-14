@@ -13,12 +13,12 @@ use crate::{
     PolychromeSprite, ProgressBarState, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeAnchor, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    ThermalState, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowState, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
-    size, transparent_black,
+    SharedString, Size, SpriteAnimation, SpriteAnimationId, StrikethroughStyle, Style,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowState, WindowTextSystem,
+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -530,6 +530,9 @@ struct FrameCallbackState {
     invalidator: WindowInvalidator,
     active: Rc<Cell<bool>>,
     needs_present: Rc<Cell<bool>>,
+    /// The rendered scene's [`Scene::animation_frame_interval`]. While it is
+    /// `Some`, the scene must keep being presented even when nothing is redrawn.
+    scene_animation_interval: Rc<Cell<Option<Duration>>>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     input_rate_tracker: Rc<RefCell<InputRateTracker>>,
 }
@@ -1212,6 +1215,9 @@ pub struct Window {
         SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// The rendered scene's [`Scene::animation_frame_interval`]. While it is
+    /// `Some`, the scene must keep being presented even when nothing is redrawn.
+    scene_animation_interval: Rc<Cell<Option<Duration>>>,
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "input-latency-histogram")]
     input_latency_tracker: InputLatencyTracker,
@@ -1532,6 +1538,7 @@ impl Window {
         let visibility = platform_window.visibility();
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
+        let scene_animation_interval = Rc::new(Cell::new(None::<Duration>));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
 
@@ -1564,6 +1571,7 @@ impl Window {
                 invalidator: invalidator.clone(),
                 active: active.clone(),
                 needs_present: needs_present.clone(),
+                scene_animation_interval: scene_animation_interval.clone(),
                 next_frame_callbacks: next_frame_callbacks.clone(),
                 input_rate_tracker: input_rate_tracker.clone(),
             },
@@ -1631,6 +1639,7 @@ impl Window {
             visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
+            scene_animation_interval,
             input_rate_tracker,
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
@@ -1810,6 +1819,7 @@ impl Window {
             invalidator,
             active,
             needs_present,
+            scene_animation_interval,
             next_frame_callbacks,
             input_rate_tracker,
         } = state;
@@ -1856,12 +1866,14 @@ impl Window {
             // underclocking, but subject to the same power limits as redraws.
             let high_rate_input = input_rate_tracker.borrow().is_high_rate();
             let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
-            let has_frame_demand = invalidator.is_dirty()
+            let has_demand_besides_animation = invalidator.is_dirty()
                 || force_render
                 || has_next_frame_callbacks
                 || request_frame_options.require_presentation
                 || needs_present.get()
                 || high_rate_input;
+            let has_frame_demand =
+                has_demand_besides_animation || scene_animation_interval.get().is_some();
 
             // Throttle frame rate based on conditions:
             // - Thermal pressure (Serious/Critical): cap to ~60fps
@@ -1881,6 +1893,11 @@ impl Window {
                 thermal_state,
                 power_mode,
             );
+            // A capped scene animation is the only demand: present no faster than it asks.
+            let animation_frame_interval = scene_animation_interval
+                .get()
+                .filter(|interval| !has_demand_besides_animation && !interval.is_zero());
+            let min_frame_interval = min_frame_interval.max(animation_frame_interval);
 
             let now = Instant::now();
             // Idle display-link ticks must neither consume a frame slot nor
@@ -1925,6 +1942,7 @@ impl Window {
             // including while an unfocused window receives pointer input.
             let needs_present = request_frame_options.require_presentation
                 || needs_present.get()
+                || scene_animation_interval.get().is_some()
                 || high_rate_input;
 
             if invalidator.is_dirty() || force_render {
@@ -1935,6 +1953,7 @@ impl Window {
                                 window.refresh();
                             }
                             let arena_clear_needed = window.draw(cx);
+                            window.advance_scene_animations(cx);
                             window.present();
                             // drop the arena elements after present to reduce latency
                             arena_clear_needed.clear();
@@ -1949,7 +1968,10 @@ impl Window {
                 })
             } else if needs_present {
                 handle
-                    .update(&mut cx, |_, window, _| window.present())
+                    .update(&mut cx, |_, window, cx| {
+                        window.advance_scene_animations(cx);
+                        window.present();
+                    })
                     .with_context(|| {
                         format!("presenting frame for window {:?}", handle.window_id())
                     })
@@ -1960,6 +1982,7 @@ impl Window {
                 .update(&mut cx, |_, window, _| {
                     if window.invalidator.is_dirty()
                         || !window.next_frame_callbacks.borrow().is_empty()
+                        || window.scene_animation_interval.get().is_some()
                     {
                         window.platform_window.schedule_frame();
                     }
@@ -2701,6 +2724,25 @@ impl Window {
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
+    pub(crate) fn advance_scene_animations(&mut self, cx: &App) {
+        let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+        self.rendered_frame.scene.advance_animations(elapsed);
+    }
+
+    /// Runs all callbacks scheduled via [`Self::on_next_frame`], returning how many ran.
+    ///
+    /// Tests have no platform frame loop, so this simulates the delivery of the
+    /// next frame.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_next_frame(&mut self, cx: &mut App) -> usize {
+        let callbacks = self.next_frame_callbacks.take();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(self, cx);
+        }
+        count
+    }
+
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
@@ -3126,6 +3168,8 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.scene_animation_interval
+            .set(self.rendered_frame.scene.animation_frame_interval());
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
@@ -4341,7 +4385,7 @@ impl Window {
             let content_mask = self.snapped_content_mask();
             self.next_frame.scene.insert_primitive(MonochromeSprite {
                 order: 0,
-                pad: 0,
+                animation: SpriteAnimationId::NONE,
                 bounds,
                 content_mask,
                 color: color.opacity(element_opacity),
@@ -4437,6 +4481,21 @@ impl Window {
         color: Hsla,
         cx: &App,
     ) -> Result<()> {
+        self.paint_animated_svg(bounds, path, data, transformation, None, color, cx)
+    }
+
+    /// Like [`Self::paint_svg`], with an `animation` the window applies before every
+    /// present, so the view isn't re-rendered to advance it.
+    pub(crate) fn paint_animated_svg(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        path: SharedString,
+        data: Option<&[u8]>,
+        transformation: TransformationMatrix,
+        animation: Option<SpriteAnimation>,
+        color: Hsla,
+        cx: &App,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
@@ -4476,15 +4535,22 @@ impl Window {
             .map_origin(|origin| ScaledPixels(round_half_toward_zero(origin.0)))
             .map_size(|size| size.ceil());
 
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
+        let sprite = MonochromeSprite {
             order: 0,
-            pad: 0,
+            animation: SpriteAnimationId::NONE,
             bounds: final_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
             transformation,
-        });
+        };
+        match animation {
+            Some(animation) => self
+                .next_frame
+                .scene
+                .insert_animated_sprite(sprite, animation),
+            None => self.next_frame.scene.insert_primitive(sprite),
+        }
 
         Ok(())
     }

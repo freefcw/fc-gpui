@@ -783,6 +783,8 @@ pub struct App {
     pub(crate) name: Option<&'static str>,
     quitting: bool,
     pub(crate) quit_mode: QuitMode,
+    /// Origin of the shared clock that phase-locks timed SVG transformations.
+    pub(crate) synced_animation_epoch: Instant,
 }
 
 impl App {
@@ -811,6 +813,7 @@ impl App {
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
         let power_mode = platform.power_mode();
+        let synced_animation_epoch = executor.now();
 
         let app = Rc::new_cyclic(|this| AppCell {
             borrow_origin: Cell::new(None),
@@ -869,6 +872,7 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
                 quit_mode: QuitMode::default(),
+                synced_animation_epoch,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
