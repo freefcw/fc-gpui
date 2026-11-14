@@ -70,13 +70,19 @@ impl Scene {
 
     /// Inserts a sprite that [`Self::advance_animations`] keeps moving. The
     /// sprite's color is taken as its color before the animation's alpha.
+    ///
+    /// A replayed animation already recorded that color. The sprite's current
+    /// color may include a later pose's alpha, so it must not replace the
+    /// original or each redraw fades the SVG again.
     pub(crate) fn insert_animated_sprite(
         &mut self,
         mut sprite: MonochromeSprite,
         mut animation: SpriteAnimation,
     ) {
         sprite.animation = SpriteAnimationId(self.animations.len() as u32);
-        animation.base_color = sprite.color;
+        if animation.sprite_index == usize::MAX {
+            animation.base_color = sprite.color;
+        }
         if self.try_insert_primitive(sprite.into()) {
             self.animations.push(animation);
         }
@@ -1212,22 +1218,68 @@ mod tests {
             })
             .expect("paint operation");
 
-        scene.advance_animations(Duration::from_millis(250));
-        let rotation = scene.monochrome_sprites[animated]
-            .transformation
-            .rotation_scale;
-        assert!(rotation[0][0].abs() < 1e-5);
-        assert!((rotation[0][1] + 1.).abs() < 1e-5);
-        assert!((rotation[1][0] - 1.).abs() < 1e-5);
-        assert!(rotation[1][1].abs() < 1e-5);
-
+        // Replay the unadvanced scene. Advancing only the copy fails if the
+        // animation was stored but not attached to the sprite.
         let mut replayed = Scene::default();
         replayed.replay(paint_index..paint_index + 1, &scene);
         assert_eq!(replayed.animations.len(), 1);
         replayed.finish();
+        assert!(
+            (replayed.monochrome_sprites[0].transformation.rotation_scale[0][0] - 1.).abs() < 1e-5
+        );
         replayed.advance_animations(Duration::from_millis(250));
         let replayed_rotation = replayed.monochrome_sprites[0].transformation.rotation_scale;
+        assert!(replayed_rotation[0][0].abs() < 1e-5);
+        assert!((replayed_rotation[0][1] + 1.).abs() < 1e-5);
         assert!((replayed_rotation[1][0] - 1.).abs() < 1e-5);
+        assert!(replayed_rotation[1][1].abs() < 1e-5);
+    }
+
+    #[test]
+    fn replay_does_not_fade_an_advanced_sprite_again() {
+        let bounds = bounds(
+            point(0.0.into(), 0.0.into()),
+            size(10.0.into(), 10.0.into()),
+        );
+        let mut scene = Scene::default();
+        scene.insert_animated_sprite(
+            MonochromeSprite {
+                order: 0,
+                animation: SpriteAnimationId::NONE,
+                tile: AtlasTile {
+                    texture_id: AtlasTextureId {
+                        kind: crate::AtlasTextureKind::Monochrome,
+                        index: 0,
+                    },
+                    tile_id: crate::TileId(0),
+                    padding: 0,
+                    bounds: Bounds::default(),
+                },
+                bounds,
+                content_mask: ContentMask { bounds },
+                color: Hsla {
+                    a: 1.,
+                    ..Hsla::default()
+                },
+                transformation: TransformationMatrix::default(),
+            },
+            SpriteAnimation::new(
+                crate::TimedTransformation::new(Duration::from_secs(1))
+                    .from(crate::Transformation::alpha(1.))
+                    .to(crate::Transformation::alpha(0.)),
+                point(px(0.), px(0.)),
+                1.,
+            ),
+        );
+        scene.finish();
+        scene.advance_animations(Duration::from_millis(500));
+        assert!((scene.monochrome_sprites[0].color.a - 0.5).abs() < 1e-5);
+
+        let mut replayed = Scene::default();
+        replayed.replay(0..scene.len(), &scene);
+        replayed.finish();
+        replayed.advance_animations(Duration::from_millis(500));
+        assert!((replayed.monochrome_sprites[0].color.a - 0.5).abs() < 1e-5);
     }
 
     #[test]
