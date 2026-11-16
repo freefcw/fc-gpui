@@ -11,8 +11,8 @@
 //!
 //! # Async Runtime
 //!
-//! This fork has an empty default feature set. Upstream ksni defaults to [Tokio],
-//! which cannot be enabled together with `async-io`. Pick one:
+//! This fork defaults to `async-io` and `blocking`. Upstream ksni defaults to [Tokio],
+//! which cannot be enabled together with `async-io`. Pick one runtime:
 //!
 //! ```toml
 //! [dependencies]

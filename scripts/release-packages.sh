@@ -18,6 +18,9 @@ RELEASE_PACKAGES=(
     fc-gpui-media
     fc-gpui-core
     fc-gpui-wgpu
+    # Patched ksni. Packaged in the same `cargo package` invocation as
+    # fc-gpui-linux so the path dependency does not have to exist on crates.io yet.
+    fc-ksni
     fc-gpui-linux
     fc-gpui-macos
     fc-gpui-windows

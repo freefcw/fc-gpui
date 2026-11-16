@@ -10,15 +10,14 @@ upstream <https://github.com/iovxw/ksni>). The license is the upstream
 manifest, so downstream users would resolve unpatched `ksni` and fail to
 compile the Ayatana label API. This package name is what gets published.
 
-The default feature set is empty. Upstream ksni defaults to `tokio`, which
-cannot be combined with `async-io`. Enable one runtime feature explicitly.
+The default features are `async-io` and `blocking`. Upstream ksni defaults to
+`tokio`, which cannot be combined with `async-io`. This crate is a workspace
+member, so every target builds it, and `zbus` needs one of those runtimes.
 
-Publish `fc-ksni` 0.3.7 before `fc-gpui-linux` 0.13.0. It is not a workspace
-member: its `tokio` and `async-io` features cannot be enabled together, and
-Cargo would unify the member's default `tokio` feature with `fc-gpui-linux`'s
-`async-io` feature. `scripts/verify-release-archives.sh` packages this crate
-beside the workspace crates and resolves it with `[patch.crates-io]` so the
-archive check does not need a copy on crates.io yet.
+Publish `fc-ksni` 0.3.7 before `fc-gpui-linux` 0.13.0. It is a workspace
+member so `cargo package` can include it in the same invocation as
+`fc-gpui-linux`. Until that publish, the archive check resolves the packaged
+copy with `[patch.crates-io]`.
 
 ## Delta vs ksni 0.3.7
 

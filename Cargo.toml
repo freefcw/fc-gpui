@@ -24,6 +24,10 @@ members = [
     "tests/downstream-gpui-alias",
     "tests/downstream-renamed-compat",
     "tests/downstream-underscore-alias",
+    # Publishable ksni fork. Lives in the workspace so `cargo package` can
+    # ship it with fc-gpui-linux. Default features are async-io, not tokio:
+    # those two zbus features cannot be enabled together.
+    "vendor/ksni",
 ]
 
 [workspace.package]
