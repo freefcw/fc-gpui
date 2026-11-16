@@ -45,8 +45,8 @@ use gpui::{
     NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
     PowerMode, PowerSaveBlockerKind, Result, SharedString, SystemPowerEvent, Task,
-    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
-    WindowParams, px,
+    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, TrayTitleSupport,
+    WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -225,6 +225,10 @@ pub trait LinuxClient {
     fn set_tray_icon_rendering_mode(&self, _rendering_mode: TrayIconRenderingMode) {}
     fn set_tray_menu(&self, _menu: Vec<TrayMenuItem>) {}
     fn set_tray_tooltip(&self, _tooltip: &str) {}
+    fn set_tray_title(&self, _title: Option<&str>) {}
+    fn tray_title_support(&self) -> TrayTitleSupport {
+        TrayTitleSupport::None
+    }
     fn set_tray_panel_mode(&self, _enabled: bool) {}
     fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
         Err(gpui::UnsupportedPlatformOperation {
@@ -979,6 +983,14 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn set_tray_tooltip(&self, tooltip: &str) {
         LinuxClient::set_tray_tooltip(&self.inner, tooltip);
+    }
+
+    fn set_tray_title(&self, title: Option<&str>) {
+        LinuxClient::set_tray_title(&self.inner, title);
+    }
+
+    fn tray_title_support(&self) -> TrayTitleSupport {
+        LinuxClient::tray_title_support(&self.inner)
     }
 
     fn set_tray_panel_mode(&self, enabled: bool) {

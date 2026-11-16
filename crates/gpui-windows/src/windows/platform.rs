@@ -823,6 +823,13 @@ impl Platform for WindowsPlatform {
         }
     }
 
+    fn set_tray_title(&self, _title: Option<&str>) {}
+
+    fn tray_title_support(&self) -> TrayTitleSupport {
+        // Notification icons have no text-beside-icon field. Leave szTip alone.
+        TrayTitleSupport::None
+    }
+
     fn on_tray_icon_event(&self, callback: Box<dyn FnMut(TrayIconEvent)>) {
         let mut state = self.inner.state.borrow_mut();
         state.callbacks.tray_icon_event = Some(callback);

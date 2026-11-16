@@ -472,6 +472,14 @@ pub trait Platform: 'static {
     fn set_tray_icon_rendering_mode(&self, _rendering_mode: TrayIconRenderingMode) {}
     fn set_tray_menu(&self, _menu: Vec<TrayMenuItem>) {}
     fn set_tray_tooltip(&self, _tooltip: &str) {}
+    /// Set the text drawn beside the tray icon.
+    ///
+    /// `None` and `Some("")` clear it. The icon and the tooltip are left as they are.
+    fn set_tray_title(&self, _title: Option<&str>) {}
+    /// Whether [`Self::set_tray_title`] can be shown on this platform.
+    fn tray_title_support(&self) -> TrayTitleSupport {
+        TrayTitleSupport::None
+    }
     fn set_tray_panel_mode(&self, _enabled: bool) {}
     fn get_tray_icon_anchor(&self) -> Option<TrayAnchor> {
         None
@@ -2251,6 +2259,31 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
+}
+
+/// Whether [`crate::App::set_tray_title`] is shown for this platform.
+///
+/// Update a title about once a second and keep its width stable. A title that
+/// changes width on every frame reflows the menu bar or panel around it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TrayTitleSupport {
+    /// The platform draws the title next to the tray icon.
+    ///
+    /// macOS shows it in the menu bar. Digits use a monospaced-digit system
+    /// font, and the color follows the menu bar appearance.
+    Native,
+    /// The title is published for the desktop host to display.
+    ///
+    /// Linux sends an Ayatana label (`XAyatanaLabel`, with an empty
+    /// `XAyatanaLabelGuide`). Some Status Notifier hosts show it and some
+    /// ignore it. A host may also hide the item until an icon is set, so a
+    /// title with no icon can be invisible.
+    HostDependent,
+    /// This platform cannot show a tray title.
+    ///
+    /// Windows notification icons are icon-only. The tooltip is unchanged.
+    None,
 }
 
 /// Controls how a system tray icon should be rendered.
