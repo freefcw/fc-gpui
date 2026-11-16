@@ -186,10 +186,10 @@ impl Keymap {
             if is_no_action(&*binding.action) && !is_user_binding(binding) {
                 continue;
             }
-            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+            let Some(pending) = binding.match_keystrokes(input) else {
                 continue;
             };
-            let Some(pending) = binding.match_keystrokes(input) else {
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
                 continue;
             };
 
