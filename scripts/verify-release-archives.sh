@@ -42,20 +42,6 @@ done
 echo "packaging ${#RELEASE_PACKAGES[@]} workspace release crates together"
 cargo package --locked --allow-dirty --no-verify "${package_args[@]}" >/dev/null
 
-# fc-ksni is the publishable ksni fork that fc-gpui-linux depends on. It is
-# not a workspace member: Cargo would unify its default tokio feature with
-# fc-gpui-linux's async-io feature, and those two features refuse to compile
-# together. Package it here so archive checks resolve it locally.
-echo "packaging fc-ksni"
-cargo package --locked --allow-dirty --no-verify \
-    --manifest-path "$REPO_ROOT/vendor/ksni/Cargo.toml" >/dev/null
-fc_ksni_version="$(awk '/^\[package\]/{p=1} p && /^version = /{gsub(/"/,"",$3); print $3; exit}' "$REPO_ROOT/vendor/ksni/Cargo.toml")"
-fc_ksni_archive="$REPO_ROOT/target/package/fc-ksni-${fc_ksni_version}.crate"
-if [[ ! -f "$fc_ksni_archive" ]]; then
-    echo "missing archive: $fc_ksni_archive" >&2
-    exit 1
-fi
-
 while IFS=$'\t' read -r package version _manifest_path; do
     archive="$REPO_ROOT/target/package/$package-$version.crate"
     if [[ ! -f "$archive" ]]; then
@@ -67,24 +53,12 @@ while IFS=$'\t' read -r package version _manifest_path; do
     tar -xzf "$archive" -C "$TMP_ROOT/unpacked"
 done < "$TMP_ROOT/packages.tsv"
 
-sha256=$(shasum -a 256 "$fc_ksni_archive" | awk '{print $1}')
-printf '%s  fc-ksni-%s.crate\n' "$sha256" "$fc_ksni_version" >> "$TMP_ROOT/checksums.txt"
-tar -xzf "$fc_ksni_archive" -C "$TMP_ROOT/unpacked"
-if [[ ! -f "$TMP_ROOT/unpacked/fc-ksni-${fc_ksni_version}/UNLICENSE" ]]; then
-    echo "fc-ksni archive is missing UNLICENSE" >&2
-    exit 1
-fi
-
 {
     echo '[patch.crates-io]'
     while IFS=$'\t' read -r package version _manifest_path; do
         printf '"%s" = { path = "%s/unpacked/%s-%s" }\n' \
             "$package" "$TMP_ROOT" "$package" "$version"
     done < "$TMP_ROOT/packages.tsv"
-    # Not on crates.io until the first publish. Downstream manifests depend
-    # on the version; this patch is only for the local archive check.
-    printf '"fc-ksni" = { path = "%s/unpacked/fc-ksni-%s" }\n' \
-        "$TMP_ROOT" "$fc_ksni_version"
 } > "$TMP_ROOT/.cargo/config.toml"
 
 while IFS=$'\t' read -r package version _manifest_path; do
@@ -97,7 +71,13 @@ while IFS=$'\t' read -r package version _manifest_path; do
         echo "packaged manifest still contains a path dependency: $package" >&2
         exit 1
     fi
-    if [[ ! -f "$crate_dir/LICENSE-APACHE" ]]; then
+    # fc-gpui crates are Apache-2.0. fc-ksni keeps upstream ksni's Unlicense.
+    if [[ "$package" == "fc-ksni" ]]; then
+        if [[ ! -f "$crate_dir/UNLICENSE" ]]; then
+            echo "fc-ksni archive is missing UNLICENSE" >&2
+            exit 1
+        fi
+    elif [[ ! -f "$crate_dir/LICENSE-APACHE" ]]; then
         echo "$package archive is missing LICENSE-APACHE" >&2
         exit 1
     fi

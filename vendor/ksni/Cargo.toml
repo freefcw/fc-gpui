@@ -41,11 +41,11 @@ level = "allow"
 priority = -1
 
 [features]
-# Empty default. Upstream ksni defaults to tokio, but fc-gpui-linux enables
-# only async-io, and this crate refuses to compile with both. Cargo clippy
-# lints path dependencies with their default features unified into the
-# workspace resolve, so a tokio default would turn both features on.
-default = []
+# async-io, not upstream's tokio. This crate is a workspace member, so every
+# target builds it. zbus does not compile unless tokio or async-io is on, and
+# it refuses to compile with both. fc-gpui-linux enables async-io; matching
+# that here keeps Windows and macOS builds working.
+default = ["async-io", "blocking"]
 blocking = []
 node = []
 tokio = ["dep:tokio", "zbus/tokio"]

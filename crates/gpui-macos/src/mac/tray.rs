@@ -130,20 +130,18 @@ impl MacTray {
     /// Both icon and title: image on the left. Title only: no image. Icon
     /// only: image with no title gap. Neither: an empty title.
     fn sync_title_layout(&self) {
-        unsafe {
-            let Some(button) = self.status_item.button(main_thread_marker()) else {
-                return;
-            };
-            let title = self.title.borrow();
-            let has_title = !title.is_empty();
-            button.setAttributedTitle(&status_item_attributed_title(&title));
-            let position = match (self.has_icon.get(), has_title) {
-                (true, true) => NSCellImagePosition::ImageLeft,
-                (true, false) => NSCellImagePosition::ImageOnly,
-                (false, _) => NSCellImagePosition::NoImage,
-            };
-            button.setImagePosition(position);
-        }
+        let Some(button) = self.status_item.button(main_thread_marker()) else {
+            return;
+        };
+        let title = self.title.borrow();
+        let has_title = !title.is_empty();
+        button.setAttributedTitle(&status_item_attributed_title(&title));
+        let position = match (self.has_icon.get(), has_title) {
+            (true, true) => NSCellImagePosition::ImageLeft,
+            (true, false) => NSCellImagePosition::ImageOnly,
+            (false, _) => NSCellImagePosition::NoImage,
+        };
+        button.setImagePosition(position);
     }
 
     #[allow(unused_unsafe)]
