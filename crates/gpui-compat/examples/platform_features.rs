@@ -33,13 +33,21 @@ fn main() {
         let status = cx.network_status();
         println!("Network: {:?}", status);
 
-        cx.on_network_status_change(|status, _app| {
-            println!("Network changed: {:?}", status);
-        });
+        if cx.supports_network_status_events() {
+            cx.on_network_status_change(|status, _app| {
+                println!("Network changed: {:?}", status);
+            });
+        } else {
+            println!("Network change monitoring is not supported on this platform");
+        }
 
-        cx.on_system_power_event(|event, _app| {
-            println!("Power event: {:?}", event);
-        });
+        if cx.supports_system_power_events() {
+            cx.on_system_power_event(|event, _app| {
+                println!("Power event: {:?}", event);
+            });
+        } else {
+            println!("System power events are not supported on this platform");
+        }
 
         if let Some(idle) = cx.system_idle_time() {
             println!("System idle: {:?}", idle);

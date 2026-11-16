@@ -1,10 +1,10 @@
-use crate::{DialogKind, DialogOptions};
+use crate::{DialogError, DialogKind, DialogOptions};
 use futures::channel::oneshot;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSAlertStyle};
 use objc2_foundation::NSString;
 
-pub fn show_dialog(options: DialogOptions) -> oneshot::Receiver<usize> {
+pub fn show_dialog(options: DialogOptions) -> oneshot::Receiver<Result<usize, DialogError>> {
     let (tx, rx) = oneshot::channel();
     unsafe {
         let alert = NSAlert::new(MainThreadMarker::new_unchecked());
@@ -37,7 +37,7 @@ pub fn show_dialog(options: DialogOptions) -> oneshot::Receiver<usize> {
 
         let response = alert.runModal();
         let index = (response - NSAlertFirstButtonReturn) as usize;
-        tx.send(index).ok();
+        tx.send(Ok(index)).ok();
     }
     rx
 }

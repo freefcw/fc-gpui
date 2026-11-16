@@ -40,12 +40,13 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::linux::LinuxDispatcher;
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, AttentionType, BackgroundExecutor, BiometricStatus,
-    ClipboardItem, CursorStyle, DevicePixels, DialogOptions, DisplayId, FocusedWindowInfo,
-    ForegroundExecutor, GpuResourceBudget, Keymap, Keystroke, MediaKeyEvent, Menu, MenuItem,
-    NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
-    PowerSaveBlockerKind, Result, SharedString, SystemPowerEvent, Task, TrayIconClickEvent,
-    TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance, WindowParams, px,
+    ClipboardItem, CursorStyle, DevicePixels, DialogError, DialogOptions, DisplayId,
+    FocusedWindowInfo, ForegroundExecutor, GpuResourceBudget, Keymap, Keystroke, MediaKeyEvent,
+    Menu, MenuItem, NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDesktop, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, PowerSaveBlockerKind, Result, SharedString,
+    SystemPowerEvent, Task, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem,
+    WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -93,15 +94,31 @@ pub(crate) type TrayMenuActionCallback = Box<dyn FnMut(SharedString)>;
 #[cfg_attr(not(any(feature = "wayland", feature = "x11")), allow(dead_code))]
 pub(crate) trait LinuxTrayEventTarget {
     fn convert_tray_click_event(&self, event: LinuxTrayClickEvent) -> TrayIconClickEvent;
-    fn take_tray_icon_event_callback(&mut self) -> Option<TrayIconEventCallback>;
-    fn restore_tray_icon_event_callback_if_empty(&mut self, callback: TrayIconEventCallback);
-    fn take_tray_icon_click_event_callback(&mut self) -> Option<TrayIconClickEventCallback>;
+    fn callbacks(&mut self) -> &mut PlatformHandlers;
+
+    fn take_tray_icon_event_callback(&mut self) -> Option<TrayIconEventCallback> {
+        self.callbacks().tray_icon_event.take()
+    }
+    fn restore_tray_icon_event_callback_if_empty(&mut self, callback: TrayIconEventCallback) {
+        self.callbacks().tray_icon_event.get_or_insert(callback);
+    }
+    fn take_tray_icon_click_event_callback(&mut self) -> Option<TrayIconClickEventCallback> {
+        self.callbacks().tray_icon_click_event.take()
+    }
     fn restore_tray_icon_click_event_callback_if_empty(
         &mut self,
         callback: TrayIconClickEventCallback,
-    );
-    fn take_tray_menu_action_callback(&mut self) -> Option<TrayMenuActionCallback>;
-    fn restore_tray_menu_action_callback_if_empty(&mut self, callback: TrayMenuActionCallback);
+    ) {
+        self.callbacks()
+            .tray_icon_click_event
+            .get_or_insert(callback);
+    }
+    fn take_tray_menu_action_callback(&mut self) -> Option<TrayMenuActionCallback> {
+        self.callbacks().tray_menu_action.take()
+    }
+    fn restore_tray_menu_action_callback_if_empty(&mut self, callback: TrayMenuActionCallback) {
+        self.callbacks().tray_menu_action.get_or_insert(callback);
+    }
 }
 
 #[cfg_attr(not(any(feature = "wayland", feature = "x11")), allow(dead_code))]
@@ -425,7 +442,13 @@ impl<P: LinuxClient> LinuxPlatform<P> {
     }
 }
 
+impl<P: LinuxClient + 'static> PlatformDesktop for LinuxPlatform<P> {}
+
 impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
+    fn desktop(&self) -> Option<&dyn PlatformDesktop> {
+        Some(self)
+    }
+
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         self.with_common(|common| common.gpu_resource_budget = gpu.clone());
     }
@@ -990,13 +1013,6 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         network_status_from_sysfs()
     }
 
-    fn on_network_status_change(&self, callback: Box<dyn FnMut(NetworkStatus)>) {
-        self.with_common(|common| common.callbacks.network_status_change = Some(callback));
-        log::warn!(
-            "Network change monitoring requires D-Bus integration — not yet implemented on Linux"
-        );
-    }
-
     #[cfg(not(any(feature = "wayland", feature = "x11")))]
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
         Task::ready(Err(anyhow!(
@@ -1053,13 +1069,6 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         LinuxClient::system_idle_time(&self.inner)
     }
 
-    fn on_system_power_event(&self, callback: Box<dyn FnMut(SystemPowerEvent)>) {
-        self.with_common(|common| common.callbacks.system_power = Some(callback));
-        log::warn!(
-            "System power events require D-Bus logind integration — not yet implemented on Linux"
-        );
-    }
-
     fn on_media_key_event(&self, callback: Box<dyn FnMut(MediaKeyEvent)>) {
         self.with_common(|common| common.callbacks.media_key = Some(callback));
     }
@@ -1084,7 +1093,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         log::warn!("Context menus not yet implemented on Linux");
     }
 
-    fn show_dialog(&self, options: DialogOptions) -> oneshot::Receiver<usize> {
+    fn show_dialog(
+        &self,
+        options: DialogOptions,
+    ) -> oneshot::Receiver<std::result::Result<usize, DialogError>> {
         let (tx, rx) = oneshot::channel();
         self.background_executor()
             .spawn(async move {
@@ -1646,7 +1658,7 @@ async fn await_idle_sleep_prevention(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Point, px};
+    use gpui::{Platform, Point, px};
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]
@@ -1663,6 +1675,21 @@ mod tests {
             error.to_string(),
             "libxkbcommon failed to create an XKB context"
         );
+    }
+
+    #[test]
+    fn unsupported_power_and_network_callbacks_are_not_retained() {
+        let platform = LinuxPlatform {
+            inner: super::super::headless::HeadlessClient::new(),
+        };
+        assert!(!Platform::supports_system_power_events(&platform));
+        assert!(!Platform::supports_network_status_events(&platform));
+        Platform::on_system_power_event(&platform, Box::new(|_| {}));
+        Platform::on_network_status_change(&platform, Box::new(|_| {}));
+        platform.with_common(|common| {
+            assert!(common.callbacks.system_power.is_none());
+            assert!(common.callbacks.network_status_change.is_none());
+        });
     }
 
     #[test]

@@ -582,10 +582,9 @@ impl rwh::HasWindowHandle for WindowsWindow {
     }
 }
 
-// todo(windows)
 impl rwh::HasDisplayHandle for WindowsWindow {
     fn display_handle(&self) -> std::result::Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        Err(rwh::HandleError::Unavailable)
     }
 }
 

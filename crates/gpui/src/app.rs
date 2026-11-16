@@ -34,16 +34,17 @@ use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext,
     AppResourceProfile, Asset, AssetSource, AttentionType, BackgroundExecutor, BiometricStatus,
-    Bounds, ClipboardItem, CrashReport, CursorStyle, DialogOptions, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, FocusedWindowInfo, ForegroundExecutor, Global, KeyBinding,
-    KeyContext, Keymap, Keystroke, LayoutId, MediaKeyEvent, Menu, MenuItem, MissingGlyph,
-    NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, PermissionRequestStatus, PermissionStatus,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
-    PowerSaveBlockerKind, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
-    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, Size,
-    SubscriberSet, Subscription, SvgRenderer, SystemPowerEvent, Task, TextSystem, ThermalState,
-    TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator, WindowPosition,
+    Bounds, ClipboardItem, CrashReport, CursorStyle, DialogError, DialogOptions, DispatchPhase,
+    DisplayId, EventEmitter, FocusHandle, FocusMap, FocusedWindowInfo, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, MediaKeyEvent, Menu, MenuItem,
+    MissingGlyph, NetworkStatus, OsInfo, OwnedMenu, PathPromptOptions, PermissionRequestStatus,
+    PermissionStatus, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, PowerSaveBlockerKind, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, Size, SubscriberSet, Subscription, SvgRenderer, SystemPowerEvent, Task,
+    TextSystem, ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
+    TrayMenuItem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    WindowPosition,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, point, px, size,
 };
@@ -1391,11 +1392,28 @@ impl App {
         self.platform.set_quit_mode(mode);
     }
 
+    /// Whether [`App::on_system_power_event`] will ever invoke its callback.
+    pub fn supports_system_power_events(&self) -> bool {
+        self.platform.supports_system_power_events()
+    }
+
+    /// Whether [`App::on_network_status_change`] will ever invoke its callback.
+    pub fn supports_network_status_events(&self) -> bool {
+        self.platform.supports_network_status_events()
+    }
+
     /// Register a callback for system power events (sleep, wake, shutdown).
+    ///
+    /// On platforms that do not support these events the callback is not stored.
+    /// Check [`App::supports_system_power_events`] before relying on it.
     pub fn on_system_power_event(
         &self,
         mut callback: impl FnMut(SystemPowerEvent, &mut App) + 'static,
     ) {
+        if !self.platform.supports_system_power_events() {
+            log::warn!("System power events are not supported on this platform");
+            return;
+        }
         let this = self.this.clone();
         self.platform.on_system_power_event(Box::new(move |event| {
             if let Some(app) = this.upgrade() {
@@ -1425,10 +1443,18 @@ impl App {
     }
 
     /// Register a callback for network connectivity status changes.
+    ///
+    /// On platforms that do not support change notifications the callback is
+    /// not stored. [`App::network_status`] can still report the current state.
+    /// Check [`App::supports_network_status_events`] before relying on updates.
     pub fn on_network_status_change(
         &self,
         mut callback: impl FnMut(NetworkStatus, &mut App) + 'static,
     ) {
+        if !self.platform.supports_network_status_events() {
+            log::warn!("Network change monitoring is not supported on this platform");
+            return;
+        }
         let this = self.this.clone();
         self.platform
             .on_network_status_change(Box::new(move |status| {
@@ -1482,8 +1508,15 @@ impl App {
         );
     }
 
-    /// Show a native dialog with the given options, returning the index of the clicked button.
-    pub fn show_dialog(&self, options: DialogOptions) -> oneshot::Receiver<usize> {
+    /// Show a native dialog with the given options.
+    ///
+    /// The receiver resolves to the clicked button index. [`DialogError`] means
+    /// the dialog was not shown. Closing a dialog without a button is reported
+    /// by the platform as a button index, not as this error.
+    pub fn show_dialog(
+        &self,
+        options: DialogOptions,
+    ) -> oneshot::Receiver<std::result::Result<usize, DialogError>> {
         self.platform.show_dialog(options)
     }
 
@@ -2529,49 +2562,51 @@ impl App {
 
     fn dispatch_global_action(&mut self, action: &dyn Action) {
         self.propagate_event = true;
+        self.dispatch_global_action_listeners(action, DispatchPhase::Capture);
+        if self.propagate_event {
+            self.dispatch_global_action_listeners(action, DispatchPhase::Bubble);
+        }
+    }
 
-        if let Some(mut global_listeners) = self
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
-        {
-            for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, self);
+    /// Dispatches global action listeners for one phase.
+    ///
+    /// Listeners are removed from the map before they run so a listener can
+    /// register another listener for the same action. New listeners are
+    /// appended after the current list finishes. Bubble-phase listeners stop
+    /// propagation unless they call [`App::propagate`].
+    pub(crate) fn dispatch_global_action_listeners(
+        &mut self,
+        action: &dyn Action,
+        phase: DispatchPhase,
+    ) {
+        let type_id = action.as_any().type_id();
+        let Some(mut listeners) = self.global_action_listeners.remove(&type_id) else {
+            return;
+        };
+
+        if phase == DispatchPhase::Capture {
+            for listener in &listeners {
+                listener(action.as_any(), phase, self);
                 if !self.propagate_event {
                     break;
                 }
             }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
-        }
-
-        if self.propagate_event
-            && let Some(mut global_listeners) = self
-                .global_action_listeners
-                .remove(&action.as_any().type_id())
-        {
-            for listener in global_listeners.iter().rev() {
-                listener(action.as_any(), DispatchPhase::Bubble, self);
+        } else {
+            for listener in listeners.iter().rev() {
+                self.propagate_event = false;
+                listener(action.as_any(), phase, self);
                 if !self.propagate_event {
                     break;
                 }
             }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            self.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
         }
+
+        listeners.extend(
+            self.global_action_listeners
+                .remove(&type_id)
+                .unwrap_or_default(),
+        );
+        self.global_action_listeners.insert(type_id, listeners);
     }
 
     /// Is there currently something being dragged?
@@ -3094,6 +3129,8 @@ mod test {
         sync::Arc,
     };
 
+    actions!(global_dispatch_test, [GlobalOnlyAction]);
+
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
 
@@ -3578,5 +3615,45 @@ mod test {
         let (path, restart_arguments) = restart.await.expect("restart was not requested");
         assert_eq!(path, Some(restart_path));
         assert_eq!(restart_arguments, arguments);
+    }
+
+    #[test]
+    fn global_action_without_a_window_stops_after_one_bubble_listener() {
+        let cx = TestAppContext::single();
+        let hits = Rc::new(RefCell::new(Vec::new()));
+        let first = hits.clone();
+        let second = hits.clone();
+
+        cx.update(|cx| {
+            assert!(!cx.supports_system_power_events());
+            assert!(!cx.supports_network_status_events());
+            cx.on_system_power_event(|_, _| panic!("power callback must not be stored"));
+            cx.on_network_status_change(|_, _| panic!("network callback must not be stored"));
+
+            cx.on_action::<GlobalOnlyAction>(move |_, _| first.borrow_mut().push("first"));
+            cx.on_action::<GlobalOnlyAction>(move |_, _| second.borrow_mut().push("second"));
+            cx.dispatch_action(&GlobalOnlyAction);
+        });
+
+        assert_eq!(hits.borrow().as_slice(), ["second"]);
+    }
+
+    #[test]
+    fn global_action_without_a_window_continues_when_propagated() {
+        let cx = TestAppContext::single();
+        let hits = Rc::new(RefCell::new(Vec::new()));
+        let first = hits.clone();
+        let second = hits.clone();
+
+        cx.update(|cx| {
+            cx.on_action::<GlobalOnlyAction>(move |_, _| first.borrow_mut().push("first"));
+            cx.on_action::<GlobalOnlyAction>(move |_, cx| {
+                second.borrow_mut().push("second");
+                cx.propagate();
+            });
+            cx.dispatch_action(&GlobalOnlyAction);
+        });
+
+        assert_eq!(hits.borrow().as_slice(), ["second", "first"]);
     }
 }

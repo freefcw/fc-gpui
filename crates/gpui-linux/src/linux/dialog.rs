@@ -1,16 +1,44 @@
-use gpui::{DialogKind, DialogOptions};
+use gpui::{DialogError, DialogKind, DialogOptions};
 
-pub fn show_dialog(options: &DialogOptions) -> usize {
-    if let Some(idx) = try_zenity(options) {
-        return idx;
-    }
-    if let Some(idx) = try_kdialog(options) {
-        return idx;
-    }
-    0
+enum ToolAttempt {
+    Missing,
+    Finished(usize),
 }
 
-fn try_zenity(options: &DialogOptions) -> Option<usize> {
+pub fn show_dialog(options: &DialogOptions) -> Result<usize, DialogError> {
+    dialog_result(try_zenity(options), try_kdialog(options))
+}
+
+fn dialog_result(zenity: ToolAttempt, kdialog: ToolAttempt) -> Result<usize, DialogError> {
+    match zenity {
+        ToolAttempt::Finished(index) => Ok(index),
+        ToolAttempt::Missing => match kdialog {
+            ToolAttempt::Finished(index) => Ok(index),
+            ToolAttempt::Missing => Err(DialogError::unavailable(
+                "no dialog program found; install zenity or kdialog",
+            )),
+        },
+    }
+}
+
+/// Maps a kdialog exit code to a button index.
+///
+/// `0`, `1`, and `2` are the yes, no, and cancel buttons when that many
+/// buttons exist. Any other code is the last button, which is the cancel
+/// button, rather than the first button.
+pub(crate) fn kdialog_exit_index(code: Option<i32>, button_count: usize) -> Option<usize> {
+    if button_count == 0 {
+        return None;
+    }
+    match code {
+        Some(0) => Some(0),
+        Some(1) if button_count >= 2 => Some(1),
+        Some(2) if button_count >= 3 => Some(2),
+        _ => Some(button_count - 1),
+    }
+}
+
+fn try_zenity(options: &DialogOptions) -> ToolAttempt {
     let message = build_message(options);
     let button_count = options.buttons.len();
 
@@ -20,11 +48,15 @@ fn try_zenity(options: &DialogOptions) -> Option<usize> {
             DialogKind::Warning => "--warning",
             DialogKind::Info => "--info",
         };
-        let _ = std::process::Command::new("zenity")
+        let ran = std::process::Command::new("zenity")
             .args([zenity_type, "--title", &options.title, "--text", &message])
             .output()
-            .ok()?;
-        return Some(0);
+            .is_ok();
+        return if ran {
+            ToolAttempt::Finished(0)
+        } else {
+            ToolAttempt::Missing
+        };
     }
 
     let mut cmd = std::process::Command::new("zenity");
@@ -37,10 +69,12 @@ fn try_zenity(options: &DialogOptions) -> Option<usize> {
         cmd.args(["--extra-button", button]);
     }
 
-    let output = cmd.output().ok()?;
+    let Ok(output) = cmd.output() else {
+        return ToolAttempt::Missing;
+    };
 
     if output.status.success() {
-        return Some(0);
+        return ToolAttempt::Finished(0);
     }
 
     if button_count > 2 {
@@ -48,15 +82,15 @@ fn try_zenity(options: &DialogOptions) -> Option<usize> {
         let stdout_trimmed = stdout.trim();
         for (idx, button) in options.buttons.iter().enumerate().skip(2) {
             if stdout_trimmed == button.as_ref() {
-                return Some(idx);
+                return ToolAttempt::Finished(idx);
             }
         }
     }
 
-    Some(1)
+    ToolAttempt::Finished(1)
 }
 
-fn try_kdialog(options: &DialogOptions) -> Option<usize> {
+fn try_kdialog(options: &DialogOptions) -> ToolAttempt {
     let message = build_message(options);
     let button_count = options.buttons.len();
 
@@ -66,11 +100,15 @@ fn try_kdialog(options: &DialogOptions) -> Option<usize> {
             DialogKind::Warning => "--sorry",
             DialogKind::Info => "--msgbox",
         };
-        let _ = std::process::Command::new("kdialog")
+        let ran = std::process::Command::new("kdialog")
             .args([kdialog_type, &message, "--title", &options.title])
             .output()
-            .ok()?;
-        return Some(0);
+            .is_ok();
+        return if ran {
+            ToolAttempt::Finished(0)
+        } else {
+            ToolAttempt::Missing
+        };
     }
 
     let mut args = vec!["--warningyesno".to_string(), message];
@@ -94,17 +132,13 @@ fn try_kdialog(options: &DialogOptions) -> Option<usize> {
         args.push(options.buttons[2].to_string());
     }
 
-    let output = std::process::Command::new("kdialog")
-        .args(&args)
-        .output()
-        .ok()?;
+    let Ok(output) = std::process::Command::new("kdialog").args(&args).output() else {
+        return ToolAttempt::Missing;
+    };
 
-    match output.status.code() {
-        Some(0) => Some(0),
-        Some(1) => Some(1),
-        Some(2) => Some(2),
-        _ => Some(0),
-    }
+    kdialog_exit_index(output.status.code(), button_count)
+        .map(ToolAttempt::Finished)
+        .unwrap_or(ToolAttempt::Missing)
 }
 
 fn build_message(options: &DialogOptions) -> String {
@@ -114,5 +148,35 @@ fn build_message(options: &DialogOptions) -> String {
         }
         Some(detail) => detail.to_string(),
         None => options.message.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ToolAttempt, dialog_result, kdialog_exit_index};
+    use gpui::DialogError;
+
+    #[test]
+    fn missing_dialog_programs_are_not_the_first_button() {
+        let error = dialog_result(ToolAttempt::Missing, ToolAttempt::Missing)
+            .expect_err("missing tools must fail");
+        assert!(error.message().contains("zenity"));
+        let _ = DialogError::unavailable("unused");
+    }
+
+    #[test]
+    fn zenity_result_wins_over_kdialog() {
+        let index = dialog_result(ToolAttempt::Finished(1), ToolAttempt::Finished(0)).unwrap();
+        assert_eq!(index, 1);
+    }
+
+    #[test]
+    fn unknown_kdialog_exit_is_the_cancel_button() {
+        assert_eq!(kdialog_exit_index(Some(0), 3), Some(0));
+        assert_eq!(kdialog_exit_index(Some(1), 3), Some(1));
+        assert_eq!(kdialog_exit_index(Some(2), 3), Some(2));
+        assert_eq!(kdialog_exit_index(Some(9), 3), Some(2));
+        assert_eq!(kdialog_exit_index(None, 2), Some(1));
+        assert_eq!(kdialog_exit_index(Some(4), 0), None);
     }
 }
