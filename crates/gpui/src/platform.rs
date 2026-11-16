@@ -474,11 +474,12 @@ pub trait Platform: 'static {
     fn set_tray_tooltip(&self, _tooltip: &str) {}
     /// Set the text drawn beside the tray icon.
     ///
-    /// `None` and `Some("")` clear it. The icon and the tooltip are left as they are.
+    /// [`crate::App::set_tray_title`] passes `None` for both a missing title and
+    /// an empty string. The icon and the tooltip are left as they are.
     fn set_tray_title(&self, _title: Option<&str>) {}
     /// Whether [`Self::set_tray_title`] can be shown on this platform.
     fn tray_title_support(&self) -> TrayTitleSupport {
-        TrayTitleSupport::None
+        TrayTitleSupport::Unsupported
     }
     fn set_tray_panel_mode(&self, _enabled: bool) {}
     fn get_tray_icon_anchor(&self) -> Option<TrayAnchor> {
@@ -2275,15 +2276,14 @@ pub enum TrayTitleSupport {
     Native,
     /// The title is published for the desktop host to display.
     ///
-    /// Linux sends an Ayatana label (`XAyatanaLabel`, with an empty
-    /// `XAyatanaLabelGuide`). Some Status Notifier hosts show it and some
-    /// ignore it. A host may also hide the item until an icon is set, so a
-    /// title with no icon can be invisible.
+    /// Whether a host draws it is up to that host. Linux does not use this
+    /// variant yet.
     HostDependent,
     /// This platform cannot show a tray title.
     ///
-    /// Windows notification icons are icon-only. The tooltip is unchanged.
-    None,
+    /// Windows notification icons are icon-only, and the tooltip is unchanged.
+    /// Linux stores a label but does not publish it with the current `ksni`.
+    Unsupported,
 }
 
 /// Controls how a system tray icon should be rendered.

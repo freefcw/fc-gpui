@@ -227,7 +227,10 @@ pub trait LinuxClient {
     fn set_tray_tooltip(&self, _tooltip: &str) {}
     fn set_tray_title(&self, _title: Option<&str>) {}
     fn tray_title_support(&self) -> TrayTitleSupport {
-        TrayTitleSupport::None
+        // TODO: switch to ksni 0.3.8 with features = ["ayatana"]
+        // (upstream iovxw/ksni master 14d6dcc / #42), implement
+        // Tray::x_ayatana_label / x_ayatana_label_guide, and return HostDependent.
+        TrayTitleSupport::Unsupported
     }
     fn set_tray_panel_mode(&self, _enabled: bool) {}
     fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {

@@ -1863,7 +1863,18 @@ impl Platform for MacPlatform {
 
     fn set_tray_title(&self, title: Option<&str>) {
         let mut state = self.0.lock();
-        Self::ensure_tray(&mut state).set_title(title.unwrap_or(""));
+        let next = title.unwrap_or("");
+        if state.tray.is_none() && next.is_empty() {
+            return;
+        }
+        if state
+            .tray
+            .as_ref()
+            .is_some_and(|tray| tray.title_matches(next))
+        {
+            return;
+        }
+        Self::ensure_tray(&mut state).set_title(next);
     }
 
     fn tray_title_support(&self) -> TrayTitleSupport {

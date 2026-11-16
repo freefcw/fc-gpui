@@ -401,6 +401,14 @@ impl TestAppContext {
         self.test_platform.tray_title_support()
     }
 
+    /// Sets the support value reported by [`Self::tray_title_support`].
+    ///
+    /// Use this to exercise an app's fallback when the platform cannot show a
+    /// tray title.
+    pub fn set_tray_title_support(&self, support: crate::TrayTitleSupport) {
+        self.test_platform.set_tray_title_support(support);
+    }
+
     /// Returns the latest tray icon rendering mode set through the platform.
     pub fn tray_icon_rendering_mode(&self) -> crate::TrayIconRenderingMode {
         self.test_platform.tray_icon_rendering_mode()
@@ -760,6 +768,11 @@ impl TestApp {
     /// Returns the test platform's tray title support.
     pub fn tray_title_support(&self) -> crate::TrayTitleSupport {
         self.cx.tray_title_support()
+    }
+
+    /// Sets the support value reported by [`Self::tray_title_support`].
+    pub fn set_tray_title_support(&self, support: crate::TrayTitleSupport) {
+        self.cx.set_tray_title_support(support);
     }
 
     /// Returns the latest tray icon rendering mode set through the test platform.

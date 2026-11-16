@@ -65,7 +65,7 @@ use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, TrayIconClickEvent, TrayTitleSupport, WindowParams, WindowVisibility, point, px,
+    TouchPhase, TrayIconClickEvent, WindowParams, WindowVisibility, point, px,
 };
 use gpui_wgpu::GpuContext;
 
@@ -2055,10 +2055,6 @@ impl LinuxClient for X11Client {
 
     fn set_tray_title(&self, title: Option<&str>) {
         self.0.borrow_mut().tray.set_title(title);
-    }
-
-    fn tray_title_support(&self) -> TrayTitleSupport {
-        TrayTitleSupport::HostDependent
     }
 
     fn set_tray_panel_mode(&self, enabled: bool) {

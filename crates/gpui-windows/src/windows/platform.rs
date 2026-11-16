@@ -827,7 +827,7 @@ impl Platform for WindowsPlatform {
 
     fn tray_title_support(&self) -> TrayTitleSupport {
         // Notification icons have no text-beside-icon field. Leave szTip alone.
-        TrayTitleSupport::None
+        TrayTitleSupport::Unsupported
     }
 
     fn on_tray_icon_event(&self, callback: Box<dyn FnMut(TrayIconEvent)>) {

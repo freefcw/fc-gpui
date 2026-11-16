@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **Tray titles.** `App::set_tray_title` and `App::tray_title_support`. macOS
+  draws the title in the menu bar with monospaced digits. `None` and an empty
+  string clear it. Linux stores the label and reports
+  `TrayTitleSupport::Unsupported` until `ksni` can publish an Ayatana label.
+  Windows reports `Unsupported` and does not change the tooltip. A tray item
+  that has only a menu, with no icon and no title, is empty; the old `"App"`
+  placeholder is gone.
+
 ### Fixed
 
 - Cached drawing preserves primitive identity after batch sorting and replays

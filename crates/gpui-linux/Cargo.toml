@@ -82,10 +82,7 @@ gpui_wgpu = { package = "fc-gpui-wgpu", path = "../gpui-wgpu", version = "0.13.0
 http_client.workspace = true
 image.workspace = true
 itertools.workspace = true
-# Fork of ksni 0.3.7 (package fc-ksni, lib name ksni) with XAyatanaLabel.
-# Path+version so `cargo package` rewrites this to a crates.io dependency.
-# Publish fc-ksni before fc-gpui-linux. See vendor/ksni/README.md.
-ksni = { package = "fc-ksni", version = "0.3.7", path = "../../vendor/ksni", default-features = false, features = ["blocking", "async-io"] }
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 libc.workspace = true
 log.workspace = true
 notify-rust = "4"

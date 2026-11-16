@@ -48,6 +48,7 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     tray_icon: Mutex<Option<Vec<u8>>>,
     tray_title: Mutex<Option<String>>,
+    tray_title_support: Mutex<TrayTitleSupport>,
     tray_icon_rendering_mode: Mutex<TrayIconRenderingMode>,
     tray_icon_event_callback: RefCell<Option<Box<dyn FnMut(TrayIconEvent)>>>,
     tray_icon_click_event_callback: RefCell<Option<Box<dyn FnMut(TrayIconClickEvent)>>>,
@@ -202,6 +203,7 @@ impl TestPlatform {
             weak: weak.clone(),
             tray_icon: Mutex::new(None),
             tray_title: Mutex::new(None),
+            tray_title_support: Mutex::new(TrayTitleSupport::Native),
             tray_icon_rendering_mode: Mutex::new(TrayIconRenderingMode::default()),
             tray_icon_event_callback: Default::default(),
             tray_icon_click_event_callback: Default::default(),
@@ -337,6 +339,10 @@ impl TestPlatform {
 
     pub(crate) fn tray_title(&self) -> Option<String> {
         self.tray_title.lock().clone()
+    }
+
+    pub(crate) fn set_tray_title_support(&self, support: TrayTitleSupport) {
+        *self.tray_title_support.lock() = support;
     }
 
     #[cfg(test)]
@@ -534,9 +540,7 @@ impl Platform for TestPlatform {
     }
 
     fn tray_title_support(&self) -> TrayTitleSupport {
-        // The test double records titles, so it reports the same support a
-        // platform with a real title would.
-        TrayTitleSupport::Native
+        *self.tray_title_support.lock()
     }
 
     fn on_tray_icon_event(&self, callback: Box<dyn FnMut(TrayIconEvent)>) {
