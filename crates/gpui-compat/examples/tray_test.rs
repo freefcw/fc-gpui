@@ -4,8 +4,8 @@
 //! item does not change width. "Toggle icon" keeps that title and removes or
 //! restores the icon. The tooltip stays "Test Tray App".
 //!
-//! On Linux the title is an Ayatana label. Some hosts ignore it, and some
-//! will not show the item at all until an icon is set.
+//! Linux stores the title and reports `TrayTitleSupport::Unsupported` until
+//! ksni can publish an Ayatana label. Windows reports the same.
 
 use std::cell::Cell;
 use std::rc::Rc;

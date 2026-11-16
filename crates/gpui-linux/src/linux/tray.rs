@@ -18,9 +18,9 @@ const DEFAULT_STATUS_NOTIFIER_ID: &str = "gpui-tray";
 struct GpuiTray {
     id: String,
     icon_data: Vec<u8>,
-    /// SNI `Title` and tooltip. Not the visible Ayatana label.
+    /// SNI `Title` and tooltip. Not the tray title.
     tooltip: String,
-    /// Visible text beside the icon (`XAyatanaLabel`). Independent of `tooltip`.
+    /// Tray title kept for a later Ayatana publish. Not sent on the bus yet.
     label: String,
     menu_items: Vec<TrayMenuItem>,
     action_callback: TrayActionCallback,
@@ -62,17 +62,8 @@ impl ksni::Tray for GpuiTray {
     }
 
     fn title(&self) -> String {
-        // SNI Title stays the tooltip / application name, not the visible label.
+        // SNI Title stays the tooltip / application name, not the tray title.
         self.tooltip.clone()
-    }
-
-    fn x_ayatana_label(&self) -> String {
-        self.label.clone()
-    }
-
-    fn x_ayatana_label_guide(&self) -> String {
-        // Phase 1 does not expose a guide. Empty is valid; hosts size to the label.
-        String::new()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
@@ -254,12 +245,25 @@ impl LinuxTray {
         }
     }
 
-    /// Set the Ayatana label. `None` and `Some("")` clear it.
+    /// Remember the tray title. `None` clears it.
     ///
-    /// This does not change the tooltip or the icon. With no icon, `icon_pixmap`
-    /// is empty. Some hosts will not show a title-only item until an icon is set.
+    /// ksni 0.3.7 cannot publish `XAyatanaLabel`. The label is stored on the
+    /// tray so a later upgrade can send it, and it does not change the tooltip
+    /// or the icon.
+    ///
+    /// TODO: switch to ksni 0.3.8 with features = ["ayatana"]
+    /// (upstream iovxw/ksni master 14d6dcc / #42), implement
+    /// `Tray::x_ayatana_label` / `x_ayatana_label_guide`, and report
+    /// `TrayTitleSupport::HostDependent`.
     pub fn set_title(&mut self, title: Option<&str>) {
-        self.label = title.unwrap_or("").to_string();
+        let next = title.unwrap_or("");
+        if self.handle.is_none() && next.is_empty() {
+            return;
+        }
+        if self.label == next && self.handle.is_some() {
+            return;
+        }
+        self.label = next.to_string();
         self.ensure_started();
         if let Some(handle) = &self.handle {
             let label = self.label.clone();
@@ -367,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn ayatana_label_is_separate_from_sni_title_and_tooltip() {
+    fn label_is_stored_separately_from_sni_title_and_tooltip() {
         use std::sync::{Arc, Mutex};
 
         let tray = super::GpuiTray {
@@ -382,8 +386,16 @@ mod tests {
 
         assert_eq!(ksni::Tray::title(&tray), "Test Tray App");
         assert_eq!(ksni::Tray::tool_tip(&tray).title, "Test Tray App");
-        assert_eq!(ksni::Tray::x_ayatana_label(&tray), "07");
-        assert_eq!(ksni::Tray::x_ayatana_label_guide(&tray), "");
+        assert_eq!(tray.label, "07");
         assert!(ksni::Tray::icon_pixmap(&tray).is_empty());
+    }
+
+    #[test]
+    fn empty_title_does_not_start_the_service() {
+        let mut tray = super::LinuxTray::new();
+        tray.set_title(None);
+        tray.set_title(None);
+        assert!(tray.handle.is_none());
+        assert!(tray.label.is_empty());
     }
 }

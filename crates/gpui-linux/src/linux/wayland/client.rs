@@ -102,8 +102,7 @@ use gpui::{
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, ScrollDelta,
-    ScrollEvent, SharedString, Size, TouchPhase, TrayIconClickEvent, TrayTitleSupport,
-    WindowParams, point, px, size,
+    ScrollEvent, SharedString, Size, TouchPhase, TrayIconClickEvent, WindowParams, point, px, size,
 };
 use gpui_wgpu::GpuContext;
 
@@ -1279,10 +1278,6 @@ impl LinuxClient for WaylandClient {
 
     fn set_tray_title(&self, title: Option<&str>) {
         self.0.borrow_mut().tray.set_title(title);
-    }
-
-    fn tray_title_support(&self) -> TrayTitleSupport {
-        TrayTitleSupport::HostDependent
     }
 
     fn set_tray_panel_mode(&self, enabled: bool) {

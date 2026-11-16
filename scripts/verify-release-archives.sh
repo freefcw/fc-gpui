@@ -71,13 +71,7 @@ while IFS=$'\t' read -r package version _manifest_path; do
         echo "packaged manifest still contains a path dependency: $package" >&2
         exit 1
     fi
-    # fc-gpui crates are Apache-2.0. fc-ksni keeps upstream ksni's Unlicense.
-    if [[ "$package" == "fc-ksni" ]]; then
-        if [[ ! -f "$crate_dir/UNLICENSE" ]]; then
-            echo "fc-ksni archive is missing UNLICENSE" >&2
-            exit 1
-        fi
-    elif [[ ! -f "$crate_dir/LICENSE-APACHE" ]]; then
+    if [[ ! -f "$crate_dir/LICENSE-APACHE" ]]; then
         echo "$package archive is missing LICENSE-APACHE" >&2
         exit 1
     fi

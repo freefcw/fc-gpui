@@ -1346,15 +1346,19 @@ impl App {
     /// `None` and `Some("")` clear the title. Setting a title does not change
     /// the icon or the tooltip, and setting the icon does not clear the title.
     ///
-    /// What the user actually sees depends on [`Self::tray_title_support`]:
-    /// macOS draws it in the menu bar, Linux publishes an Ayatana label that
-    /// only some hosts display (and some of those still require an icon), and
-    /// Windows ignores it.
+    /// What the user actually sees depends on [`Self::tray_title_support`].
+    /// macOS draws the title in the menu bar. Linux and Windows report
+    /// [`TrayTitleSupport::Unsupported`]: Linux remembers the label, and
+    /// Windows leaves the tooltip alone.
+    ///
+    /// A tray item that has only a menu, with no icon and no title, is empty.
+    /// There is no placeholder title.
     ///
     /// Update about once a second and keep the string the same width. A title
     /// that changes width every frame reflows the menu bar or panel.
     pub fn set_tray_title(&self, title: Option<&str>) {
-        self.platform.set_tray_title(title);
+        self.platform
+            .set_tray_title(title.filter(|title| !title.is_empty()));
     }
 
     /// How this platform shows a title passed to [`Self::set_tray_title`].
@@ -3972,6 +3976,19 @@ mod test {
         });
         assert_eq!(cx.tray_title(), None);
         assert_eq!(cx.tray_icon(), None);
+    }
+
+    #[test]
+    fn test_tray_title_support_can_model_the_fallback() {
+        let cx = TestAppContext::single();
+        cx.set_tray_title_support(TrayTitleSupport::Unsupported);
+        assert_eq!(cx.tray_title_support(), TrayTitleSupport::Unsupported);
+
+        cx.update(|cx| {
+            assert_eq!(cx.tray_title_support(), TrayTitleSupport::Unsupported);
+            cx.set_tray_title(Some("4"));
+        });
+        assert_eq!(cx.tray_title(), Some("4".into()));
     }
 
     #[test]

@@ -42,8 +42,8 @@ impl MacTray {
                 title: RefCell::new(String::new()),
                 has_icon: Cell::new(false),
             };
-            // No placeholder title. An item with neither icon nor title stays
-            // empty instead of flashing "App" before the real contents arrive.
+            // No placeholder title. A menu-only item, with no icon and no title,
+            // stays empty instead of flashing "App".
             tray.sync_title_layout();
             tray.wire_click_handler();
             tray
@@ -120,8 +120,15 @@ impl MacTray {
         unsafe { image.setTemplate(is_template) };
     }
 
+    pub fn title_matches(&self, title: &str) -> bool {
+        self.title.borrow().as_str() == title
+    }
+
     pub fn set_title(&self, title: &str) {
-        self.title.replace(title.to_string());
+        if self.title_matches(title) {
+            return;
+        }
+        *self.title.borrow_mut() = title.to_string();
         self.sync_title_layout();
     }
 
@@ -342,14 +349,14 @@ pub(crate) unsafe fn build_menu_with_selector(
 /// No foreground color is set, so AppKit draws it with the menu bar's
 /// current label color in both light and dark appearances.
 fn status_item_attributed_title(title: &str) -> Retained<NSAttributedString> {
+    let menu_bar_size = NSFont::menuBarFontOfSize(0.0).pointSize();
     // SAFETY: `NSFontAttributeName` and `NSFontWeightRegular` are process-lifetime
     // AppKit constants. The attribute dictionary's only value is an `NSFont`,
-    // which is the type `NSFontAttributeName` documents.
+    // which is the type `NSFontAttributeName` documents. `initWithString:attributes:`
+    // is unsafe because the dictionary values must match those keys.
     unsafe {
-        let font = NSFont::monospacedDigitSystemFontOfSize_weight(
-            NSFont::systemFontSize(),
-            NSFontWeightRegular,
-        );
+        let font =
+            NSFont::monospacedDigitSystemFontOfSize_weight(menu_bar_size, NSFontWeightRegular);
         let font_object: &AnyObject = font.as_ref();
         let attributes = NSDictionary::<NSAttributedStringKey, AnyObject>::from_slices(
             &[NSFontAttributeName],
