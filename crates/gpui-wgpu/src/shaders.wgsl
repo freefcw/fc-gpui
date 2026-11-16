@@ -321,8 +321,8 @@ fn oklab_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
 
 fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
     let alpha = above.a + below.a * (1.0 - above.a);
-    let color = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
-    return vec4<f32>(color, alpha);
+    let premultiplied = above.rgb * above.a + below.rgb * below.a * (1.0 - above.a);
+    return vec4<f32>(premultiplied / select(alpha, 1.0, alpha == 0.0), alpha);
 }
 
 // A standard gaussian function, used for weighting samples
@@ -979,11 +979,11 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             }
         }
 
-        // Blend the border on top of the background and then linearly interpolate
-        // between the two as we slide inside the background.
-        let blended_border = over(background_color, border_color);
-        color = mix(background_color, blended_border,
-                    saturate(antialias_threshold - inner_sdf));
+        // Apply inner-edge coverage to the border alpha before compositing.
+        // Lerping straight-alpha colors would mix a transparent background's RGB
+        // into partially covered border pixels.
+        border_color.a *= saturate(antialias_threshold - inner_sdf);
+        color = over(background_color, border_color);
     }
 
     return blend_color(color, saturate(antialias_threshold - outer_sdf));
