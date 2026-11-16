@@ -1045,6 +1045,10 @@ where
 /// 3. Comparing numbers by their numeric value rather than lexicographically
 /// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
 fn natural_sort(a: &str, b: &str) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
