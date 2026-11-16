@@ -5,7 +5,8 @@ use crate::{
     PlatformKeyboardMapper, PlatformTarget, PlatformTextSystem, PromptButton, QuitMode,
     ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, ScreenCaptureStreamTermination,
     ScreenCaptureTerminationCallback, SourceMetadata, Task, TestDisplay, TestWindow,
-    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, WindowAppearance, WindowParams, size,
+    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayTitleSupport, WindowAppearance,
+    WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -46,6 +47,7 @@ pub(crate) struct TestPlatform {
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     tray_icon: Mutex<Option<Vec<u8>>>,
+    tray_title: Mutex<Option<String>>,
     tray_icon_rendering_mode: Mutex<TrayIconRenderingMode>,
     tray_icon_event_callback: RefCell<Option<Box<dyn FnMut(TrayIconEvent)>>>,
     tray_icon_click_event_callback: RefCell<Option<Box<dyn FnMut(TrayIconClickEvent)>>>,
@@ -199,6 +201,7 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             weak: weak.clone(),
             tray_icon: Mutex::new(None),
+            tray_title: Mutex::new(None),
             tray_icon_rendering_mode: Mutex::new(TrayIconRenderingMode::default()),
             tray_icon_event_callback: Default::default(),
             tray_icon_click_event_callback: Default::default(),
@@ -330,6 +333,10 @@ impl TestPlatform {
 
     pub(crate) fn tray_icon(&self) -> Option<Vec<u8>> {
         self.tray_icon.lock().clone()
+    }
+
+    pub(crate) fn tray_title(&self) -> Option<String> {
+        self.tray_title.lock().clone()
     }
 
     #[cfg(test)]
@@ -520,6 +527,16 @@ impl Platform for TestPlatform {
 
     fn set_tray_icon_rendering_mode(&self, rendering_mode: TrayIconRenderingMode) {
         *self.tray_icon_rendering_mode.lock() = rendering_mode;
+    }
+
+    fn set_tray_title(&self, title: Option<&str>) {
+        *self.tray_title.lock() = title.filter(|title| !title.is_empty()).map(str::to_string);
+    }
+
+    fn tray_title_support(&self) -> TrayTitleSupport {
+        // The test double records titles, so it reports the same support a
+        // platform with a real title would.
+        TrayTitleSupport::Native
     }
 
     fn on_tray_icon_event(&self, callback: Box<dyn FnMut(TrayIconEvent)>) {

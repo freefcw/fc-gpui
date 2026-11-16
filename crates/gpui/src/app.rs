@@ -43,8 +43,8 @@ use crate::{
     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
     ScreenCaptureSource, SharedString, Size, SubscriberSet, Subscription, SvgRenderer,
     SystemPowerEvent, Task, TextSystem, ThermalState, TrayAnchor, TrayIconClickEvent,
-    TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, Window, WindowAppearance, WindowHandle,
-    WindowId, WindowInvalidator, WindowPosition,
+    TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, TrayTitleSupport, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator, WindowPosition,
     colors::{Colors, GlobalColors},
     hash, init_app_menus, point, px, size,
 };
@@ -1339,6 +1339,27 @@ impl App {
     /// Set the system tray tooltip.
     pub fn set_tray_tooltip(&self, tooltip: &str) {
         self.platform.set_tray_tooltip(tooltip);
+    }
+
+    /// Set the text shown beside the system tray icon.
+    ///
+    /// `None` and `Some("")` clear the title. Setting a title does not change
+    /// the icon or the tooltip, and setting the icon does not clear the title.
+    ///
+    /// What the user actually sees depends on [`Self::tray_title_support`]:
+    /// macOS draws it in the menu bar, Linux publishes an Ayatana label that
+    /// only some hosts display (and some of those still require an icon), and
+    /// Windows ignores it.
+    ///
+    /// Update about once a second and keep the string the same width. A title
+    /// that changes width every frame reflows the menu bar or panel.
+    pub fn set_tray_title(&self, title: Option<&str>) {
+        self.platform.set_tray_title(title);
+    }
+
+    /// How this platform shows a title passed to [`Self::set_tray_title`].
+    pub fn tray_title_support(&self) -> TrayTitleSupport {
+        self.platform.tray_title_support()
     }
 
     /// Enable or disable tray panel mode.
@@ -3220,8 +3241,8 @@ mod test {
     use crate::{
         AppContext, AppResourceProfile, BackgroundExecutor, Context, Empty, ForegroundExecutor,
         IntoElement, Platform, QuitMode, Render, TestAppContext, TestDispatcher, TestPlatform,
-        TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, Window, WindowAppearance, point,
-        px,
+        TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayTitleSupport, Window,
+        WindowAppearance, point, px,
     };
 
     struct RenderCounter(Rc<Cell<usize>>);
@@ -3915,6 +3936,42 @@ mod test {
         });
 
         assert_eq!(cx.tray_icon(), Some(icon.to_vec()));
+    }
+
+    #[test]
+    fn test_set_tray_title_forwards_to_platform() {
+        let cx = TestAppContext::single();
+        let icon = [1_u8, 2, 3, 4];
+
+        assert_eq!(cx.tray_title(), None);
+        assert_eq!(cx.tray_title_support(), TrayTitleSupport::Native);
+
+        cx.update(|cx| {
+            cx.set_tray_title(Some("12"));
+            cx.set_tray_icon(Some(&icon));
+            cx.set_tray_tooltip("tooltip");
+        });
+
+        assert_eq!(cx.tray_title(), Some("12".into()));
+        assert_eq!(cx.tray_icon(), Some(icon.to_vec()));
+
+        cx.update(|cx| {
+            cx.set_tray_icon(None);
+        });
+        assert_eq!(cx.tray_title(), Some("12".into()));
+        assert_eq!(cx.tray_icon(), None);
+
+        cx.update(|cx| {
+            cx.set_tray_title(Some(""));
+        });
+        assert_eq!(cx.tray_title(), None);
+
+        cx.update(|cx| {
+            cx.set_tray_title(Some("9"));
+            cx.set_tray_title(None);
+        });
+        assert_eq!(cx.tray_title(), None);
+        assert_eq!(cx.tray_icon(), None);
     }
 
     #[test]

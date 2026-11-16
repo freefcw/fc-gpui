@@ -389,6 +389,18 @@ impl TestAppContext {
         self.test_platform.tray_icon()
     }
 
+    /// Returns the latest tray title set through the platform.
+    ///
+    /// `None` means the title was never set or was cleared with `None` or `Some("")`.
+    pub fn tray_title(&self) -> Option<String> {
+        self.test_platform.tray_title()
+    }
+
+    /// Returns the test platform's tray title support.
+    pub fn tray_title_support(&self) -> crate::TrayTitleSupport {
+        self.test_platform.tray_title_support()
+    }
+
     /// Returns the latest tray icon rendering mode set through the platform.
     pub fn tray_icon_rendering_mode(&self) -> crate::TrayIconRenderingMode {
         self.test_platform.tray_icon_rendering_mode()
@@ -738,6 +750,16 @@ impl TestApp {
     /// Returns the latest tray icon bytes set through the test platform.
     pub fn tray_icon(&self) -> Option<Vec<u8>> {
         self.cx.tray_icon()
+    }
+
+    /// Returns the latest tray title set through the test platform.
+    pub fn tray_title(&self) -> Option<String> {
+        self.cx.tray_title()
+    }
+
+    /// Returns the test platform's tray title support.
+    pub fn tray_title_support(&self) -> crate::TrayTitleSupport {
+        self.cx.tray_title_support()
     }
 
     /// Returns the latest tray icon rendering mode set through the test platform.

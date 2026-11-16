@@ -12,7 +12,7 @@ use crate::{
     PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PowerMode, QuitMode,
     RendererCacheStats, Result, SemanticVersion, SharedString, Size, SystemMenuType, Task,
     ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
-    TrayMenuItem, WindowAppearance, WindowParams,
+    TrayMenuItem, TrayTitleSupport, WindowAppearance, WindowParams,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -1859,6 +1859,15 @@ impl Platform for MacPlatform {
     fn set_tray_tooltip(&self, tooltip: &str) {
         let mut state = self.0.lock();
         Self::ensure_tray(&mut state).set_tooltip(tooltip);
+    }
+
+    fn set_tray_title(&self, title: Option<&str>) {
+        let mut state = self.0.lock();
+        Self::ensure_tray(&mut state).set_title(title.unwrap_or(""));
+    }
+
+    fn tray_title_support(&self) -> TrayTitleSupport {
+        TrayTitleSupport::Native
     }
 
     fn set_tray_panel_mode(&self, enabled: bool) {

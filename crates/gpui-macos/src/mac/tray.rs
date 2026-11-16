@@ -6,11 +6,14 @@ use crate::{Bounds, Pixels, TrayAnchor, TrayIconRenderingMode};
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSControlStateValueOff, NSControlStateValueOn,
-    NSEventMask, NSEventType, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
+    NSApplication, NSApplicationDelegate, NSCellImagePosition, NSControlStateValueOff,
+    NSControlStateValueOn, NSEventMask, NSEventType, NSFont, NSFontAttributeName,
+    NSFontWeightRegular, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
     NSVariableStatusItemLength,
 };
-use objc2_foundation::{NSData, NSSize, NSString};
+use objc2_foundation::{
+    NSAttributedString, NSAttributedStringKey, NSData, NSDictionary, NSSize, NSString,
+};
 use std::cell::{Cell, RefCell};
 
 pub(crate) struct MacTray {
@@ -18,6 +21,9 @@ pub(crate) struct MacTray {
     panel_mode: Cell<bool>,
     stored_menu: RefCell<Option<Retained<NSMenu>>>,
     click_menu_conflict_warned: Cell<bool>,
+    /// Last title passed to [`Self::set_title`]. Empty means no title.
+    title: RefCell<String>,
+    has_icon: Cell<bool>,
 }
 
 impl MacTray {
@@ -28,17 +34,17 @@ impl MacTray {
             let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
             status_item.setVisible(true);
 
-            if let Some(button) = status_item.button(main_thread_marker()) {
-                let default_title = NSString::from_str("App");
-                button.setTitle(&default_title);
-            }
-
             let tray = Self {
                 status_item,
                 panel_mode: Cell::new(false),
                 stored_menu: RefCell::new(None),
                 click_menu_conflict_warned: Cell::new(false),
+                title: RefCell::new(String::new()),
+                has_icon: Cell::new(false),
             };
+            // No placeholder title. An item with neither icon nor title stays
+            // empty instead of flashing "App" before the real contents arrive.
+            tray.sync_title_layout();
             tray.wire_click_handler();
             tray
         }
@@ -94,15 +100,18 @@ impl MacTray {
                         });
                         Self::apply_icon_rendering_mode(&image, rendering_mode);
                         button.setImage(Some(&image));
-                        let empty = NSString::from_str("");
-                        button.setTitle(&empty);
+                        self.has_icon.set(true);
                     }
                 }
                 None => {
                     button.setImage(None);
+                    self.has_icon.set(false);
                 }
             }
         }
+        // The icon and the title are independent. Recompute image position
+        // without clearing a title that was already set.
+        self.sync_title_layout();
     }
 
     #[allow(dead_code, unused_unsafe)]
@@ -111,13 +120,29 @@ impl MacTray {
         unsafe { image.setTemplate(is_template) };
     }
 
-    #[allow(dead_code, unused_unsafe)]
     pub fn set_title(&self, title: &str) {
+        self.title.replace(title.to_string());
+        self.sync_title_layout();
+    }
+
+    /// Apply the stored title and choose an image position from what is set.
+    ///
+    /// Both icon and title: image on the left. Title only: no image. Icon
+    /// only: image with no title gap. Neither: an empty title.
+    fn sync_title_layout(&self) {
         unsafe {
-            if let Some(button) = self.status_item.button(main_thread_marker()) {
-                let ns_title = NSString::from_str(title);
-                button.setTitle(&ns_title);
-            }
+            let Some(button) = self.status_item.button(main_thread_marker()) else {
+                return;
+            };
+            let title = self.title.borrow();
+            let has_title = !title.is_empty();
+            button.setAttributedTitle(&status_item_attributed_title(&title));
+            let position = match (self.has_icon.get(), has_title) {
+                (true, true) => NSCellImagePosition::ImageLeft,
+                (true, false) => NSCellImagePosition::ImageOnly,
+                (false, _) => NSCellImagePosition::NoImage,
+            };
+            button.setImagePosition(position);
         }
     }
 
@@ -311,6 +336,32 @@ pub(crate) unsafe fn build_menu_with_selector(
                 }
             }
         }
+    }
+}
+
+/// Menu-bar title in the monospaced-digit system font.
+///
+/// No foreground color is set, so AppKit draws it with the menu bar's
+/// current label color in both light and dark appearances.
+fn status_item_attributed_title(title: &str) -> Retained<NSAttributedString> {
+    // SAFETY: `NSFontAttributeName` and `NSFontWeightRegular` are process-lifetime
+    // AppKit constants. The attribute dictionary's only value is an `NSFont`,
+    // which is the type `NSFontAttributeName` documents.
+    unsafe {
+        let font = NSFont::monospacedDigitSystemFontOfSize_weight(
+            NSFont::systemFontSize(),
+            NSFontWeightRegular,
+        );
+        let font_object: &AnyObject = font.as_ref();
+        let attributes = NSDictionary::<NSAttributedStringKey, AnyObject>::from_slices(
+            &[NSFontAttributeName],
+            &[font_object],
+        );
+        NSAttributedString::initWithString_attributes(
+            NSAttributedString::alloc(),
+            &NSString::from_str(title),
+            Some(&attributes),
+        )
     }
 }
 

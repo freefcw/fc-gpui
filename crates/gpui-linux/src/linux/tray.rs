@@ -18,7 +18,10 @@ const DEFAULT_STATUS_NOTIFIER_ID: &str = "gpui-tray";
 struct GpuiTray {
     id: String,
     icon_data: Vec<u8>,
+    /// SNI `Title` and tooltip. Not the visible Ayatana label.
     tooltip: String,
+    /// Visible text beside the icon (`XAyatanaLabel`). Independent of `tooltip`.
+    label: String,
     menu_items: Vec<TrayMenuItem>,
     action_callback: TrayActionCallback,
     click_callback: TrayClickCallback,
@@ -59,7 +62,17 @@ impl ksni::Tray for GpuiTray {
     }
 
     fn title(&self) -> String {
+        // SNI Title stays the tooltip / application name, not the visible label.
         self.tooltip.clone()
+    }
+
+    fn x_ayatana_label(&self) -> String {
+        self.label.clone()
+    }
+
+    fn x_ayatana_label_guide(&self) -> String {
+        // Phase 1 does not expose a guide. Empty is valid; hosts size to the label.
+        String::new()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
@@ -180,6 +193,8 @@ pub struct LinuxTray {
     handle: Option<ksni::blocking::Handle<GpuiTray>>,
     action_callback: TrayActionCallback,
     click_callback: TrayClickCallback,
+    /// Label applied to the service, including the copy used when it first starts.
+    label: String,
 }
 
 impl LinuxTray {
@@ -194,6 +209,7 @@ impl LinuxTray {
             handle: None,
             action_callback: Arc::new(Mutex::new(None)),
             click_callback: Arc::new(Mutex::new(None)),
+            label: String::new(),
         }
     }
 
@@ -208,6 +224,7 @@ impl LinuxTray {
             id: default_status_notifier_id(),
             icon_data: Vec::new(),
             tooltip: String::new(),
+            label: self.label.clone(),
             menu_items: Vec::new(),
             action_callback: self.action_callback.clone(),
             click_callback: self.click_callback.clone(),
@@ -233,6 +250,26 @@ impl LinuxTray {
                 .is_none()
             {
                 log::warn!(target: "tray", "Tray service has shut down, cannot update icon");
+            }
+        }
+    }
+
+    /// Set the Ayatana label. `None` and `Some("")` clear it.
+    ///
+    /// This does not change the tooltip or the icon. With no icon, `icon_pixmap`
+    /// is empty. Some hosts will not show a title-only item until an icon is set.
+    pub fn set_title(&mut self, title: Option<&str>) {
+        self.label = title.unwrap_or("").to_string();
+        self.ensure_started();
+        if let Some(handle) = &self.handle {
+            let label = self.label.clone();
+            if handle
+                .update(move |tray: &mut GpuiTray| {
+                    tray.label = label;
+                })
+                .is_none()
+            {
+                log::warn!(target: "tray", "Tray service has shut down, cannot update title");
             }
         }
     }
@@ -327,5 +364,26 @@ mod tests {
     #[test]
     fn returns_none_when_executable_name_is_missing() {
         assert_eq!(derive_status_notifier_id_from_path(Path::new("/")), None);
+    }
+
+    #[test]
+    fn ayatana_label_is_separate_from_sni_title_and_tooltip() {
+        use std::sync::{Arc, Mutex};
+
+        let tray = super::GpuiTray {
+            id: "gpui-tray".into(),
+            icon_data: Vec::new(),
+            tooltip: "Test Tray App".into(),
+            label: "07".into(),
+            menu_items: Vec::new(),
+            action_callback: Arc::new(Mutex::new(None)),
+            click_callback: Arc::new(Mutex::new(None)),
+        };
+
+        assert_eq!(ksni::Tray::title(&tray), "Test Tray App");
+        assert_eq!(ksni::Tray::tool_tip(&tray).title, "Test Tray App");
+        assert_eq!(ksni::Tray::x_ayatana_label(&tray), "07");
+        assert_eq!(ksni::Tray::x_ayatana_label_guide(&tray), "");
+        assert!(ksni::Tray::icon_pixmap(&tray).is_empty());
     }
 }
