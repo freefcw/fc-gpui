@@ -40,13 +40,14 @@ pub fn compute_window_bounds(
             let x = tray_bounds.origin.x + (tray_bounds.size.width - size.width) * 0.5;
             let y = tray_bounds.origin.y + tray_bounds.size.height;
             let local_position = point(x, y);
-            let position = displays
+            let Some(display) = displays
                 .iter()
                 .find(|display| display.id() == anchor.display_id)
-                .map_or(local_position, |display| {
-                    display.display_local_to_window_position(local_position)
-                });
-            Bounds::new(position, size)
+            else {
+                return Bounds::new(local_position, size);
+            };
+            let position = display.display_local_to_window_position(local_position);
+            keep_within(Bounds::new(position, size), display.visible_bounds())
         }
         WindowPosition::TopRight { margin } => {
             corner_position(size, primary_display, *margin, true, false)
@@ -67,6 +68,16 @@ fn center_in(size: Size<Pixels>, display: Bounds<Pixels>) -> Bounds<Pixels> {
     let x = display.origin.x + (display.size.width - size.width) * 0.5;
     let y = display.origin.y + (display.size.height - size.height) * 0.5;
     Bounds::new(point(x, y), size)
+}
+
+/// Moves `window` inside `area`. A window larger than `area` keeps its
+/// top-left corner at the top-left of `area`.
+fn keep_within(window: Bounds<Pixels>, area: Bounds<Pixels>) -> Bounds<Pixels> {
+    let max_x = (area.right() - window.size.width).max(area.left());
+    let max_y = (area.bottom() - window.size.height).max(area.top());
+    let x = window.origin.x.min(max_x).max(area.left());
+    let y = window.origin.y.min(max_y).max(area.top());
+    Bounds::new(point(x, y), window.size)
 }
 
 fn corner_position(
@@ -234,6 +245,40 @@ mod tests {
         assert_eq!(bounds.origin, point(px(862.), px(54.)));
         assert_eq!(display.bounds().origin, Point::default());
         assert_eq!(display.global_bounds().origin, point(px(-1600.), px(200.)));
+    }
+
+    fn tray_anchored(anchor_origin: Point<Pixels>) -> Bounds<Pixels> {
+        let display = display();
+        let anchor = crate::TrayAnchor {
+            display_id: display.id(),
+            bounds: Bounds::new(anchor_origin, size(px(24.), px(24.))),
+        };
+        compute_window_bounds(
+            size(px(200.), px(100.)),
+            &WindowPosition::TrayAnchored(anchor),
+            std::slice::from_ref(&display),
+            Some(&display),
+        )
+    }
+
+    #[test]
+    fn tray_anchors_near_the_side_edges_stay_in_the_visible_bounds() {
+        assert_eq!(
+            tray_anchored(point(px(980.), px(16.))).origin,
+            point(px(800.), px(40.))
+        );
+        assert_eq!(
+            tray_anchored(point(px(4.), px(16.))).origin,
+            point(px(0.), px(40.))
+        );
+    }
+
+    #[test]
+    fn tray_anchors_in_a_bottom_panel_open_above_it() {
+        assert_eq!(
+            tray_anchored(point(px(600.), px(760.))).origin,
+            point(px(512.), px(640.))
+        );
     }
 
     #[test]

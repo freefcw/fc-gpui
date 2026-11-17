@@ -14,6 +14,11 @@
 
 ### Fixed
 
+- macOS `App::tray_icon_anchor` returns `None` until the status item is laid out in
+  the menu bar. It used to report the unplaced window frame, which put tray-anchored
+  windows at the bottom of the screen right after launch.
+- `WindowPosition::TrayAnchored` keeps the window inside the anchor display's visible
+  bounds, so icons near a screen edge or in a bottom panel no longer push it off screen.
 - Cached drawing preserves primitive identity after batch sorting and replays
   accessibility hierarchy, focus/action mappings, and native window-control hitboxes.
 - Recycled atlas allocations cannot be mistaken for the original image, including

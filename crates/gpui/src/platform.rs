@@ -2586,6 +2586,9 @@ pub enum WindowPosition {
     /// top-left origin) and the `display_id` it resides on. Callers should
     /// also propagate `display_id` to `WindowOptions.display_id` so the
     /// window is opened on the correct screen in multi-monitor setups.
+    ///
+    /// The window is kept inside that display's visible bounds, so an icon
+    /// near a screen edge or in a bottom panel does not push it off screen.
     TrayAnchored(TrayAnchor),
     /// Position the window in the top-right corner.
     TopRight {

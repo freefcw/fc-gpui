@@ -108,19 +108,39 @@ pub(crate) unsafe fn screen_frame_to_tray_anchor(
 ) -> Option<TrayAnchor> {
     unsafe {
         let screen = as_screen(screen)?;
-        let screen_frame = screen.frame();
-        let local_x = frame.origin.x - screen_frame.origin.x;
-        let local_y =
-            screen_frame.origin.y + screen_frame.size.height - frame.origin.y - frame.size.height;
-
         Some(TrayAnchor {
             display_id: DisplayId::new(screen_number(screen) as u64),
-            bounds: Bounds::new(
-                point(px(local_x as f32), px(local_y as f32)),
-                size(px(frame.size.width as f32), px(frame.size.height as f32)),
-            ),
+            bounds: menu_bar_item_bounds(screen.frame(), frame)?,
         })
     }
+}
+
+/// Converts a status item window frame to display-local bounds on its screen.
+///
+/// Until AppKit lays the status item out in the menu bar, its window can sit
+/// anywhere on the screen, e.g. at the bottom-left corner right after launch.
+/// Only a frame at the top edge of the screen is a menu bar position. A frame
+/// up to one item height above the top edge is accepted for an auto-hidden menu bar.
+fn menu_bar_item_bounds(screen_frame: NSRect, frame: NSRect) -> Option<Bounds<Pixels>> {
+    let width = frame.size.width;
+    let height = frame.size.height;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+
+    let local_x = frame.origin.x - screen_frame.origin.x;
+    let local_y = screen_frame.origin.y + screen_frame.size.height - frame.origin.y - height;
+    let center_x = local_x + width / 2.0;
+    let at_top_edge = (-height..=height).contains(&local_y);
+    let within_screen = (0.0..=screen_frame.size.width).contains(&center_x);
+    if !at_top_edge || !within_screen {
+        return None;
+    }
+
+    Some(Bounds::new(
+        point(px(local_x as f32), px(local_y as f32)),
+        size(px(width as f32), px(height as f32)),
+    ))
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -235,5 +255,71 @@ mod tests {
     #[test]
     fn display_id_for_screen_returns_none_for_null_screen() {
         assert_eq!(unsafe { display_id_for_screen(std::ptr::null_mut()) }, None);
+    }
+
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
+        NSRect::new(
+            NSPoint::new(x, y),
+            objc2_foundation::NSSize::new(width, height),
+        )
+    }
+
+    // A 1512×982 laptop with an external 2560×1440 display above it, in
+    // AppKit coordinates (bottom-left origin of the primary display).
+    fn laptop() -> NSRect {
+        rect(0.0, 0.0, 1512.0, 982.0)
+    }
+
+    fn external() -> NSRect {
+        rect(-347.0, 982.0, 2560.0, 1440.0)
+    }
+
+    #[test]
+    fn menu_bar_item_maps_to_the_top_of_its_screen() {
+        let bounds = menu_bar_item_bounds(laptop(), rect(1200.0, 949.0, 22.0, 33.0)).unwrap();
+        assert_eq!(
+            bounds,
+            Bounds::new(point(px(1200.), px(0.)), size(px(22.), px(33.)))
+        );
+
+        let bounds = menu_bar_item_bounds(external(), rect(1653.0, 2398.0, 22.0, 24.0)).unwrap();
+        assert_eq!(
+            bounds,
+            Bounds::new(point(px(2000.), px(0.)), size(px(22.), px(24.)))
+        );
+    }
+
+    #[test]
+    fn menu_bar_item_above_an_auto_hidden_menu_bar_is_kept() {
+        let bounds = menu_bar_item_bounds(laptop(), rect(1200.0, 982.0, 22.0, 33.0)).unwrap();
+        assert_eq!(bounds.origin, point(px(1200.), px(-33.)));
+    }
+
+    #[test]
+    fn status_item_before_layout_is_not_an_anchor() {
+        assert_eq!(
+            menu_bar_item_bounds(laptop(), rect(6.0, 0.0, 22.0, 24.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn status_item_off_its_screen_is_not_an_anchor() {
+        assert_eq!(
+            menu_bar_item_bounds(laptop(), rect(1600.0, 949.0, 22.0, 33.0)),
+            None
+        );
+        assert_eq!(
+            menu_bar_item_bounds(laptop(), rect(1200.0, 1100.0, 22.0, 33.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn empty_status_item_is_not_an_anchor() {
+        assert_eq!(
+            menu_bar_item_bounds(laptop(), rect(1200.0, 949.0, 0.0, 33.0)),
+            None
+        );
     }
 }

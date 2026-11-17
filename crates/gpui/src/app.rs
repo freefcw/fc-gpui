@@ -1375,7 +1375,12 @@ impl App {
         self.platform.set_tray_panel_mode(enabled);
     }
 
-    #[allow(missing_docs)]
+    /// Get the tray icon's display and display-local bounds, for
+    /// [`WindowPosition::TrayAnchored`].
+    ///
+    /// Returns `None` when the platform cannot report the icon position. On
+    /// macOS this includes the time before the status item is laid out in the
+    /// menu bar, such as right after launch.
     pub fn tray_icon_anchor(&self) -> Option<TrayAnchor> {
         self.platform.get_tray_icon_anchor()
     }
@@ -1390,8 +1395,8 @@ impl App {
     /// This is useful on Linux StatusNotifierItem hosts, where click events
     /// provide a logical screen-coordinate hint but not the actual tray icon
     /// bounds. If the hint falls outside known displays, the primary display is
-    /// used as a best-effort fallback so callers can still fall back from
-    /// `WindowPosition::TrayAnchored` to a corner position if needed.
+    /// used as a best-effort fallback. `WindowPosition::TrayAnchored` keeps the
+    /// window inside that display's visible bounds either way.
     pub fn tray_anchor_for_position(&self, position: Point<Pixels>) -> Option<TrayAnchor> {
         // This is a logical-size approximation of a tray icon, not a measured
         // host icon size. Linux SNI does not expose the actual icon bounds.
