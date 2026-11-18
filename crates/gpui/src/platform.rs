@@ -351,11 +351,52 @@ pub trait Platform: 'static {
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 
-    fn set_tray_icon(&self, _icon: Option<&[u8]>) {}
-    fn set_tray_icon_rendering_mode(&self, _rendering_mode: TrayIconRenderingMode) {}
-    fn set_tray_menu(&self, _menu: Vec<TrayMenuItem>) {}
-    fn set_tray_tooltip(&self, _tooltip: &str) {}
-    fn set_tray_panel_mode(&self, _enabled: bool) {}
+    /// Desktop integrations implemented by this backend.
+    ///
+    /// The default is `None`. [`Platform`] methods for tray, hotkeys,
+    /// notifications, dialogs, and power or network events forward here when
+    /// the backend does not override them.
+    fn desktop(&self) -> Option<&dyn PlatformDesktop> {
+        None
+    }
+
+    /// Whether [`Platform::on_system_power_event`] will invoke its callback.
+    fn supports_system_power_events(&self) -> bool {
+        self.desktop()
+            .is_some_and(|desktop| desktop.supports_system_power_events())
+    }
+
+    /// Whether [`Platform::on_network_status_change`] will invoke its callback.
+    fn supports_network_status_events(&self) -> bool {
+        self.desktop()
+            .is_some_and(|desktop| desktop.supports_network_status_events())
+    }
+
+    fn set_tray_icon(&self, icon: Option<&[u8]>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.set_tray_icon(icon);
+        }
+    }
+    fn set_tray_icon_rendering_mode(&self, rendering_mode: TrayIconRenderingMode) {
+        if let Some(desktop) = self.desktop() {
+            desktop.set_tray_icon_rendering_mode(rendering_mode);
+        }
+    }
+    fn set_tray_menu(&self, menu: Vec<TrayMenuItem>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.set_tray_menu(menu);
+        }
+    }
+    fn set_tray_tooltip(&self, tooltip: &str) {
+        if let Some(desktop) = self.desktop() {
+            desktop.set_tray_tooltip(tooltip);
+        }
+    }
+    fn set_tray_panel_mode(&self, enabled: bool) {
+        if let Some(desktop) = self.desktop() {
+            desktop.set_tray_panel_mode(enabled);
+        }
+    }
     fn get_tray_icon_anchor(&self) -> Option<TrayAnchor> {
         None
     }
@@ -365,16 +406,36 @@ pub trait Platform: 'static {
     fn on_tray_icon_event(&self, mut callback: Box<dyn FnMut(TrayIconEvent)>) {
         self.on_tray_icon_click_event(Box::new(move |event| callback(event.kind)));
     }
-    fn on_tray_icon_click_event(&self, _callback: Box<dyn FnMut(TrayIconClickEvent)>) {}
-    fn on_tray_menu_action(&self, _callback: Box<dyn FnMut(SharedString)>) {}
-
-    fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Global hotkeys not supported on this platform"
-        ))
+    fn on_tray_icon_click_event(&self, callback: Box<dyn FnMut(TrayIconClickEvent)>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.on_tray_icon_click_event(callback);
+        }
     }
-    fn unregister_global_hotkey(&self, _id: u32) {}
-    fn on_global_hotkey(&self, _callback: Box<dyn FnMut(u32)>) {}
+    fn on_tray_menu_action(&self, callback: Box<dyn FnMut(SharedString)>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.on_tray_menu_action(callback);
+        }
+    }
+
+    fn register_global_hotkey(&self, id: u32, keystroke: &Keystroke) -> Result<()> {
+        if let Some(desktop) = self.desktop() {
+            desktop.register_global_hotkey(id, keystroke)
+        } else {
+            Err(anyhow::anyhow!(
+                "Global hotkeys not supported on this platform"
+            ))
+        }
+    }
+    fn unregister_global_hotkey(&self, id: u32) {
+        if let Some(desktop) = self.desktop() {
+            desktop.unregister_global_hotkey(id);
+        }
+    }
+    fn on_global_hotkey(&self, callback: Box<dyn FnMut(u32)>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.on_global_hotkey(callback);
+        }
+    }
 
     fn focused_window_info(&self) -> Option<FocusedWindowInfo> {
         None
@@ -398,19 +459,28 @@ pub trait Platform: 'static {
         PermissionRequestStatus::Unavailable
     }
 
-    fn set_auto_launch(&self, _app_id: &str, _enabled: bool) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Auto-launch not supported on this platform"
-        ))
+    fn set_auto_launch(&self, app_id: &str, enabled: bool) -> Result<()> {
+        if let Some(desktop) = self.desktop() {
+            desktop.set_auto_launch(app_id, enabled)
+        } else {
+            Err(anyhow::anyhow!(
+                "Auto-launch not supported on this platform"
+            ))
+        }
     }
-    fn is_auto_launch_enabled(&self, _app_id: &str) -> bool {
-        false
+    fn is_auto_launch_enabled(&self, app_id: &str) -> bool {
+        self.desktop()
+            .is_some_and(|desktop| desktop.is_auto_launch_enabled(app_id))
     }
 
-    fn show_notification(&self, _title: &str, _body: &str) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Notifications not supported on this platform"
-        ))
+    fn show_notification(&self, title: &str, body: &str) -> Result<()> {
+        if let Some(desktop) = self.desktop() {
+            desktop.show_notification(title, body)
+        } else {
+            Err(anyhow::anyhow!(
+                "Notifications not supported on this platform"
+            ))
+        }
     }
 
     /// Receive the application's configured [`QuitMode`].
@@ -421,7 +491,11 @@ pub trait Platform: 'static {
     /// implementation is a no-op.
     fn set_quit_mode(&self, _mode: QuitMode) {}
 
-    fn on_system_power_event(&self, _callback: Box<dyn FnMut(SystemPowerEvent)>) {}
+    fn on_system_power_event(&self, callback: Box<dyn FnMut(SystemPowerEvent)>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.on_system_power_event(callback);
+        }
+    }
     fn start_power_save_blocker(&self, _kind: PowerSaveBlockerKind) -> Option<u32> {
         None
     }
@@ -432,7 +506,11 @@ pub trait Platform: 'static {
     fn network_status(&self) -> NetworkStatus {
         NetworkStatus::Online
     }
-    fn on_network_status_change(&self, _callback: Box<dyn FnMut(NetworkStatus)>) {}
+    fn on_network_status_change(&self, callback: Box<dyn FnMut(NetworkStatus)>) {
+        if let Some(desktop) = self.desktop() {
+            desktop.on_network_status_change(callback);
+        }
+    }
     fn on_media_key_event(&self, _callback: Box<dyn FnMut(MediaKeyEvent)>) {}
     fn request_user_attention(&self, _attention_type: AttentionType) {}
     fn cancel_user_attention(&self) {}
@@ -444,10 +522,20 @@ pub trait Platform: 'static {
         _callback: Box<dyn FnMut(SharedString)>,
     ) {
     }
-    fn show_dialog(&self, _options: DialogOptions) -> oneshot::Receiver<usize> {
-        let (tx, rx) = oneshot::channel();
-        tx.send(0).ok();
-        rx
+    fn show_dialog(
+        &self,
+        options: DialogOptions,
+    ) -> oneshot::Receiver<std::result::Result<usize, DialogError>> {
+        if let Some(desktop) = self.desktop() {
+            desktop.show_dialog(options)
+        } else {
+            let (tx, rx) = oneshot::channel();
+            tx.send(Err(DialogError::unavailable(
+                "dialog is not supported on this platform",
+            )))
+            .ok();
+            rx
+        }
     }
     fn os_info(&self) -> OsInfo {
         OsInfo {
@@ -463,6 +551,109 @@ pub trait Platform: 'static {
     }
     fn authenticate_biometric(&self, _reason: &str, callback: Box<dyn FnOnce(bool) + Send>) {
         callback(false);
+    }
+}
+
+/// Desktop integrations that are not part of opening a window.
+///
+/// [`Platform::desktop`] returns this when the backend can host tray icons,
+/// hotkeys, notifications, dialogs, or power and network events. Windowing,
+/// input, and clipboard stay on [`Platform`]. Existing [`Platform`] methods
+/// keep their names and forward here when a backend does not override them.
+pub trait PlatformDesktop: 'static {
+    /// Whether power-event callbacks passed to [`Platform::on_system_power_event`]
+    /// will be invoked.
+    fn supports_system_power_events(&self) -> bool {
+        false
+    }
+
+    /// Whether connectivity callbacks passed to [`Platform::on_network_status_change`]
+    /// will be invoked.
+    fn supports_network_status_events(&self) -> bool {
+        false
+    }
+
+    /// Sets the system tray icon. `None` removes it.
+    fn set_tray_icon(&self, _icon: Option<&[u8]>) {}
+
+    /// Sets how the system tray icon should be rendered.
+    fn set_tray_icon_rendering_mode(&self, _rendering_mode: TrayIconRenderingMode) {}
+
+    /// Sets the system tray menu.
+    fn set_tray_menu(&self, _menu: Vec<TrayMenuItem>) {}
+
+    /// Sets the system tray tooltip.
+    fn set_tray_tooltip(&self, _tooltip: &str) {}
+
+    /// Sets whether the tray icon opens a panel instead of a menu.
+    fn set_tray_panel_mode(&self, _enabled: bool) {}
+
+    /// Registers a callback for tray icon events.
+    fn on_tray_icon_event(&self, _callback: Box<dyn FnMut(TrayIconEvent)>) {}
+
+    /// Registers a callback for tray icon clicks that include a position.
+    fn on_tray_icon_click_event(&self, _callback: Box<dyn FnMut(TrayIconClickEvent)>) {}
+
+    /// Registers a callback for tray menu actions.
+    fn on_tray_menu_action(&self, _callback: Box<dyn FnMut(SharedString)>) {}
+
+    /// Registers a system-wide hotkey.
+    fn register_global_hotkey(&self, _id: u32, _keystroke: &Keystroke) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "Global hotkeys not supported on this platform"
+        ))
+    }
+
+    /// Removes a previously registered global hotkey.
+    fn unregister_global_hotkey(&self, _id: u32) {}
+
+    /// Registers a callback invoked with the id of a pressed global hotkey.
+    fn on_global_hotkey(&self, _callback: Box<dyn FnMut(u32)>) {}
+
+    /// Shows an OS notification.
+    fn show_notification(&self, _title: &str, _body: &str) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "Notifications not supported on this platform"
+        ))
+    }
+
+    /// Enables or disables launching the application at login.
+    fn set_auto_launch(&self, _app_id: &str, _enabled: bool) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "Auto-launch not supported on this platform"
+        ))
+    }
+
+    /// Returns whether launch-at-login is enabled.
+    fn is_auto_launch_enabled(&self, _app_id: &str) -> bool {
+        false
+    }
+
+    /// Registers a callback for system power events.
+    ///
+    /// The default implementation drops the callback. Backends that return
+    /// `true` from [`PlatformDesktop::supports_system_power_events`] must
+    /// invoke it.
+    fn on_system_power_event(&self, _callback: Box<dyn FnMut(SystemPowerEvent)>) {}
+
+    /// Registers a callback for network connectivity changes.
+    ///
+    /// The default implementation drops the callback. Backends that return
+    /// `true` from [`PlatformDesktop::supports_network_status_events`] must
+    /// invoke it.
+    fn on_network_status_change(&self, _callback: Box<dyn FnMut(NetworkStatus)>) {}
+
+    /// Shows a native dialog and resolves to the chosen button index.
+    fn show_dialog(
+        &self,
+        _options: DialogOptions,
+    ) -> oneshot::Receiver<std::result::Result<usize, DialogError>> {
+        let (tx, rx) = oneshot::channel();
+        tx.send(Err(DialogError::unavailable(
+            "dialog is not supported on this platform",
+        )))
+        .ok();
+        rx
     }
 }
 
@@ -2280,6 +2471,37 @@ pub enum DialogKind {
     /// An error dialog.
     Error,
 }
+
+/// Failure to present a native dialog.
+///
+/// A button index means the user chose that button. This error means the
+/// platform could not show the dialog at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DialogError {
+    message: SharedString,
+}
+
+impl DialogError {
+    /// Builds an error describing why a dialog could not be shown.
+    pub fn unavailable(message: impl Into<SharedString>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    /// The explanation shown to callers.
+    pub fn message(&self) -> &SharedString {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for DialogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message.as_ref())
+    }
+}
+
+impl std::error::Error for DialogError {}
 
 /// Options for displaying a native dialog.
 #[derive(Debug, Clone)]

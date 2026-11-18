@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- **Native dialogs no longer report a missing dialog as button 0.**
+  `Platform::show_dialog` and `App::show_dialog` now resolve to
+  `Result<usize, DialogError>`. `Err` means the dialog was not shown.
+  A button index is only returned when a dialog actually ran.
+- **Unsupported power and network callbacks are not registered.**
+  `App::supports_system_power_events` and
+  `App::supports_network_status_events` report whether those callbacks will
+  run. Linux does not store them. macOS and Windows still deliver events.
+- **X11 window handles no longer panic.** `X11Window` returns the same XCB
+  handles the renderer already uses. Windows `display_handle` returns
+  `HandleError::Unavailable` instead of panicking, and
+  `hide_other_apps` / `unhide_other_apps` log and return.
+- **Global actions stop propagation by default when no window is active.**
+  This matches dispatch inside a window: a bubble listener runs only if the
+  previous one called `App::propagate`.
+- **`Platform::desktop`** exposes optional tray, hotkey, notification, dialog,
+  and power integrations separately from the windowing trait. Existing
+  `Platform` methods remain and forward when a backend does not override them.
+
 ## 0.11.0 (2026-10-07)
 
 ### Added

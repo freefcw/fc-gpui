@@ -713,6 +713,25 @@ mod tests {
         assert!(!receiver.recv().unwrap());
     }
 
+    #[test]
+    fn unsupported_dialog_is_not_a_button_index() {
+        use crate::{DialogKind, DialogOptions, SharedString};
+
+        let platform = test_platform();
+        let mut receiver = platform.show_dialog(DialogOptions {
+            kind: DialogKind::Info,
+            title: SharedString::from("Title"),
+            message: SharedString::from("Message"),
+            detail: None,
+            buttons: vec![SharedString::from("OK")],
+        });
+        let result = receiver
+            .try_recv()
+            .expect("receiver is open")
+            .expect("dialog result was sent");
+        assert!(result.is_err());
+    }
+
     #[cfg(feature = "screen-capture")]
     #[test]
     fn legacy_screen_capture_source_rejects_unsupported_termination_notification() {

@@ -344,7 +344,21 @@ fn encode_restart_arguments(arguments: &[OsString]) -> OsString {
     OsString::from_wide(&encoded)
 }
 
+impl PlatformDesktop for WindowsPlatform {
+    fn supports_system_power_events(&self) -> bool {
+        true
+    }
+
+    fn supports_network_status_events(&self) -> bool {
+        true
+    }
+}
+
 impl Platform for WindowsPlatform {
+    fn desktop(&self) -> Option<&dyn PlatformDesktop> {
+        Some(self)
+    }
+
     fn configure_gpu_resources(&self, gpu: &GpuResourceBudget) {
         self.inner.state.borrow_mut().atlas_initial_size = gpu.atlas_size();
     }
@@ -459,14 +473,12 @@ impl Platform for WindowsPlatform {
 
     fn hide(&self) {}
 
-    // todo(windows)
     fn hide_other_apps(&self) {
-        unimplemented!()
+        log::info!("hide_other_apps is not implemented on Windows, ignoring the call");
     }
 
-    // todo(windows)
     fn unhide_other_apps(&self) {
-        unimplemented!()
+        log::info!("unhide_other_apps is not implemented on Windows, ignoring the call");
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -994,7 +1006,10 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    fn show_dialog(&self, options: DialogOptions) -> oneshot::Receiver<usize> {
+    fn show_dialog(
+        &self,
+        options: DialogOptions,
+    ) -> oneshot::Receiver<std::result::Result<usize, DialogError>> {
         let (mut tx, rx) = oneshot::channel();
         let active = self.find_current_active_window();
         let owner = active
@@ -1015,8 +1030,7 @@ impl Platform for WindowsPlatform {
                     futures::future::Either::Left((result, _)) => result
                         .context("native dialog thread stopped")
                         .and_then(|result| result)
-                        .log_err()
-                        .unwrap_or(0),
+                        .map_err(|error| DialogError::unavailable(error.to_string())),
                     futures::future::Either::Right(_) => return,
                 };
                 tx.send(clicked).ok();

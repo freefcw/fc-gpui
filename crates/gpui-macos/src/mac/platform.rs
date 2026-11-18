@@ -7,11 +7,11 @@ use crate::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString,
     CursorStyle, DevicePixels, ForegroundExecutor, GpuResourceBudget, Image, ImageFormat,
     KeyContext, Keymap, MacActivity, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu,
-    OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, QuitMode, RendererCacheStats,
-    Result, SemanticVersion, SharedString, Size, SystemMenuType, Task, ThermalState, TrayAnchor,
-    TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode, TrayMenuItem, WindowAppearance,
-    WindowParams,
+    OwnedMenu, PathPromptOptions, Platform, PlatformDesktop, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, QuitMode,
+    RendererCacheStats, Result, SemanticVersion, SharedString, Size, SystemMenuType, Task,
+    ThermalState, TrayAnchor, TrayIconClickEvent, TrayIconEvent, TrayIconRenderingMode,
+    TrayMenuItem, WindowAppearance, WindowParams,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -1027,7 +1027,21 @@ impl MacPlatform {
     }
 }
 
+impl PlatformDesktop for MacPlatform {
+    fn supports_system_power_events(&self) -> bool {
+        true
+    }
+
+    fn supports_network_status_events(&self) -> bool {
+        true
+    }
+}
+
 impl Platform for MacPlatform {
+    fn desktop(&self) -> Option<&dyn PlatformDesktop> {
+        Some(self)
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.0.lock().background_executor.clone()
     }
@@ -2120,7 +2134,7 @@ impl Platform for MacPlatform {
     fn show_dialog(
         &self,
         options: crate::DialogOptions,
-    ) -> futures::channel::oneshot::Receiver<usize> {
+    ) -> futures::channel::oneshot::Receiver<std::result::Result<usize, crate::DialogError>> {
         super::dialog::show_dialog(options)
     }
 

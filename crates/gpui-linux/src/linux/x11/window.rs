@@ -393,36 +393,63 @@ pub(crate) struct X11WindowStatePtr {
     pub(crate) x_window: xproto::Window,
 }
 
+pub(crate) fn xcb_window_handle(
+    window_id: u32,
+    visual_id: u32,
+) -> Result<rwh::RawWindowHandle, rwh::HandleError> {
+    let Some(non_zero) = NonZeroU32::new(window_id) else {
+        log::error!("X11 window id was zero when getting the window handle.");
+        return Err(rwh::HandleError::Unavailable);
+    };
+    let mut handle = rwh::XcbWindowHandle::new(non_zero);
+    handle.visual_id = NonZeroU32::new(visual_id);
+    Ok(handle.into())
+}
+
+pub(crate) fn xcb_display_handle(
+    connection: *mut c_void,
+    screen_id: i32,
+) -> Result<rwh::RawDisplayHandle, rwh::HandleError> {
+    let Some(non_zero) = NonNull::new(connection) else {
+        log::error!("X11 connection was null when getting the display handle.");
+        return Err(rwh::HandleError::Unavailable);
+    };
+    Ok(rwh::XcbDisplayHandle::new(Some(non_zero), screen_id).into())
+}
+
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        let Some(non_zero) = NonZeroU32::new(self.window_id) else {
-            log::error!("RawWindow.window_id zero when getting window handle.");
-            return Err(rwh::HandleError::Unavailable);
-        };
-        let mut handle = rwh::XcbWindowHandle::new(non_zero);
-        handle.visual_id = NonZeroU32::new(self.visual_id);
-        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
+        let raw = xcb_window_handle(self.window_id, self.visual_id)?;
+        // SAFETY: `XcbWindowHandle` copies the window id and does not borrow memory.
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
 impl rwh::HasDisplayHandle for RawWindow {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        let Some(non_zero) = NonNull::new(self.connection) else {
-            log::error!("Null RawWindow.connection when getting display handle.");
-            return Err(rwh::HandleError::Unavailable);
-        };
-        let handle = rwh::XcbDisplayHandle::new(Some(non_zero), self.screen_id as i32);
-        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
+        let raw = xcb_display_handle(self.connection, self.screen_id as i32)?;
+        // SAFETY: `self.connection` stays alive for the lifetime of `self`, which
+        // is the lifetime of the returned handle.
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(raw) })
     }
 }
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let visual_id = self.0.state.borrow().visual_id;
+        let raw = xcb_window_handle(self.0.x_window, visual_id)?;
+        // SAFETY: `XcbWindowHandle` copies the window id and does not borrow memory.
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let connection =
+            as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(self.0.xcb.as_ref())
+                as *mut c_void;
+        let screen_id = self.0.state.borrow().x_screen_index as i32;
+        let raw = xcb_display_handle(connection, screen_id)?;
+        // SAFETY: `self.0.xcb` owns the connection for the lifetime of `self`.
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(raw) })
     }
 }
 
@@ -2137,6 +2164,19 @@ impl accesskit::DeactivationHandler for A11yDeactivationHandler {
 mod tests {
     use super::*;
     use gpui::point;
+
+    #[test]
+    fn zero_window_id_and_null_connection_are_unavailable() {
+        assert!(matches!(
+            super::xcb_window_handle(0, 1),
+            Err(rwh::HandleError::Unavailable)
+        ));
+        assert!(super::xcb_window_handle(7, 3).is_ok());
+        assert!(matches!(
+            super::xcb_display_handle(std::ptr::null_mut(), 0),
+            Err(rwh::HandleError::Unavailable)
+        ));
+    }
 
     fn window_params(is_resizable: bool, window_min_size: Option<Size<Pixels>>) -> WindowParams {
         WindowParams {

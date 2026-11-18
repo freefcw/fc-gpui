@@ -55,7 +55,6 @@ use crate::linux::{
     modifiers_from_xinput_info, new_xkb_context, open_uri_internal,
     platform::{
         DOUBLE_CLICK_INTERVAL, LinuxTrayClickEvent, LinuxTrayEventTarget, SCROLL_LINES,
-        TrayIconClickEventCallback, TrayIconEventCallback, TrayMenuActionCallback,
         install_linux_tray_event_source,
     },
     reveal_path_internal,
@@ -247,40 +246,8 @@ impl LinuxTrayEventTarget for X11ClientState {
         )
     }
 
-    fn take_tray_icon_event_callback(&mut self) -> Option<TrayIconEventCallback> {
-        self.common.callbacks.tray_icon_event.take()
-    }
-
-    fn restore_tray_icon_event_callback_if_empty(&mut self, callback: TrayIconEventCallback) {
-        self.common
-            .callbacks
-            .tray_icon_event
-            .get_or_insert(callback);
-    }
-
-    fn take_tray_icon_click_event_callback(&mut self) -> Option<TrayIconClickEventCallback> {
-        self.common.callbacks.tray_icon_click_event.take()
-    }
-
-    fn restore_tray_icon_click_event_callback_if_empty(
-        &mut self,
-        callback: TrayIconClickEventCallback,
-    ) {
-        self.common
-            .callbacks
-            .tray_icon_click_event
-            .get_or_insert(callback);
-    }
-
-    fn take_tray_menu_action_callback(&mut self) -> Option<TrayMenuActionCallback> {
-        self.common.callbacks.tray_menu_action.take()
-    }
-
-    fn restore_tray_menu_action_callback_if_empty(&mut self, callback: TrayMenuActionCallback) {
-        self.common
-            .callbacks
-            .tray_menu_action
-            .get_or_insert(callback);
+    fn callbacks(&mut self) -> &mut crate::linux::PlatformHandlers {
+        &mut self.common.callbacks
     }
 }
 
